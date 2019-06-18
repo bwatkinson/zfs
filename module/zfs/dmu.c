@@ -498,6 +498,12 @@ dmu_buf_hold_array_by_dnode(dnode_t *dn, uint64_t offset, uint64_t length,
 	uint32_t dbuf_flags;
 	int err;
 	zio_t *zio;
+#if defined (HRTIME_CALL_SITE_STAMP)
+    /////////////////////////////
+    // Brian A. Added this line
+    zio_t *zio_root_parent = NULL;
+    /////////////////////////////
+#endif
 
 	ASSERT(length <= DMU_MAX_ACCESS);
 
@@ -530,6 +536,20 @@ dmu_buf_hold_array_by_dnode(dnode_t *dn, uint64_t offset, uint64_t length,
 	dbp = kmem_zalloc(sizeof (dmu_buf_t *) * nblks, KM_SLEEP);
 
 	zio = zio_root(dn->dn_objset->os_spa, NULL, NULL, ZIO_FLAG_CANFAIL);
+
+    /////////////////////////////
+    // Brian A. Added this line
+    if (read) {
+        zio->is_read = ZIO_IS_READ;
+#if defined (HRTIME_CALL_SITE_STAMP)
+        zio_root_parent = zio_hrtime_stamp_get_root_parent(zio);
+        hrtime_add_timestamp_call_sites(zio_root_parent->zio_pid, 0, __func__);
+#endif
+    } else {
+        zio->is_read = 0x0;
+    }
+    /////////////////////////////
+
 	blkid = dbuf_whichblock(dn, 0, offset);
 	for (i = 0; i < nblks; i++) {
 		dmu_buf_impl_t *db = dbuf_hold(dn, blkid + i, tag);

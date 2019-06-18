@@ -41,6 +41,10 @@
 #include <sys/kmem_cache.h>
 #include <sys/vmem.h>
 #include <sys/taskq.h>
+////////////////////////////
+// Brian A. Added this line
+#include <sys/hrtime_spl_timestamp.h>
+////////////////////////////
 #include <sys/param.h>
 #include <sys/kobj.h>
 #include <sys/disp.h>
@@ -96,6 +100,10 @@
 #include <time.h>
 #include <ctype.h>
 #include <signal.h>
+/////////////////////////////
+// Brian A. Added this line
+#include <hrtime-timestamp.h>
+/////////////////////////////
 #include <sys/mman.h>
 #include <sys/note.h>
 #include <sys/types.h>
@@ -115,6 +123,13 @@
 #include <sys/sunddi.h>
 #include <sys/debug.h>
 #include <sys/utsname.h>
+
+/*
+ * Brian A. Added this line
+ * Kthread PID
+ */
+#define get_zio_pid(t) \
+    ((kthread_t *)t->io_executor)->t_tid
 
 /*
  * Stack
@@ -311,10 +326,10 @@ extern clock_t cv_timedwait_hires(kcondvar_t *cvp, kmutex_t *mp, hrtime_t tim,
 extern void cv_signal(kcondvar_t *cv);
 extern void cv_broadcast(kcondvar_t *cv);
 
-#define	cv_timedwait_io(cv, mp, at)		cv_timedwait(cv, mp, at)
+#define	cv_timedwait_io(cv, mp, at, r)		cv_timedwait(cv, mp, at)
 #define	cv_timedwait_sig(cv, mp, at)		cv_timedwait(cv, mp, at)
 #define	cv_wait_sig(cv, mp)			cv_wait(cv, mp)
-#define	cv_wait_io(cv, mp)			cv_wait(cv, mp)
+#define	cv_wait_io(cv, mp, r)			cv_wait(cv, mp)
 #define	cv_timedwait_sig_hires(cv, mp, t, r, f) \
 	cv_timedwait_hires(cv, mp, t, r, f)
 

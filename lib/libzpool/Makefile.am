@@ -23,7 +23,8 @@ lib_LTLIBRARIES = libzpool.la
 USER_C = \
 	kernel.c \
 	taskq.c \
-	util.c
+	util.c \
+	hrtime-timestamp.c
 
 KERNEL_C = \
 	zfeature_common.c \

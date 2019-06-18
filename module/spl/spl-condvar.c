@@ -29,6 +29,11 @@
 #include <linux/hrtimer.h>
 #include <linux/compiler_compat.h>
 
+//////////////////////////////
+// Brian A. Added this line
+#include <sys/hrtime_spl_timestamp.h>
+//////////////////////////////
+
 void
 __cv_init(kcondvar_t *cvp, char *name, kcv_type_t type, void *arg)
 {
@@ -79,7 +84,7 @@ __cv_destroy(kcondvar_t *cvp)
 EXPORT_SYMBOL(__cv_destroy);
 
 static void
-cv_wait_common(kcondvar_t *cvp, kmutex_t *mp, int state, int io)
+cv_wait_common(kcondvar_t *cvp, kmutex_t *mp, int state, int io, int is_read)
 {
 	DEFINE_WAIT(wait);
 	kmutex_t *m;
@@ -105,10 +110,18 @@ cv_wait_common(kcondvar_t *cvp, kmutex_t *mp, int state, int io)
 	 * race where 'cvp->cv_waiters > 0' but the list is empty.
 	 */
 	mutex_exit(mp);
-	if (io)
-		io_schedule();
-	else
+	if (io) {
+#if defined (HRTIME_CALL_SITE_STAMP)
+        /////////////////////////////
+        // Brian A. Added this line
+        if (is_read) {
+            hrtime_add_timestamp_call_sites(getpid(), 2, __func__);
+        }
+#endif
+    	io_schedule();
+	} else {
 		schedule();
+    }
 
 	/* No more waiters a different mutex could be used */
 	if (atomic_dec_and_test(&cvp->cv_waiters)) {
@@ -133,26 +146,26 @@ cv_wait_common(kcondvar_t *cvp, kmutex_t *mp, int state, int io)
 void
 __cv_wait(kcondvar_t *cvp, kmutex_t *mp)
 {
-	cv_wait_common(cvp, mp, TASK_UNINTERRUPTIBLE, 0);
+	cv_wait_common(cvp, mp, TASK_UNINTERRUPTIBLE, 0, 0);
 }
 EXPORT_SYMBOL(__cv_wait);
 
 void
-__cv_wait_io(kcondvar_t *cvp, kmutex_t *mp)
+__cv_wait_io(kcondvar_t *cvp, kmutex_t *mp, int is_read)
 {
-	cv_wait_common(cvp, mp, TASK_UNINTERRUPTIBLE, 1);
+	cv_wait_common(cvp, mp, TASK_UNINTERRUPTIBLE, 1, is_read);
 }
 EXPORT_SYMBOL(__cv_wait_io);
 
 void
 __cv_wait_sig(kcondvar_t *cvp, kmutex_t *mp)
 {
-	cv_wait_common(cvp, mp, TASK_INTERRUPTIBLE, 0);
+	cv_wait_common(cvp, mp, TASK_INTERRUPTIBLE, 0, 0);
 }
 EXPORT_SYMBOL(__cv_wait_sig);
 
 #if defined(HAVE_IO_SCHEDULE_TIMEOUT)
-#define	spl_io_schedule_timeout(t)	io_schedule_timeout(t)
+#define	spl_io_schedule_timeout(t, r)	io_schedule_timeout(t)
 #else
 
 struct spl_task_timer {
@@ -170,7 +183,7 @@ __cv_wakeup(spl_timer_list_t t)
 }
 
 static long
-spl_io_schedule_timeout(long time_left)
+spl_io_schedule_timeout(long time_left, int is_read)
 {
 	long expire_time = jiffies + time_left;
 	struct spl_task_timer task_timer;
@@ -183,6 +196,13 @@ spl_io_schedule_timeout(long time_left)
 	timer->expires = expire_time;
 	add_timer(timer);
 
+#if defined (HRTIME_CALL_SITE_STAMP)
+    /////////////////////////////
+    // Brian A. Added this line
+    if (is_read) {
+        hrtime_add_timestamp_call_sites(getpid(), 2, __func__);
+    }
+#endif
 	io_schedule();
 
 	del_timer_sync(timer);
@@ -199,7 +219,7 @@ spl_io_schedule_timeout(long time_left)
  */
 static clock_t
 __cv_timedwait_common(kcondvar_t *cvp, kmutex_t *mp, clock_t expire_time,
-    int state, int io)
+    int state, int io, int is_read)
 {
 	DEFINE_WAIT(wait);
 	kmutex_t *m;
@@ -231,10 +251,18 @@ __cv_timedwait_common(kcondvar_t *cvp, kmutex_t *mp, clock_t expire_time,
 	 * race where 'cvp->cv_waiters > 0' but the list is empty.
 	 */
 	mutex_exit(mp);
-	if (io)
-		time_left = spl_io_schedule_timeout(time_left);
-	else
+	if (io) {
+#if defined (HRTIME_CALL_SITE_STAMP)
+        /////////////////////////////
+        // Brian A. Added this line
+        if (is_read) {
+            hrtime_add_timestamp_call_sites(getpid(), 2, __func__);
+        }
+#endif
+		time_left = spl_io_schedule_timeout(time_left, is_read);
+    } else {
 		time_left = schedule_timeout(time_left);
+    }
 
 	/* No more waiters a different mutex could be used */
 	if (atomic_dec_and_test(&cvp->cv_waiters)) {
@@ -261,15 +289,15 @@ clock_t
 __cv_timedwait(kcondvar_t *cvp, kmutex_t *mp, clock_t exp_time)
 {
 	return (__cv_timedwait_common(cvp, mp, exp_time,
-	    TASK_UNINTERRUPTIBLE, 0));
+	    TASK_UNINTERRUPTIBLE, 0, 0));
 }
 EXPORT_SYMBOL(__cv_timedwait);
 
 clock_t
-__cv_timedwait_io(kcondvar_t *cvp, kmutex_t *mp, clock_t exp_time)
+__cv_timedwait_io(kcondvar_t *cvp, kmutex_t *mp, clock_t exp_time, int is_read)
 {
 	return (__cv_timedwait_common(cvp, mp, exp_time,
-	    TASK_UNINTERRUPTIBLE, 1));
+	    TASK_UNINTERRUPTIBLE, 1, is_read));
 }
 EXPORT_SYMBOL(__cv_timedwait_io);
 
@@ -277,7 +305,7 @@ clock_t
 __cv_timedwait_sig(kcondvar_t *cvp, kmutex_t *mp, clock_t exp_time)
 {
 	return (__cv_timedwait_common(cvp, mp, exp_time,
-	    TASK_INTERRUPTIBLE, 0));
+	    TASK_INTERRUPTIBLE, 0, 0));
 }
 EXPORT_SYMBOL(__cv_timedwait_sig);
 

@@ -522,6 +522,20 @@ bio_map_abd_off(struct bio *bio, abd_t *abd, unsigned int size, size_t off)
 static inline void
 vdev_submit_bio_impl(struct bio *bio)
 {
+#if defined (HRTIME_CALL_SITE_STAMP)
+    ////////////////////////////
+    // Brian A. Added this line
+    zio_t *zio_root_parent = NULL;
+    dio_request_t *dr = bio->bi_private;
+    if (dr->dr_zio) {
+        zio_root_parent = zio_hrtime_stamp_get_root_parent(dr->dr_zio);
+        if (zio_root_parent && zio_root_parent->is_read == ZIO_IS_READ) {
+            hrtime_add_timestamp_call_sites(zio_root_parent->zio_pid, 1, __func__);
+        }
+    }
+    ////////////////////////////
+#endif
+
 #ifdef HAVE_1ARG_SUBMIT_BIO
 	submit_bio(bio);
 #else

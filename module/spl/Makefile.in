@@ -27,3 +27,4 @@ $(MODULE)-objs += spl-vmem.o
 $(MODULE)-objs += spl-vnode.o
 $(MODULE)-objs += spl-xdr.o
 $(MODULE)-objs += spl-zlib.o
+$(MODULE)-objs += spl-hrtime-timestamps.o

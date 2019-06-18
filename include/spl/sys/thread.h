@@ -57,6 +57,12 @@ typedef void (*thread_func_t)(void *);
 #define	getcomm()			current->comm
 #define	getpid()			current->pid
 
+/*
+ * Brian A. Addded this line
+ */
+#define get_zio_pid(t) \
+    ((kthread_t *)t->io_executor)->pid
+
 extern kthread_t *__thread_create(caddr_t stk, size_t  stksize,
     thread_func_t func, const char *name, void *args, size_t len, proc_t *pp,
     int state, pri_t pri);

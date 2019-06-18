@@ -608,6 +608,49 @@ zio_add_child(zio_t *pio, zio_t *cio)
 	mutex_exit(&pio->io_lock);
 }
 
+//////////////////////////////
+// Brian A. Added this line
+unsigned int zio_hrtime_stamp_get_correct_pid(zio_t *zio)
+{
+    zio_link_t *zl = NULL;
+    zio_t *pio = NULL;
+    zio_t *prev_pio = NULL;
+
+    ASSERT(zio != NULL);
+
+    /*
+     * Now just going to walk parents till we get to the last parent
+     * in the zio chain
+     */
+    pio = zio_walk_parents(zio, &zl);
+    while (pio != NULL) {
+        prev_pio = pio;
+        pio = zio_walk_parents(zio, &zl);
+    }
+    
+    if (prev_pio) {
+        return prev_pio->zio_pid;
+    }
+    return getpid();
+}
+
+zio_t *
+zio_hrtime_stamp_get_root_parent(zio_t *zio)
+{
+    zio_link_t *zl = NULL;
+    zio_t *pio = NULL;
+    zio_t *prev_pio = NULL;
+
+    ASSERT(zio != NULL);
+    pio = zio_walk_parents(zio, &zl);
+    while (pio != NULL) {
+        prev_pio = pio;
+        pio = zio_walk_parents(zio, &zl);
+    }
+    return prev_pio;
+}
+//////////////////////////////
+
 static void
 zio_remove_child(zio_t *pio, zio_t *cio, zio_link_t *zl)
 {
@@ -778,6 +821,11 @@ zio_create(zio_t *pio, spa_t *spa, uint64_t txg, const blkptr_t *bp,
 	mutex_init(&zio->io_lock, NULL, MUTEX_NOLOCKDEP, NULL);
 	cv_init(&zio->io_cv, NULL, CV_DEFAULT, NULL);
 
+    /////////////////////////////
+    // Brian A. Added this line
+    zio->zio_pid = getpid();
+    /////////////////////////////
+
 	list_create(&zio->io_parent_list, sizeof (zio_link_t),
 	    offsetof(zio_link_t, zl_parent_node));
 	list_create(&zio->io_child_list, sizeof (zio_link_t),
@@ -829,6 +877,10 @@ zio_create(zio_t *pio, spa_t *spa, uint64_t txg, const blkptr_t *bp,
 		zio->io_bookmark = *zb;
 
 	if (pio != NULL) {
+        ////////////////////////////
+        // Brian A. Added this line
+        zio->is_read = pio->is_read;
+        /////////////////////////////
 		if (zio->io_metaslab_class == NULL)
 			zio->io_metaslab_class = pio->io_metaslab_class;
 		if (zio->io_logical == NULL)
@@ -2016,6 +2068,12 @@ __attribute__((always_inline))
 static inline void
 __zio_execute(zio_t *zio)
 {
+    ////////////////////////////
+    // Brian A. Added this line
+#if defined (HRTIME_PIPELINE_STAMP)
+    zio_t *zio_root_parent = NULL;
+#endif
+    ////////////////////////////
 	ASSERT3U(zio->io_queued_timestamp, >, 0);
 
 	while (zio->io_stage < ZIO_STAGE_DONE) {
@@ -2065,6 +2123,16 @@ __zio_execute(zio_t *zio)
 		zio->io_stage = stage;
 		zio->io_pipeline_trace |= zio->io_stage;
 
+#if defined (HRTIME_PIPELINE_STAMP)
+        /////////////////////////////
+        // Brian A. Added this line
+        zio_root_parent = zio_hrtime_stamp_get_root_parent(zio);
+        if (zio_root_parent->is_read == ZIO_IS_READ) {
+            hrtime_add_timestamp_pipeline_stages(zio_root_parent->zio_pid, stage);
+        }
+        /////////////////////////////
+#endif
+
 		/*
 		 * The zio pipeline stage returns the next zio to execute
 		 * (typically the same as this one), or NULL if we should
@@ -2100,8 +2168,16 @@ zio_wait(zio_t *zio)
 
 	mutex_enter(&zio->io_lock);
 	while (zio->io_executor != NULL) {
-		error = cv_timedwait_io(&zio->io_cv, &zio->io_lock,
-		    ddi_get_lbolt() + timeout);
+        //////////////////////////////
+        // Brian A.  Added this line
+        if (zio->is_read == ZIO_IS_READ) {
+		    error = cv_timedwait_io(&zio->io_cv, &zio->io_lock,
+		        ddi_get_lbolt() + timeout, 1);
+        } else {
+		    error = cv_timedwait_io(&zio->io_cv, &zio->io_lock,
+		        ddi_get_lbolt() + timeout, 0);
+        }
+        //////////////////////////////
 
 		if (zfs_deadman_enabled && error == -1 &&
 		    gethrtime() - zio->io_queued_timestamp >

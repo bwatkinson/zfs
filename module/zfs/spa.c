@@ -953,6 +953,18 @@ spa_taskqs_init(spa_t *spa, zio_type_t t, zio_taskq_type_t q)
 	uint_t flags = 0;
 	boolean_t batch = B_FALSE;
 
+#if defined (HRTIME_TASKQS_STAMP)
+    /////////////////////////////
+    // Brian A. Added this line
+    char *taskq_names[count];
+    int create_hrtime_taskq_stamps = 0;
+
+    if (q == ZIO_TASKQ_INTERRUPT && t == ZIO_TYPE_READ) {
+        create_hrtime_taskq_stamps = 1;
+    }
+    /////////////////////////////
+#endif
+
 	if (mode == ZTI_MODE_NULL) {
 		tqs->stqs_count = 0;
 		tqs->stqs_taskq = NULL;
@@ -1011,10 +1023,27 @@ spa_taskqs_init(spa_t *spa, zio_type_t t, zio_taskq_type_t q)
 
 			tq = taskq_create_proc(name, value, pri, 50,
 			    INT_MAX, spa->spa_proc, flags);
-		}
+#if defined (HRTIME_TASKQS_STAMP)
+            /////////////////////////////
+            // Brian A. Added this line
+            if (create_hrtime_taskq_stamps) {
+                taskq_names[i] = tq->tq_name;
+            }
+            /////////////////////////////
+#endif
+        }
 
 		tqs->stqs_taskq[i] = tq;
 	}
+
+#if defined (HRTIME_TASKQS_STAMP)
+    /////////////////////////////
+    // Brian A. Added this line
+    if (create_hrtime_taskq_stamps) {
+        hrtime_taskq_count_init(taskq_names, count);
+    }
+    /////////////////////////////
+#endif
 }
 
 static void
@@ -1279,6 +1308,13 @@ spa_activate(spa_t *spa, int mode)
 	 */
 	spa->spa_upgrade_taskq = taskq_create("z_upgrade", boot_ncpus,
 	    defclsyspri, 1, INT_MAX, TASKQ_DYNAMIC);
+
+#if defined (HRTIME_PIPELINE_STAMP) || defined (HRTIME_CALL_SITE_STAMP)
+    /////////////////////////////
+    // Brian A. added this line
+    hrtime_timestamp_init();
+    /////////////////////////////
+#endif
 }
 
 /*
@@ -1330,6 +1366,13 @@ spa_deactivate(spa_t *spa)
 		spa->spa_txg_zio[i] = NULL;
 	}
 
+#if defined (HRTIME_TASKQS_STAMP)
+    /////////////////////////////
+    // Brian A. Added this line
+    hrtime_taskq_count_fini();
+    /////////////////////////////
+#endif
+
 	metaslab_class_destroy(spa->spa_normal_class);
 	spa->spa_normal_class = NULL;
 
@@ -1378,6 +1421,13 @@ spa_deactivate(spa_t *spa)
 		thread_join(spa->spa_did);
 		spa->spa_did = 0;
 	}
+
+#if defined (HRTIME_PIPELINE_STAMP) || defined (HRTIME_CALL_SITE_STAMP)
+    /////////////////////////////
+    // Brian A. Added this line
+    hrtime_timestamp_fini();
+    /////////////////////////////
+#endif
 }
 
 /*

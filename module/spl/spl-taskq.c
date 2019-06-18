@@ -29,6 +29,17 @@
 #include <sys/kmem.h>
 #include <sys/tsd.h>
 
+/////////////////////////////
+// Brian A. Added this
+#include <sys/hrtime_spl_timestamp.h>
+#if defined (HRTIME_TASKQS_STAMP)
+typedef struct zio
+{
+    long unsigned is_read;
+} zio_t;
+/////////////////////////////
+#endif
+
 int spl_taskq_thread_bind = 0;
 module_param(spl_taskq_thread_bind, int, 0644);
 MODULE_PARM_DESC(spl_taskq_thread_bind, "Bind taskq thread to CPU by default");
@@ -921,10 +932,27 @@ taskq_thread(void *args)
 
 			taskq_insert_in_order(tq, tqt);
 			tq->tq_nactive++;
-			spin_unlock_irqrestore(&tq->tq_lock, flags);
+#if defined (HRTIME_TASKQS_STAMP)
+            ///////////////////////////////
+            // Brian A. Added this line
+            if (t->tqent_arg && (((zio_t *)t->tqent_arg)->is_read == ZIO_IS_READ)) {
+                hrtime_taskq_count_add_count(tq->tq_name, tq->tq_nactive);
+            }
+            ///////////////////////////////
+#endif
+            spin_unlock_irqrestore(&tq->tq_lock, flags);
 
 			/* Perform the requested task */
 			t->tqent_func(t->tqent_arg);
+
+#if defined (HRTIME_TASKQS_STAMP)
+            //////////////////////////////
+            // Brian A. Added this line
+            if (t->tqent_arg && (((zio_t *)t->tqent_arg)->is_read == ZIO_IS_READ)) {
+                hrtime_taskq_count_dump();
+            }
+            //////////////////////////////
+#endif
 
 			spin_lock_irqsave_nested(&tq->tq_lock, flags,
 			    tq->tq_lock_class);

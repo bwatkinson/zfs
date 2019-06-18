@@ -437,6 +437,11 @@ typedef struct zio_link {
 } zio_link_t;
 
 struct zio {
+    /////////////////////////////
+    // Brian A. Added this line
+    long unsigned is_read;
+    unsigned int zio_pid;;
+    /////////////////////////////
 	/* Core information about this I/O */
 	zbookmark_phys_t	io_bookmark;
 	zio_prop_t	io_prop;
@@ -592,6 +597,11 @@ extern zio_t *zio_walk_parents(zio_t *cio, zio_link_t **);
 extern zio_t *zio_walk_children(zio_t *pio, zio_link_t **);
 extern zio_t *zio_unique_parent(zio_t *cio);
 extern void zio_add_child(zio_t *pio, zio_t *cio);
+/////////////////////////////
+// Brian A. Added this line
+extern unsigned int zio_hrtime_stamp_get_correct_pid(zio_t *zio);
+extern zio_t *zio_hrtime_stamp_get_root_parent(zio_t *zio);
+/////////////////////////////
 
 extern void *zio_buf_alloc(size_t size);
 extern void zio_buf_free(void *buf, size_t size);
