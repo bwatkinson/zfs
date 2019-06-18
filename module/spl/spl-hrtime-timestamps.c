@@ -216,13 +216,10 @@ static boolean_t _hrtime_pipeline_all_pids_done(void)
     int i;
     boolean_t done_collecting = B_TRUE;
 
-    for(i = 0; i < STATIC_PID_CAP; i++)
-    {
-        if(all_pid_io_stages.pid_io_stages[i].curr_pid && 
-           !all_pid_io_stages.pid_io_stages[i].done_collecting)
-        {
-            if(all_pid_io_stages.pid_io_stages[i].num_of_ts_collected <= MIN_TS_TO_IGNORE)
-            {
+    for (i = 0; i < STATIC_PID_CAP; i++) {
+        if (all_pid_io_stages.pid_io_stages[i].curr_pid && 
+           !all_pid_io_stages.pid_io_stages[i].done_collecting) {
+            if (all_pid_io_stages.pid_io_stages[i].num_of_ts_collected <= MIN_TS_TO_IGNORE) {
                 /* 
                  * We have arrived here because a particular PID has collected all the 
                  * required pipeline timestamps. However, we may have a few stray PID's
@@ -244,29 +241,23 @@ static void _hrtime_pipeline_destroy(boolean_t lock_held)
     int i;
     cmn_err(CE_WARN, "Inside %s", __func__);
 #endif 
-    if(!lock_held)
-    {
+    if (!lock_held) {
         mutex_enter(&all_pid_io_stages.lock);
     }
 
-    if(_hrtime_ts_pipeline_initialized)
-    {
+    if (_hrtime_ts_pipeline_initialized) {
         _hrtime_ts_pipeline_initialized = 0;
 #if HRTIME_DEBUG
         cmn_err(CE_WARN, "Contents of the pipeline counts with %d total pids",
                 all_pid_io_stages.total_pids);
-        for(i = 0; i < STATIC_PID_CAP; i++)
-        {
-            if(all_pid_io_stages.pid_io_stages[i].curr_pid &&
-               all_pid_io_stages.pid_io_stages[i].num_of_ts_collected <= MIN_TS_TO_IGNORE)
-            {
+        for (i = 0; i < STATIC_PID_CAP; i++) {
+            if (all_pid_io_stages.pid_io_stages[i].curr_pid &&
+               all_pid_io_stages.pid_io_stages[i].num_of_ts_collected <= MIN_TS_TO_IGNORE) {
                 cmn_err(CE_WARN, "PID = %u with num_of_ts_collected %d <= %d so will not be in log",
                         all_pid_io_stages.pid_io_stages[i].curr_pid,
                         all_pid_io_stages.pid_io_stages[i].num_of_ts_collected,
                         MIN_TS_TO_IGNORE);
-            }
-            else
-            { 
+            } else { 
                 cmn_err(CE_WARN, "PID = %u with num_of_ts_collected = %d\n",
                         all_pid_io_stages.pid_io_stages[i].curr_pid,
                         all_pid_io_stages.pid_io_stages[i].num_of_ts_collected);
@@ -286,23 +277,18 @@ static void _hrtime_call_site_destroy(void)
     int i, offset;
     cmn_err(CE_WARN, "Inside %s", __func__);
 #endif 
-    if(_hrtime_ts_call_site_initialized)
-    {
+    if (_hrtime_ts_call_site_initialized) {
         _hrtime_ts_call_site_initialized = 0;
     }
 #if HRTIME_DEBUG
     num_logs_written += 1;
-    if(num_logs_written >= NUM_LOG_FILES)
-    {
-        for(offset = 0; offset < NUM_LOG_FILES; offset++)
-        {
+    if (num_logs_written >= NUM_LOG_FILES) {
+        for (offset = 0; offset < NUM_LOG_FILES; offset++) {
             cmn_err(CE_WARN, "For callsite %d", offset);
             cmn_err(CE_WARN, "callsite %d collected %d timestamps for %d PIDs",
                     offset, cs_arrays.arrays[offset].array_size, cs_arrays.arrays[offset].total_pids);
-            for(i = 0; i < STATIC_PID_CAP; i++)
-            {
-                if(cs_arrays.arrays[offset].arr[i][0] != 0)
-                {
+            for (i = 0; i < STATIC_PID_CAP; i++) {
+                if (cs_arrays.arrays[offset].arr[i][0] != 0) {
                     cmn_err(CE_WARN, "PID: %d collected %d timestamps",
                             cs_arrays.arrays[offset].arr[i][0],
                             cs_arrays.arrays[offset].arr[i][1]);
@@ -320,25 +306,21 @@ static void _hrtime_taskq_count_destroy(boolean_t lock_held)
 #if HRTIME_DEBUG
     cmn_err(CE_WARN, "Inside %s", __func__);
 #endif 
-    if(!lock_held)
-    {
+    if (!lock_held) {
         mutex_enter(&all_taskq_counts.lock);
     }
 
-    if(_hrtime_taskq_initialized)
-    {
+    if (_hrtime_taskq_initialized) {
         _hrtime_taskq_initialized = 0;
     
-        for(i = 0; i < all_taskq_counts.total_taskqs; i++)
-        {
+        for (i = 0; i < all_taskq_counts.total_taskqs; i++) {
             /* Busy wait till all threads are no longer using the taskqs */
-            while(all_taskq_counts.taskqs[i].num_threads_present > 0) {}
+            while (all_taskq_counts.taskqs[i].num_threads_present > 0) {}
         } 
 #if HRTIME_DEBUG
         cmn_err(CE_WARN, "_hrtime_taskq_initialized = %d",
                 _hrtime_taskq_initialized);
-        for(i = 0; i < all_taskq_counts.total_taskqs; i++)
-        {
+        for (i = 0; i < all_taskq_counts.total_taskqs; i++) 1{
             cmn_err(CE_WARN, "all_taskq_counts.taskq[%d].taskq_name = %s collected = %d counts", 
                     i, all_taskq_counts.taskqs[i].taskq_name, all_taskq_counts.taskqs[i].num_counts_collected);
         }
@@ -371,8 +353,7 @@ void hrtime_timestamp_init(void)
 
 #if defined (HRTIME_PIPELINE_STAMP)
     int j;
-    if(!_hrtime_ts_pipeline_initialized)
-    {
+    if (!_hrtime_ts_pipeline_initialized) {
         all_pid_io_stages.pid_io_stages = NULL;
         all_pid_io_stages.pid_io_stages = vmem_zalloc(sizeof(pid_io_stages_t) * STATIC_PID_CAP, KM_SLEEP);
         ASSERT3P(all_pid_io_stages.pid_io_stages, !=, NULL);
@@ -382,10 +363,8 @@ void hrtime_timestamp_init(void)
         all_pid_io_stages.dump_file = NULL;
         all_pid_io_stages.file_offset = 0;
         mutex_init(&all_pid_io_stages.lock, NULL, MUTEX_DEFAULT, NULL);
-        for(i = 0; i < STATIC_PID_CAP; i++)
-        {
-            for(j = 0; j < ZIO_PIPELINE_STAGES; j++)
-            {
+        for (i = 0; i < STATIC_PID_CAP; i++) {
+            for (j = 0; j < ZIO_PIPELINE_STAGES; j++) {
                 all_pid_io_stages.pid_io_stages[i].zio_pipeline_stage[j] = no_stage;
             }
         }
@@ -397,10 +376,8 @@ void hrtime_timestamp_init(void)
 #endif /* HRTIME_PIPELINE_STAMP */
 
 #if defined (HRTIME_CALL_SITE_STAMP)
-    if(!_hrtime_ts_call_site_initialized)
-    {
-        for(i = 0; i < NUM_LOG_FILES; i++)
-        {
+    if (!_hrtime_ts_call_site_initialized) {
+        for (i = 0; i < NUM_LOG_FILES; i++) {
             cs_arrays.arrays[i].dumped = 0;
             cs_arrays.arrays[i].array_size = 0;
             cs_arrays.arrays[i].total_pids = 0;
@@ -463,8 +440,7 @@ void hrtime_taskq_count_init(char **taskq_names,
                              int num_taskqs)
 {
     int i;
-    if(!_hrtime_taskq_initialized)
-    {
+    if (!_hrtime_taskq_initialized) {
         all_taskq_counts.taskqs = NULL;
         all_taskq_counts.taskqs = vmem_zalloc(sizeof(taskq_name_thread_counts_t) * num_taskqs, KM_SLEEP);
         ASSERT3P(all_taskq_counts.taskqs, !=, NULL);
@@ -474,8 +450,7 @@ void hrtime_taskq_count_init(char **taskq_names,
         all_taskq_counts.file_offset = 0;
         all_taskq_counts.num_taskqs_done = 0;
         mutex_init(&all_taskq_counts.lock, NULL, MUTEX_DEFAULT, NULL);
-        for(i = 0; i < num_taskqs; i++)
-        {
+        for (i = 0; i < num_taskqs; i++) {
             all_taskq_counts.taskqs[i].num_threads_present = 0;
             strcpy(all_taskq_counts.taskqs[i].taskq_name, taskq_names[i]);
         }
@@ -483,8 +458,7 @@ void hrtime_taskq_count_init(char **taskq_names,
 #if HRTIME_DEBUG
         cmn_err(CE_WARN, "Initialized the data for timestamping taskq's where all_taskq_counts.total_taskqs = %d in %s",
                 all_taskq_counts.total_taskqs, __func__);
-        for(i = 0; i < num_taskqs; i++)
-        {
+        for (i = 0; i < num_taskqs; i++) {
             cmn_err(CE_WARN, "all_taskq_counts.taskq[%d].taskq_name = %s in %s with num_threads_present = %d", 
                     i, all_taskq_counts.taskqs[i].taskq_name,
                      __func__, all_taskq_counts.taskqs[i].num_threads_present);
@@ -532,10 +506,8 @@ void hrtime_taskq_count_add_count(char *taskq_name,
     int taskq_offset = 0;
     int thread_count_offset = 0;
 
-    if(!(all_taskq_counts.dumped))
-    {
-        if(!_hrtime_taskq_initialized)
-        {
+    if (!(all_taskq_counts.dumped)) {
+        if (!_hrtime_taskq_initialized) {
             /* Initilization code not called, so just bail */
             return;
         }
@@ -543,29 +515,24 @@ void hrtime_taskq_count_add_count(char *taskq_name,
         /*
          * First we need to find the taskq we are looking for by name
          */
-        for(taskq_offset = 0; taskq_offset < all_taskq_counts.total_taskqs; taskq_offset++)
-        {
-            if(!strcmp(all_taskq_counts.taskqs[taskq_offset].taskq_name, taskq_name))
-            {
+        for (taskq_offset = 0; taskq_offset < all_taskq_counts.total_taskqs; taskq_offset++) {
+            if (!strcmp(all_taskq_counts.taskqs[taskq_offset].taskq_name, taskq_name)) {
                 break;
             }
         }
 
         /* If this is not a taskq we are counting just bail */
-        if(taskq_offset == all_taskq_counts.total_taskqs)
-        {
+        if (taskq_offset == all_taskq_counts.total_taskqs) {
             return;
         }
 
-        if((all_taskq_counts.taskqs[taskq_offset].num_counts_collected + 1) <= STATIC_PER_TASKQ_COUNT_CAP)
-        {
+        if ((all_taskq_counts.taskqs[taskq_offset].num_counts_collected + 1) <= STATIC_PER_TASKQ_COUNT_CAP) {
             all_taskq_counts.taskqs[taskq_offset].num_threads_present += 1;
             all_taskq_counts.taskqs[taskq_offset].num_counts_collected += 1;
             thread_count_offset = all_taskq_counts.taskqs[taskq_offset].num_threads[0] + 1;
             all_taskq_counts.taskqs[taskq_offset].num_threads[thread_count_offset] = num_threads;
             all_taskq_counts.taskqs[taskq_offset].num_threads[0] += 1;
-            if(all_taskq_counts.taskqs[taskq_offset].num_counts_collected >= STATIC_PER_TASKQ_COUNT_CAP)
-            {
+            if (all_taskq_counts.taskqs[taskq_offset].num_counts_collected >= STATIC_PER_TASKQ_COUNT_CAP) {
                 all_taskq_counts.num_taskqs_done += 1;
             }
             all_taskq_counts.taskqs[taskq_offset].num_threads_present -= 1;
@@ -587,32 +554,25 @@ void hrtime_taskq_count_dump(void)
     int taskq_name_len = 0;
     int i;
 
-    if(!(all_taskq_counts.dumped))
-    {
-        if(!_hrtime_taskq_initialized)
-        {
+    if (!(all_taskq_counts.dumped)) {
+        if (!_hrtime_taskq_initialized) {
             /* Initilization code not called, so just bail */
             return;
         }
         
 
-        if(all_taskq_counts.num_taskqs_done >= all_taskq_counts.total_taskqs)
-        {
+        if (all_taskq_counts.num_taskqs_done >= all_taskq_counts.total_taskqs) {
             /* Only a single thread will write the log file */
             mutex_enter(&all_taskq_counts.lock);
-            if(!all_taskq_counts.dumped)
-            {
+            if (!all_taskq_counts.dumped) {
                 all_taskq_counts.dump_file = spl_filp_open(LOG_FILE_TASKQ, O_WRONLY|O_CREAT, 0666, NULL);
-                if(all_taskq_counts.dump_file == NULL)
-                {
+                if (all_taskq_counts.dump_file == NULL) {
                     cmn_err(CE_WARN, "Could not open all_taskq_counts.dump_file = %s", LOG_FILE_TASKQ);
                     mutex_exit(&all_taskq_counts.lock);
                     return;
                 }
                 all_taskq_counts.dumped = 1;
-            }
-            else
-            {
+            } else {
                 _hrtime_taskq_count_destroy(B_TRUE);
                 return;
             }
@@ -631,8 +591,7 @@ void hrtime_taskq_count_dump(void)
              * 3 - Write out that total number of thread counts collected for the taskq
              * 4 - Write out the thread counts for the taskq collected
              */
-            for(i = 0; i < all_taskq_counts.total_taskqs; i++)
-            {
+            for (i = 0; i < all_taskq_counts.total_taskqs; i++) {
                 taskq_name_len = strlen(all_taskq_counts.taskqs[i].taskq_name);
                 /* Taskq name length */
                 spl_kernel_write(all_taskq_counts.dump_file,
@@ -702,10 +661,8 @@ void hrtime_add_timestamp_pipeline_stages(int curr_pid,
     /* Next get the pipeline offset for correct pid array */
     pid_stage_offset = ZIOSTAGE_TO_OFFSET(io_stage);
 
-    if(!(all_pid_io_stages.dumped))
-    {
-        if(!_hrtime_ts_pipeline_initialized)
-        {
+    if (!(all_pid_io_stages.dumped)) {
+        if (!_hrtime_ts_pipeline_initialized) {
             /* Initilization code not called, so just bail */
             return;
         }
@@ -713,47 +670,37 @@ void hrtime_add_timestamp_pipeline_stages(int curr_pid,
         /* If another PID resides in the slot, find next available slot. If no
          * slots is available just bail
          */
-        while((all_pid_io_stages.pid_io_stages[pid_arr_offset].curr_pid != curr_pid) && 
-              (all_pid_io_stages.row_select_iter < STATIC_PID_CAP))
-        {
-            if(all_pid_io_stages.pid_io_stages[pid_arr_offset].curr_pid != 0)
-            {
+        while ((all_pid_io_stages.pid_io_stages[pid_arr_offset].curr_pid != curr_pid) && 
+               (all_pid_io_stages.row_select_iter < STATIC_PID_CAP)) {
+            if (all_pid_io_stages.pid_io_stages[pid_arr_offset].curr_pid != 0) {
                 all_pid_io_stages.row_select_iter += 1;
                 pid_arr_offset += 1;
-            }
-            else
-            {
+            } else {
                 break;
             }
         }
         
         /* Bailing here if no avialable slot */
-        if(all_pid_io_stages.row_select_iter >= STATIC_PID_CAP)
-        {
+        if (all_pid_io_stages.row_select_iter >= STATIC_PID_CAP) {
             return;
         }
        
-        if(!strcmp(all_pid_io_stages.pid_io_stages[pid_arr_offset].zio_pipeline_stage[pid_stage_offset], no_stage))
-        { 
+        if (!strcmp(all_pid_io_stages.pid_io_stages[pid_arr_offset].zio_pipeline_stage[pid_stage_offset], no_stage)) { 
             all_pid_io_stages.pid_io_stages[pid_arr_offset].zio_pipeline_stage[pid_stage_offset] = 
                 zio_pipeline_stage_strs[pid_stage_offset];
         }
         
-        if(!all_pid_io_stages.pid_io_stages[pid_arr_offset].done_collecting)
-        {
+        if (!all_pid_io_stages.pid_io_stages[pid_arr_offset].done_collecting) {
             all_pid_io_stages.pid_io_stages[pid_arr_offset].curr_pid = curr_pid;
             next_ts_slot = all_pid_io_stages.pid_io_stages[pid_arr_offset].io_stages[pid_stage_offset][0] + 1;
             all_pid_io_stages.pid_io_stages[pid_arr_offset].io_stages[pid_stage_offset][next_ts_slot] = NSEC2USEC(gethrtime());
             all_pid_io_stages.pid_io_stages[pid_arr_offset].io_stages[pid_stage_offset][0] += 1;
             all_pid_io_stages.pid_io_stages[pid_arr_offset].num_of_ts_collected += 1;
-            if(all_pid_io_stages.pid_io_stages[pid_arr_offset].num_of_ts_collected == STATIC_PIPELINE_COL_CAP)
-            {
+            if (all_pid_io_stages.pid_io_stages[pid_arr_offset].num_of_ts_collected == STATIC_PIPELINE_COL_CAP) {
                 /* We have reached our limit, so stop collecting */
                 all_pid_io_stages.pid_io_stages[pid_arr_offset].done_collecting = B_TRUE;
-            }
-            else if(all_pid_io_stages.pid_io_stages[pid_arr_offset].num_of_ts_collected >= STATIC_PIPELINE_PID_CAP &&
-                    IS_ZIO_DONE_STAGE(io_stage))
-            {
+            } else if (all_pid_io_stages.pid_io_stages[pid_arr_offset].num_of_ts_collected >= STATIC_PIPELINE_PID_CAP &&
+                       IS_ZIO_DONE_STAGE(io_stage)) {
                 /* 
                  * This is where we should always land as we plan on stopping collection
                  * only on zio_done stages for a PID
@@ -763,34 +710,27 @@ void hrtime_add_timestamp_pipeline_stages(int curr_pid,
         }
 
         /* If we are at capacity for the timestamps for all PID's, we just need to dump the output */
-        if(all_pid_io_stages.pid_io_stages[pid_arr_offset].done_collecting && 
-           _hrtime_pipeline_all_pids_done())
-        {
+        if (all_pid_io_stages.pid_io_stages[pid_arr_offset].done_collecting && 
+            _hrtime_pipeline_all_pids_done()) {
             /* Only a single thread will write the log file */
             mutex_enter(&all_pid_io_stages.lock);
-            if(!all_pid_io_stages.dumped)
-            {
+            if (!all_pid_io_stages.dumped) {
                 all_pid_io_stages.dump_file = spl_filp_open(LOG_FILE_PIPELINE, O_WRONLY|O_CREAT, 0666, NULL);
-                if(all_pid_io_stages.dump_file == NULL)
-                {
+                if (all_pid_io_stages.dump_file == NULL) {
                     cmn_err(CE_WARN, "Could not open all_pid_io_stages.dump_file = %s", LOG_FILE_PIPELINE);
                     mutex_exit(&all_pid_io_stages.lock);
                     return;
                 }
                 all_pid_io_stages.dumped = 1;
-            }
-            else
-            {
+            } else {
                 _hrtime_pipeline_destroy(B_TRUE);
                 return;
             }
             
             /* First writing out the total number or PID's with timestamps to the file */
-            for(i = 0; i < STATIC_PID_CAP; i++)
-            {
-                if(all_pid_io_stages.pid_io_stages[i].curr_pid != 0
-                   && all_pid_io_stages.pid_io_stages[i].num_of_ts_collected > MIN_TS_TO_IGNORE)
-                {
+            for (i = 0; i < STATIC_PID_CAP; i++) {
+                if (all_pid_io_stages.pid_io_stages[i].curr_pid != 0
+                    && all_pid_io_stages.pid_io_stages[i].num_of_ts_collected > MIN_TS_TO_IGNORE) {
                     all_pid_io_stages.total_pids += 1;
                 }
             }
@@ -806,11 +746,9 @@ void hrtime_add_timestamp_pipeline_stages(int curr_pid,
                              &all_pid_io_stages.file_offset);
 
             /* Now writing out each PID and its corresponding timestamps */
-            for(i = 0; i < STATIC_PID_CAP; i++)
-            {
-                if(all_pid_io_stages.pid_io_stages[i].curr_pid != 0 
-                   && all_pid_io_stages.pid_io_stages[i].num_of_ts_collected > MIN_TS_TO_IGNORE)
-                {
+            for (i = 0; i < STATIC_PID_CAP; i++) {
+                if (all_pid_io_stages.pid_io_stages[i].curr_pid != 0 
+                    && all_pid_io_stages.pid_io_stages[i].num_of_ts_collected > MIN_TS_TO_IGNORE) {
                     /* Writing out PID */
                     spl_kernel_write(all_pid_io_stages.dump_file,
                                      &all_pid_io_stages.pid_io_stages[i].curr_pid,
@@ -824,8 +762,7 @@ void hrtime_add_timestamp_pipeline_stages(int curr_pid,
                      * 3 - Total number of timestamps for the stage
                      * 4 - All the timestamps collected for this stage
                      */
-                    for(j = 0; j < num_pipeline_stages; j++)
-                    {
+                    for (j = 0; j < num_pipeline_stages; j++) {
                         pipeline_stage_name_len = strlen(all_pid_io_stages.pid_io_stages[i].zio_pipeline_stage[j]);
                         /* Length of pipeline stage name */
                         spl_kernel_write(all_pid_io_stages.dump_file,
@@ -846,8 +783,7 @@ void hrtime_add_timestamp_pipeline_stages(int curr_pid,
                                          &all_pid_io_stages.file_offset);
                         
                         /* Actual timestamps for this pipeline stage */
-                        if(all_pid_io_stages.pid_io_stages[i].io_stages[j][0])
-                        {
+                        if (all_pid_io_stages.pid_io_stages[i].io_stages[j][0]) {
                             /* If we have timestamps we write them now */
                             spl_kernel_write(all_pid_io_stages.dump_file,
                                              &all_pid_io_stages.pid_io_stages[i].io_stages[j][1],
@@ -893,10 +829,8 @@ void hrtime_add_timestamp_call_sites(int curr_pid,
     /* Making sure a valid offset was passed */
     ASSERT3U(offset, <, NUM_LOG_FILES);
 
-    if(!(cs_arrays.arrays[offset].dumped))
-    {
-        if(!_hrtime_ts_call_site_initialized)
-        {
+    if (!(cs_arrays.arrays[offset].dumped)) {
+        if (!_hrtime_ts_call_site_initialized) {
             /* Initilization code not called, so just bail */
             return;
         }
@@ -908,23 +842,18 @@ void hrtime_add_timestamp_call_sites(int curr_pid,
          * If another PID resides in the slot find next available slot. If no
          * slot is available just bail
          */
-        while((cs_arrays.arrays[offset].arr[pid_row][0] != curr_pid) && 
-              (cs_arrays.arrays[offset].row_select_iter < STATIC_PID_CAP))
-        {
-            if(cs_arrays.arrays[offset].arr[pid_row][0] != 0)
-            {
+        while ((cs_arrays.arrays[offset].arr[pid_row][0] != curr_pid) && 
+               (cs_arrays.arrays[offset].row_select_iter < STATIC_PID_CAP)) {
+            if (cs_arrays.arrays[offset].arr[pid_row][0] != 0) {
                 cs_arrays.arrays[offset].row_select_iter += 1;
                 pid_row += 1;
-            }
-            else
-            {
+            } else {
                 break;
             }
         }
 
         /* Bailing here if no avialable slot */
-        if(cs_arrays.arrays[offset].row_select_iter >= STATIC_PID_CAP)
-        {
+        if (cs_arrays.arrays[offset].row_select_iter >= STATIC_PID_CAP) {
             return;
         }
 
@@ -932,33 +861,26 @@ void hrtime_add_timestamp_call_sites(int curr_pid,
         cs_arrays.arrays[offset].arr[pid_row][0] = curr_pid;
         cs_arrays.arrays[offset].arr[pid_row][cs_arrays.arrays[offset].arr[pid_row][1] + 2] = NSEC2USEC(gethrtime());
         cs_arrays.arrays[offset].arr[pid_row][1] += 1;
-        if(cs_arrays.arrays[offset].array_size >= STATIC_LIST_CAP)
-        {
+        if (cs_arrays.arrays[offset].array_size >= STATIC_LIST_CAP) {
             /* Only a single thread will write the log file */
             mutex_enter(&cs_arrays.arrays[offset].lock);
             
-            if(!cs_arrays.arrays[offset].dumped)
-            {
+            if (!cs_arrays.arrays[offset].dumped) {
                 cs_arrays.arrays[offset].dump_file = spl_filp_open(LOG_FILE_CS[offset], O_WRONLY|O_CREAT, 0666, NULL);
-                if(cs_arrays.arrays[offset].dump_file == NULL)
-                {
+                if (cs_arrays.arrays[offset].dump_file == NULL) {
                     cmn_err(CE_WARN, "Could not open cs_arrays.array[%d].dump_file = %s", offset, LOG_FILE_CS[offset]);
                     mutex_exit(&cs_arrays.arrays[offset].lock);
                     return;
                 }
                 cs_arrays.arrays[offset].dumped = 1;
-            }
-            else
-            {
+            } else {
                 mutex_exit(&cs_arrays.arrays[offset].lock);
                 return;
             }
 
             /* First writing out the total number of PID's with timestamps to file */
-            for(i = 0; i < STATIC_PID_CAP; i++)
-            {
-                if(cs_arrays.arrays[offset].arr[i][0] != 0)
-                {
+            for (i = 0; i < STATIC_PID_CAP; i++) {
+                if (cs_arrays.arrays[offset].arr[i][0] != 0) {
                     cs_arrays.arrays[offset].total_pids += 1;
                 }
             }
@@ -986,10 +908,8 @@ void hrtime_add_timestamp_call_sites(int curr_pid,
                              &cs_arrays.arrays[offset].file_offset);
 
             /* Now writing out each PID with it corresponding timestamps */
-            for(i = 0; i < STATIC_PID_CAP; i++)
-            {
-                if(cs_arrays.arrays[offset].arr[i][0] != 0)
-                {
+            for (i = 0; i < STATIC_PID_CAP; i++) {
+                if (cs_arrays.arrays[offset].arr[i][0] != 0) {
                     spl_kernel_write(cs_arrays.arrays[offset].dump_file, 
                                      &cs_arrays.arrays[offset].arr[i], 
                                      sizeof(hrtime_t)*(cs_arrays.arrays[offset].arr[i][1] + 2), 
@@ -997,12 +917,10 @@ void hrtime_add_timestamp_call_sites(int curr_pid,
                 }
             }
             spl_filp_close(cs_arrays.arrays[offset].dump_file);
-            for(i = 0; i < NUM_LOG_FILES; i++)
-            {
+            for (i = 0; i < NUM_LOG_FILES; i++) {
                 all_logs_dumped &= cs_arrays.arrays[offset].dumped;
             }
-            if(all_logs_dumped)
-            {
+            if (all_logs_dumped) {
                 _hrtime_call_site_destroy();
             }
             mutex_exit(&cs_arrays.arrays[offset].lock);
