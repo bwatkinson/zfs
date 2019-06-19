@@ -320,7 +320,7 @@ static void _hrtime_taskq_count_destroy(boolean_t lock_held)
 #if HRTIME_DEBUG
         cmn_err(CE_WARN, "_hrtime_taskq_initialized = %d",
                 _hrtime_taskq_initialized);
-        for (i = 0; i < all_taskq_counts.total_taskqs; i++) 1{
+        for (i = 0; i < all_taskq_counts.total_taskqs; i++){
             cmn_err(CE_WARN, "all_taskq_counts.taskq[%d].taskq_name = %s collected = %d counts", 
                     i, all_taskq_counts.taskqs[i].taskq_name, all_taskq_counts.taskqs[i].num_counts_collected);
         }
