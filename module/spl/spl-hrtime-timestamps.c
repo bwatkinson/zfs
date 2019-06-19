@@ -51,7 +51,7 @@ spl_filp_open(const char *name, int flags, int mode, int *err)
 static ssize_t 
 spl_kernel_write(struct file *file, const void *buf, size_t count, loff_t *pos)
 {
-#if defined(HAVE_KERNEL_WRITE_POS)
+#if defined(HAVE_KERNEL_WRITE_PPOS)
     return (kernel_write(file, buf, count, pos));
 #else
     mm_segment_t saved_fs;
