@@ -41,6 +41,7 @@ KERNEL_H = \
 	$(top_srcdir)/include/spl/sys/taskq.h \
 	$(top_srcdir)/include/spl/sys/thread.h \
 	$(top_srcdir)/include/spl/sys/time.h \
+    $(top_srcdir)/include/spl/sys/hrtime_spl_timestamp.h \
 	$(top_srcdir)/include/spl/sys/timer.h \
 	$(top_srcdir)/include/spl/sys/tsd.h \
 	$(top_srcdir)/include/spl/sys/types32.h \
