@@ -639,9 +639,11 @@ zio_hrtime_stamp_get_root_parent(zio_t *zio)
 {
     zio_link_t *zl = NULL;
     zio_t *pio = NULL;
-    zio_t *prev_pio = NULL;
+    zio_t *prev_pio;
 
     ASSERT(zio != NULL);
+    
+    prev_pio = zio;
     pio = zio_walk_parents(zio, &zl);
     while (pio != NULL) {
         prev_pio = pio;

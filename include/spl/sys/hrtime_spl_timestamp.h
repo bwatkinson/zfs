@@ -88,7 +88,7 @@
  * Change this variable in order to set the maximum number of PID's
  * to collect timestamps for
  */
-#define STATIC_PID_CAP 256
+#define STATIC_PID_CAP 48
 
 /****************************************************************/
 /****************************************************************/
