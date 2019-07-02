@@ -684,7 +684,7 @@ zvol_log_write(zvol_state_t *zv, dmu_tx_t *tx, uint64_t offset,
 		itx_wr_state_t wr_state = write_state;
 		ssize_t len = size;
 
-		if (wr_state == WR_COPIED && size > ZIL_MAX_COPIED_DATA)
+		if (wr_state == WR_COPIED && size > zil_max_copied_data(zilog))
 			wr_state = WR_NEED_COPY;
 		else if (wr_state == WR_INDIRECT)
 			len = MIN(blocksize - P2PHASE(offset, blocksize), size);
@@ -1875,6 +1875,10 @@ zvol_create_minor_impl(const char *name)
 #endif
 #ifdef QUEUE_FLAG_ADD_RANDOM
 	blk_queue_flag_clear(QUEUE_FLAG_ADD_RANDOM, zv->zv_queue);
+#endif
+	/* This flag was introduced in kernel version 4.12. */
+#ifdef QUEUE_FLAG_SCSI_PASSTHROUGH
+	blk_queue_flag_set(QUEUE_FLAG_SCSI_PASSTHROUGH, zv->zv_queue);
 #endif
 
 	if (spa_writeable(dmu_objset_spa(os))) {

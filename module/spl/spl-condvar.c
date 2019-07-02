@@ -33,6 +33,11 @@
 // Brian A. Added this line
 #include <sys/hrtime_spl_timestamp.h>
 //////////////////////////////
+#include <linux/sched.h>
+
+#ifdef HAVE_SCHED_SIGNAL_HEADER
+#include <linux/sched/signal.h>
+#endif
 
 void
 __cv_init(kcondvar_t *cvp, char *name, kcv_type_t type, void *arg)
@@ -157,10 +162,20 @@ __cv_wait_io(kcondvar_t *cvp, kmutex_t *mp, int is_read)
 }
 EXPORT_SYMBOL(__cv_wait_io);
 
-void
+int
+__cv_wait_io_sig(kcondvar_t *cvp, kmutex_t *mp)
+{
+	cv_wait_common(cvp, mp, TASK_INTERRUPTIBLE, 1);
+
+	return (signal_pending(current) ? 0 : 1);
+}
+EXPORT_SYMBOL(__cv_wait_io_sig);
+
+int
 __cv_wait_sig(kcondvar_t *cvp, kmutex_t *mp)
 {
 	cv_wait_common(cvp, mp, TASK_INTERRUPTIBLE, 0, 0);
+	return (signal_pending(current) ? 0 : 1);
 }
 EXPORT_SYMBOL(__cv_wait_sig);
 

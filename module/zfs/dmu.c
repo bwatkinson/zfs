@@ -20,7 +20,7 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2011, 2017 by Delphix. All rights reserved.
+ * Copyright (c) 2011, 2018 by Delphix. All rights reserved.
  * Copyright (c) 2013 by Saso Kiselkov. All rights reserved.
  * Copyright (c) 2013, Joyent, Inc. All rights reserved.
  * Copyright (c) 2016, Nexenta Systems, Inc. All rights reserved.
@@ -75,11 +75,11 @@ unsigned long zfs_per_txg_dirty_frees_percent = 5;
 int zfs_dmu_offset_next_sync = 0;
 
 /*
- * This can be used for testing, to ensure that certain actions happen
- * while in the middle of a remap (which might otherwise complete too
- * quickly).  Used by ztest(8).
+ * Limit the amount we can prefetch with one call to this amount.  This
+ * helps to limit the amount of memory that can be used by prefetching.
+ * Larger objects should be prefetched a bit at a time.
  */
-int zfs_object_remap_one_indirect_delay_ms = 0;
+int dmu_prefetch_max = 8 * SPA_MAXBLOCKSIZE;
 
 const dmu_object_type_info_t dmu_ot[DMU_OT_NUMTYPES] = {
 	{DMU_BSWAP_UINT8,  TRUE,  FALSE, FALSE, "unallocated"		},
@@ -688,6 +688,11 @@ dmu_prefetch(objset_t *os, uint64_t object, int64_t level, uint64_t offset,
 	}
 
 	/*
+	 * See comment before the definition of dmu_prefetch_max.
+	 */
+	len = MIN(len, dmu_prefetch_max);
+
+	/*
 	 * XXX - Note, if the dnode for the requested object is not
 	 * already cached, we will do a *synchronous* read in the
 	 * dnode_hold() call.  The same is true for any indirects.
@@ -1122,137 +1127,6 @@ dmu_write_by_dnode(dnode_t *dn, uint64_t offset, uint64_t size,
 	dmu_buf_rele_array(dbp, numbufs, FTAG);
 }
 
-static int
-dmu_object_remap_one_indirect(objset_t *os, dnode_t *dn,
-    uint64_t last_removal_txg, uint64_t offset)
-{
-	uint64_t l1blkid = dbuf_whichblock(dn, 1, offset);
-	dnode_t *dn_tx;
-	int err = 0;
-
-	rw_enter(&dn->dn_struct_rwlock, RW_READER);
-	dmu_buf_impl_t *dbuf = dbuf_hold_level(dn, 1, l1blkid, FTAG);
-	ASSERT3P(dbuf, !=, NULL);
-
-	/*
-	 * If the block hasn't been written yet, this default will ensure
-	 * we don't try to remap it.
-	 */
-	uint64_t birth = UINT64_MAX;
-	ASSERT3U(last_removal_txg, !=, UINT64_MAX);
-	if (dbuf->db_blkptr != NULL)
-		birth = dbuf->db_blkptr->blk_birth;
-	rw_exit(&dn->dn_struct_rwlock);
-
-	/*
-	 * If this L1 was already written after the last removal, then we've
-	 * already tried to remap it.  An additional hold is taken after the
-	 * dmu_tx_assign() to handle the case where the dnode is freed while
-	 * waiting for the next open txg.
-	 */
-	if (birth <= last_removal_txg &&
-	    dbuf_read(dbuf, NULL, DB_RF_MUST_SUCCEED) == 0 &&
-	    dbuf_can_remap(dbuf)) {
-		dmu_tx_t *tx = dmu_tx_create(os);
-		dmu_tx_hold_remap_l1indirect(tx, dn->dn_object);
-		err = dmu_tx_assign(tx, TXG_WAIT);
-		if (err == 0) {
-			err = dnode_hold(os, dn->dn_object, FTAG, &dn_tx);
-			if (err == 0) {
-				(void) dbuf_dirty(dbuf, tx);
-				dnode_rele(dn_tx, FTAG);
-			}
-			dmu_tx_commit(tx);
-		} else {
-			dmu_tx_abort(tx);
-		}
-	}
-
-	dbuf_rele(dbuf, FTAG);
-
-	delay(MSEC_TO_TICK(zfs_object_remap_one_indirect_delay_ms));
-
-	return (err);
-}
-
-/*
- * Remap all blockpointers in the object, if possible, so that they reference
- * only concrete vdevs.
- *
- * To do this, iterate over the L0 blockpointers and remap any that reference
- * an indirect vdev. Note that we only examine L0 blockpointers; since we
- * cannot guarantee that we can remap all blockpointer anyways (due to split
- * blocks), we do not want to make the code unnecessarily complicated to
- * catch the unlikely case that there is an L1 block on an indirect vdev that
- * contains no indirect blockpointers.
- */
-int
-dmu_object_remap_indirects(objset_t *os, uint64_t object,
-    uint64_t last_removal_txg)
-{
-	uint64_t offset, l1span;
-	int err;
-	dnode_t *dn, *dn_tx;
-
-	err = dnode_hold(os, object, FTAG, &dn);
-	if (err != 0) {
-		return (err);
-	}
-
-	if (dn->dn_nlevels <= 1) {
-		if (issig(JUSTLOOKING) && issig(FORREAL)) {
-			err = SET_ERROR(EINTR);
-		}
-
-		/*
-		 * If the dnode has no indirect blocks, we cannot dirty them.
-		 * We still want to remap the blkptr(s) in the dnode if
-		 * appropriate, so mark it as dirty.  An additional hold is
-		 * taken after the dmu_tx_assign() to handle the case where
-		 * the dnode is freed while waiting for the next open txg.
-		 */
-		if (err == 0 && dnode_needs_remap(dn)) {
-			dmu_tx_t *tx = dmu_tx_create(os);
-			dmu_tx_hold_bonus(tx, object);
-			err = dmu_tx_assign(tx, TXG_WAIT);
-			if (err == 0) {
-				err = dnode_hold(os, object, FTAG, &dn_tx);
-				if (err == 0) {
-					dnode_setdirty(dn_tx, tx);
-					dnode_rele(dn_tx, FTAG);
-				}
-				dmu_tx_commit(tx);
-			} else {
-				dmu_tx_abort(tx);
-			}
-		}
-
-		dnode_rele(dn, FTAG);
-		return (err);
-	}
-
-	offset = 0;
-	l1span = 1ULL << (dn->dn_indblkshift - SPA_BLKPTRSHIFT +
-	    dn->dn_datablkshift);
-	/*
-	 * Find the next L1 indirect that is not a hole.
-	 */
-	while (dnode_next_offset(dn, 0, &offset, 2, 1, 0) == 0) {
-		if (issig(JUSTLOOKING) && issig(FORREAL)) {
-			err = SET_ERROR(EINTR);
-			break;
-		}
-		if ((err = dmu_object_remap_one_indirect(os, dn,
-		    last_removal_txg, offset)) != 0) {
-			break;
-		}
-		offset += l1span;
-	}
-
-	dnode_rele(dn, FTAG);
-	return (err);
-}
-
 void
 dmu_prealloc(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
     dmu_tx_t *tx)
@@ -1291,6 +1165,20 @@ dmu_write_embedded(objset_t *os, uint64_t object, uint64_t offset,
 	    uncompressed_size, compressed_size, byteorder, tx);
 
 	dmu_buf_rele(db, FTAG);
+}
+
+void
+dmu_redact(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
+    dmu_tx_t *tx)
+{
+	int numbufs, i;
+	dmu_buf_t **dbp;
+
+	VERIFY0(dmu_buf_hold_array(os, object, offset, size, FALSE, FTAG,
+	    &numbufs, &dbp));
+	for (i = 0; i < numbufs; i++)
+		dmu_buf_redact(dbp[i], tx);
+	dmu_buf_rele_array(dbp, numbufs, FTAG);
 }
 
 /*
@@ -2393,39 +2281,14 @@ dmu_offset_next(objset_t *os, uint64_t object, boolean_t hole, uint64_t *off)
 		return (err);
 
 	/*
-	 * Check if there are dirty data blocks or frees which have not been
-	 * synced.  Dirty spill and bonus blocks which are external to the
-	 * object can ignored when reporting holes.
+	 * Check if dnode is dirty
 	 */
-	mutex_enter(&dn->dn_mtx);
 	for (i = 0; i < TXG_SIZE; i++) {
 		if (multilist_link_active(&dn->dn_dirty_link[i])) {
-
-			if (dn->dn_free_ranges[i] != NULL) {
-				clean = B_FALSE;
-				break;
-			}
-
-			list_t *list = &dn->dn_dirty_records[i];
-			dbuf_dirty_record_t *dr;
-
-			for (dr = list_head(list); dr != NULL;
-			    dr = list_next(list, dr)) {
-				dmu_buf_impl_t *db = dr->dr_dbuf;
-
-				if (db->db_blkid == DMU_SPILL_BLKID ||
-				    db->db_blkid == DMU_BONUS_BLKID)
-					continue;
-
-				clean = B_FALSE;
-				break;
-			}
-		}
-
-		if (clean == B_FALSE)
+			clean = B_FALSE;
 			break;
+		}
 	}
-	mutex_exit(&dn->dn_mtx);
 
 	/*
 	 * If compatibility option is on, sync any current changes before
@@ -2673,6 +2536,10 @@ MODULE_PARM_DESC(zfs_per_txg_dirty_frees_percent,
 module_param(zfs_dmu_offset_next_sync, int, 0644);
 MODULE_PARM_DESC(zfs_dmu_offset_next_sync,
 	"Enable forcing txg sync to find holes");
+
+module_param(dmu_prefetch_max, int, 0644);
+MODULE_PARM_DESC(dmu_prefetch_max,
+	"Limit one prefetch call to this size");
 
 /* END CSTYLED */
 

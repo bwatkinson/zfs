@@ -21,7 +21,7 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright 2011 Nexenta Systems, Inc.  All rights reserved.
- * Copyright (c) 2012, 2016 by Delphix. All rights reserved.
+ * Copyright (c) 2012, 2018 by Delphix. All rights reserved.
  * Copyright (c) 2012, Joyent, Inc. All rights reserved.
  */
 
@@ -137,6 +137,7 @@
 
 #define	noinline	__attribute__((noinline))
 #define	likely(x)	__builtin_expect((x), 1)
+#define	unlikely(x)	__builtin_expect((x), 0)
 
 /*
  * Debugging
@@ -320,6 +321,7 @@ typedef pthread_cond_t		kcondvar_t;
 extern void cv_init(kcondvar_t *cv, char *name, int type, void *arg);
 extern void cv_destroy(kcondvar_t *cv);
 extern void cv_wait(kcondvar_t *cv, kmutex_t *mp);
+extern int cv_wait_sig(kcondvar_t *cv, kmutex_t *mp);
 extern clock_t cv_timedwait(kcondvar_t *cv, kmutex_t *mp, clock_t abstime);
 extern clock_t cv_timedwait_hires(kcondvar_t *cvp, kmutex_t *mp, hrtime_t tim,
     hrtime_t res, int flag);
@@ -328,8 +330,8 @@ extern void cv_broadcast(kcondvar_t *cv);
 
 #define	cv_timedwait_io(cv, mp, at, r)		cv_timedwait(cv, mp, at)
 #define	cv_timedwait_sig(cv, mp, at)		cv_timedwait(cv, mp, at)
-#define	cv_wait_sig(cv, mp)			cv_wait(cv, mp)
-#define	cv_wait_io(cv, mp, r)			cv_wait(cv, mp)
+#define	cv_wait_io(cv, mp)			cv_wait(cv, mp)
+#define	cv_wait_io_sig(cv, mp)			cv_wait_sig(cv, mp)
 #define	cv_timedwait_sig_hires(cv, mp, t, r, f) \
 	cv_timedwait_hires(cv, mp, t, r, f)
 
