@@ -252,6 +252,14 @@ __cv_timedwait_common(kcondvar_t *cvp, kmutex_t *mp, clock_t expire_time,
 	 */
 	mutex_exit(mp);
 	if (io) {
+#if defined(HAVE_IO_SCHEDULE_TIMEOUT) && defined(HRTIME_CALL_SITE_STAMP)
+        ///////////////////////////////
+        // Brian A. Added this line
+        if (is_read) {
+            hrtime_add_timestamp_call_sites(getpid(), 2, __func__);
+        }
+        ///////////////////////////////
+#endif
 		time_left = spl_io_schedule_timeout(time_left, is_read);
     } else {
 		time_left = schedule_timeout(time_left);

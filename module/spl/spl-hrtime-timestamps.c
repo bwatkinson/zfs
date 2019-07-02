@@ -272,16 +272,12 @@ static void _hrtime_pipeline_destroy(boolean_t lock_held)
 
 static void _hrtime_call_site_destroy(void)
 {
-#if HRTIME_DEBUG
     static int num_logs_written = 0;
+    num_logs_written += 1;
+
+#if HRTIME_DEBUG
     int i, offset;
     cmn_err(CE_WARN, "Inside %s", __func__);
-#endif 
-    if (_hrtime_ts_call_site_initialized) {
-        _hrtime_ts_call_site_initialized = 0;
-    }
-#if HRTIME_DEBUG
-    num_logs_written += 1;
     if (num_logs_written >= NUM_LOG_FILES) {
         for (offset = 0; offset < NUM_LOG_FILES; offset++) {
             cmn_err(CE_WARN, "For callsite %d", offset);
@@ -295,9 +291,13 @@ static void _hrtime_call_site_destroy(void)
                 }
             }
         }
-        num_logs_written = 0;
     }
 #endif /* HRTIME_DEBUG */
+
+    if (num_logs_written >= NUM_LOG_FILES) {
+        _hrtime_ts_call_site_initialized = 0;
+        num_logs_written = 0;
+    }
 }
 
 static void _hrtime_taskq_count_destroy(boolean_t lock_held)
