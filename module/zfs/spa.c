@@ -993,8 +993,13 @@ spa_taskqs_init(spa_t *spa, zio_type_t t, zio_taskq_type_t q)
 		taskq_t *tq;
 		char name[32];
 
-		(void) snprintf(name, sizeof (name), "%s_%s",
-		    zio_type_name[t], zio_taskq_types[q]);
+        if (count > 1) {
+            (void) snprintf(name, sizeof(name), "%s_%s_%u",
+                zio_type_name[t], zio_taskq_types[q]);
+        } else {
+		    (void) snprintf(name, sizeof (name), "%s_%s",
+		        zio_type_name[t], zio_taskq_types[q]);
+        }
 
 		if (zio_taskq_sysdc && spa->spa_proc != &p0) {
 			if (batch)
