@@ -111,24 +111,25 @@ static const char *zio_pipeline_stage_strs[ZIO_PIPELINE_STAGES] =
     "zio_free_bp_init",      // [3]  1 << 3
     "zio_issue_async",       // [4]  1 << 4
     "zio_write_compress",    // [5]  1 << 5
-    "zio_checksum_generate", // [6]  1 << 6
-    "zio_nop_write",         // [7]  1 << 7
-    "zio_ddt_read_start",    // [8]  1 << 8
-    "zio_ddt_read_done",     // [9]  1 << 9
-    "zio_ddt_write",         // [10] 1 << 10
-    "zio_ddt_free",          // [11] 1 << 11
-    "zio_gang_assemble",     // [12] 1 << 12
-    "zio_gang_issue",        // [13] 1 << 13
-    "zio_dva_throttle",      // [14] 1 << 14
-    "zio_dva_allocate",      // [15] 1 << 15
-    "zio_dva_free",          // [16] 1 << 16
-    "zio_dva_claim",         // [17] 1 << 17
-    "zio_ready",             // [18] 1 << 18
-    "zio_vdev_io_start",     // [19] 1 << 19
-    "zio_vdev_io_done",      // [20] 1 << 20
-    "zio_vdev_io_assess",    // [21] 1 << 21
-    "zio_checksum_verify",   // [22] 1 << 22
-    "zio_done"               // [23] 1 << 23
+    "zio_encrypt",           // [6]  1 << 6
+    "zio_checksum_generate", // [7]  1 << 7
+    "zio_nop_write",         // [8]  1 << 8
+    "zio_ddt_read_start",    // [9]  1 << 9
+    "zio_ddt_read_done",     // [10] 1 << 10
+    "zio_ddt_write",         // [11] 1 << 11
+    "zio_ddt_free",          // [12] 1 << 12
+    "zio_gang_assemble",     // [13] 1 << 13
+    "zio_gang_issue",        // [14] 1 << 14
+    "zio_dva_throttle",      // [15] 1 << 15
+    "zio_dva_allocate",      // [16] 1 << 16
+    "zio_dva_free",          // [17] 1 << 17
+    "zio_dva_claim",         // [18] 1 << 18
+    "zio_ready",             // [19] 1 << 19
+    "zio_vdev_io_start",     // [20] 1 << 20
+    "zio_vdev_io_done",      // [21] 1 << 21
+    "zio_vdev_io_assess",    // [22] 1 << 22
+    "zio_checksum_verify",   // [23] 1 << 23
+    "zio_done"               // [24] 1 << 24
 };
 
 static const char *no_stage = "NO_STAGE";
@@ -257,8 +258,8 @@ static void _hrtime_pipeline_destroy(boolean_t lock_held)
                         all_pid_io_stages.pid_io_stages[i].curr_pid,
                         all_pid_io_stages.pid_io_stages[i].num_of_ts_collected,
                         MIN_TS_TO_IGNORE);
-            } else { 
-                cmn_err(CE_WARN, "PID = %u with num_of_ts_collected = %d\n",
+            } else if (all_pid_io_stages.pid_io_stages[i].curr_pid) { 
+                cmn_err(CE_WARN, "PID = %u with num_of_ts_collected = %d",
                         all_pid_io_stages.pid_io_stages[i].curr_pid,
                         all_pid_io_stages.pid_io_stages[i].num_of_ts_collected);
             }

@@ -122,7 +122,7 @@
 
 #define ZIO_IS_READ 0x1513AD
 
-#define ZIO_PIPELINE_STAGES 24
+#define ZIO_PIPELINE_STAGES 25
 
 typedef unsigned int zio_stage;
 
