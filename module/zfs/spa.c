@@ -995,7 +995,7 @@ spa_taskqs_init(spa_t *spa, zio_type_t t, zio_taskq_type_t q)
 
         if (count > 1) {
             (void) snprintf(name, sizeof(name), "%s_%s_%u",
-                zio_type_name[t], zio_taskq_types[q], count);
+                zio_type_name[t], zio_taskq_types[q], i);
         } else {
 		    (void) snprintf(name, sizeof (name), "%s_%s",
 		        zio_type_name[t], zio_taskq_types[q]);
