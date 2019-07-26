@@ -707,7 +707,7 @@ txg_wait_synced_impl(dsl_pool_t *dp, uint64_t txg, boolean_t wait_sig)
 				return (B_TRUE);
 			}
 		} else {
-			cv_wait_io(&tx->tx_sync_done_cv, &tx->tx_sync_lock, 0);
+			cv_wait_io(&tx->tx_sync_done_cv, &tx->tx_sync_lock, NULL);
 		}
 	}
 	mutex_exit(&tx->tx_sync_lock);
@@ -758,7 +758,7 @@ txg_wait_open(dsl_pool_t *dp, uint64_t txg, boolean_t should_quiesce)
 		 * incorrectly inflating the system load average.
 		 */
 		if (should_quiesce == B_TRUE) {
-			cv_wait_io(&tx->tx_quiesce_done_cv, &tx->tx_sync_lock, 0);
+			cv_wait_io(&tx->tx_quiesce_done_cv, &tx->tx_sync_lock, NULL);
 		} else {
 			cv_wait_sig(&tx->tx_quiesce_done_cv, &tx->tx_sync_lock);
 		}

@@ -49,6 +49,7 @@
 #include <sys/zfeature.h>
 #include <sys/zthr.h>
 #include <zfeature_common.h>
+#include <sys/log_callbacks_impl.h>
 
 #ifdef	__cplusplus
 extern "C" {
@@ -404,6 +405,7 @@ struct spa {
 	zfs_refcount_t	spa_refcount;		/* number of opens */
 
 	taskq_t		*spa_upgrade_taskq;	/* taskq for upgrade jobs */
+    log_callback_list_t *cb_list;
 };
 
 extern char *spa_config_path;

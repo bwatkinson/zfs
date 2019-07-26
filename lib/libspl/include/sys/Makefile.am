@@ -23,6 +23,11 @@ libspl_HEADERS = \
 	$(top_srcdir)/lib/libspl/include/sys/kstat.h \
 	$(top_srcdir)/lib/libspl/include/sys/list.h \
 	$(top_srcdir)/lib/libspl/include/sys/list_impl.h \
+	$(top_srcdir)/lib/libspl/include/sys/log_callbacks_impl.h \
+	$(top_srcdir)/lib/libspl/include/sys/log_callbacks.h \
+	$(top_srcdir)/lib/libspl/include/sys/log_cb_zio_pipeline.h \
+	$(top_srcdir)/lib/libspl/include/sys/log_cb_taskq.h \
+	$(top_srcdir)/lib/libspl/include/sys/log_cb_func_callsite.h \
 	$(top_srcdir)/lib/libspl/include/sys/mhd.h \
 	$(top_srcdir)/lib/libspl/include/sys/mkdev.h \
 	$(top_srcdir)/lib/libspl/include/sys/mnttab.h \

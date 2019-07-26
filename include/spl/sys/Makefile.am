@@ -22,6 +22,9 @@ KERNEL_H = \
 	$(top_srcdir)/include/spl/sys/kobj.h \
 	$(top_srcdir)/include/spl/sys/kstat.h \
 	$(top_srcdir)/include/spl/sys/list.h \
+	$(top_srcdir)/include/spl/sys/log_cb_zio_pipeline.h \
+	$(top_srcdir)/include/spl/sys/log_cb_taskq.h \
+	$(top_srcdir)/include/spl/sys/log_cb_func_callsite.h \
 	$(top_srcdir)/include/spl/sys/mode.h \
 	$(top_srcdir)/include/spl/sys/mutex.h \
 	$(top_srcdir)/include/spl/sys/param.h \
@@ -41,7 +44,6 @@ KERNEL_H = \
 	$(top_srcdir)/include/spl/sys/taskq.h \
 	$(top_srcdir)/include/spl/sys/thread.h \
 	$(top_srcdir)/include/spl/sys/time.h \
-    $(top_srcdir)/include/spl/sys/hrtime_spl_timestamp.h \
 	$(top_srcdir)/include/spl/sys/timer.h \
 	$(top_srcdir)/include/spl/sys/tsd.h \
 	$(top_srcdir)/include/spl/sys/types32.h \

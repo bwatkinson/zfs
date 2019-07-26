@@ -84,6 +84,9 @@
 #include <sys/zfeature.h>
 #include <sys/dsl_destroy.h>
 #include <sys/zvol.h>
+#include <sys/log_cb_zio_pipeline.h>
+#include <sys/log_cb_func_callsite.h>
+#include <sys/log_cb_taskq.h>
 
 #ifdef	_KERNEL
 #include <sys/fm/protocol.h>
@@ -946,16 +949,13 @@ spa_taskqs_init(spa_t *spa, zio_type_t t, zio_taskq_type_t q)
 	uint_t flags = 0;
 	boolean_t batch = B_FALSE;
 
-#if defined (HRTIME_TASKQS_STAMP)
-    /////////////////////////////
-    // Brian A. Added this line
-    char *taskq_names[count];
-    int create_hrtime_taskq_stamps = 0;
-
+#ifdef _KERNEL
+    cb_spl_taskq_ctor_args_t *ctor_args = NULL;
+    int create_cb_taskq_ctor_args = 0;
     if (q == ZIO_TASKQ_INTERRUPT && t == ZIO_TYPE_READ) {
-        create_hrtime_taskq_stamps = 1;
+        create_cb_taskq_ctor_args = 1;
+        ctor_args = create_init_cb_spl_taskq_ctor_args(count);
     }
-    /////////////////////////////
 #endif
 
 	if (mode == ZTI_MODE_NULL) {
@@ -1021,26 +1021,25 @@ spa_taskqs_init(spa_t *spa, zio_type_t t, zio_taskq_type_t q)
 
 			tq = taskq_create_proc(name, value, pri, 50,
 			    INT_MAX, spa->spa_proc, flags);
-#if defined (HRTIME_TASKQS_STAMP)
-            /////////////////////////////
-            // Brian A. Added this line
-            if (create_hrtime_taskq_stamps) {
-                taskq_names[i] = tq->tq_name;
+
+#ifdef _KERNEL
+            if (create_cb_taskq_ctor_args) {
+                add_taskq_to_cb_spl_taskq_ctor_args(ctor_args,
+                                                    tq->tq_name,
+                                                    i);
             }
-            /////////////////////////////
 #endif
         }
 
 		tqs->stqs_taskq[i] = tq;
 	}
 
-#if defined (HRTIME_TASKQS_STAMP)
-    /////////////////////////////
-    // Brian A. Added this line
-    if (create_hrtime_taskq_stamps) {
-        hrtime_taskq_count_init(taskq_names, count);
+#ifdef _KERNEL
+   if (create_cb_taskq_ctor_args) {
+        log_cb_spl_taskq.ctor(ctor_args);
+        add_callback_to_list(spa->cb_list, &log_cb_spl_taskq);
+        destroy_cb_spl_taskq_ctor_args(ctor_args);
     }
-    /////////////////////////////
 #endif
 }
 
@@ -1245,7 +1244,19 @@ spa_activate(spa_t *spa, int mode)
 #endif /* HAVE_SPA_THREAD */
 	mutex_exit(&spa->spa_proc_lock);
 
-	/* If we didn't create a process, we need to create our taskqs. */
+#ifdef _KERNEL
+    /* Allocating callback logging and registering callbacks */
+    spa->cb_list = create_log_callback_list();
+    log_cb_zio_pipeline.ctor(NULL);
+    add_callback_to_list(spa->cb_list, &log_cb_zio_pipeline);
+    log_cb_func_callsite.ctor(NULL);
+    add_callback_to_list(spa->cb_list, &log_cb_func_callsite);
+#else	
+    /* We presently only allow cb's to called while in the kernel */
+    spa->cb_list = NULL;
+#endif
+
+    /* If we didn't create a process, we need to create our taskqs. */
 	if (spa->spa_proc == &p0) {
 		spa_create_zio_taskqs(spa);
 	}
@@ -1306,13 +1317,6 @@ spa_activate(spa_t *spa, int mode)
 	 */
 	spa->spa_upgrade_taskq = taskq_create("z_upgrade", boot_ncpus,
 	    defclsyspri, 1, INT_MAX, TASKQ_DYNAMIC);
-
-#if defined (HRTIME_PIPELINE_STAMP) || defined (HRTIME_CALL_SITE_STAMP)
-    /////////////////////////////
-    // Brian A. added this line
-    hrtime_timestamp_init();
-    /////////////////////////////
-#endif
 }
 
 /*
@@ -1364,11 +1368,18 @@ spa_deactivate(spa_t *spa)
 		spa->spa_txg_zio[i] = NULL;
 	}
 
-#if defined (HRTIME_TASKQS_STAMP)
-    /////////////////////////////
-    // Brian A. Added this line
-    hrtime_taskq_count_fini();
-    /////////////////////////////
+#ifdef _KERNEL
+    boolean_t holding_lock = B_FALSE;
+    log_callback_t *current_cb = NULL;
+    current_cb = remove_callback_from_list(spa->cb_list, "cb_func_callsite");
+    if (current_cb)
+        current_cb->dtor(NULL);
+    current_cb = remove_callback_from_list(spa->cb_list, "cb_zio_pipeline");
+    if (current_cb)
+        current_cb->dtor(&holding_lock);
+    current_cb = remove_callback_from_list(spa->cb_list, "cb_spl_taskq");
+    if (current_cb)
+        current_cb->dtor(&holding_lock);
 #endif
 
 	metaslab_class_destroy(spa->spa_normal_class);
@@ -1420,11 +1431,8 @@ spa_deactivate(spa_t *spa)
 		spa->spa_did = 0;
 	}
 
-#if defined (HRTIME_PIPELINE_STAMP) || defined (HRTIME_CALL_SITE_STAMP)
-    /////////////////////////////
-    // Brian A. Added this line
-    hrtime_timestamp_fini();
-    /////////////////////////////
+#ifdef _KERNEL
+    destroy_log_callback_list(spa->cb_list);
 #endif
 }
 

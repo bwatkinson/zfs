@@ -5,7 +5,6 @@ libspl_HEADERS = \
 	$(top_srcdir)/lib/libspl/include/assert.h \
 	$(top_srcdir)/lib/libspl/include/atomic.h \
 	$(top_srcdir)/lib/libspl/include/devid.h \
-	$(top_srcdir)/lib/libspl/include/hrtime-timestamp.h \
 	$(top_srcdir)/lib/libspl/include/libdevinfo.h \
 	$(top_srcdir)/lib/libspl/include/libgen.h \
 	$(top_srcdir)/lib/libspl/include/libshare.h \

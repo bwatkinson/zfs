@@ -51,6 +51,7 @@
 #include <sys/abd.h>
 #include <sys/trace_dmu.h>
 #include <sys/zfs_rlock.h>
+#include <sys/log_cb_func_callsite.h>
 #ifdef _KERNEL
 #include <sys/vmsystm.h>
 #include <sys/zfs_znode.h>
@@ -498,11 +499,8 @@ dmu_buf_hold_array_by_dnode(dnode_t *dn, uint64_t offset, uint64_t length,
 	uint32_t dbuf_flags;
 	int err;
 	zio_t *zio;
-#if defined (HRTIME_CALL_SITE_STAMP)
-    /////////////////////////////
-    // Brian A. Added this line
-    zio_t *zio_root_parent = NULL;
-    /////////////////////////////
+#ifdef _KERNEL
+    cb_func_callsite_args_t cb_args;
 #endif
 
 	ASSERT(length <= DMU_MAX_ACCESS);
@@ -537,18 +535,21 @@ dmu_buf_hold_array_by_dnode(dnode_t *dn, uint64_t offset, uint64_t length,
 
 	zio = zio_root(dn->dn_objset->os_spa, NULL, NULL, ZIO_FLAG_CANFAIL);
 
-    /////////////////////////////
-    // Brian A. Added this line
     if (read) {
-        zio->is_read = ZIO_IS_READ;
-#if defined (HRTIME_CALL_SITE_STAMP)
-        zio_root_parent = zio_hrtime_stamp_get_root_parent(zio);
-        hrtime_add_timestamp_call_sites(zio_root_parent->zio_pid, 0, __func__);
-#endif
+        zio->zlog_type = zio_is_read;
     } else {
-        zio->is_read = 0x0;
+        zio->zlog_type = zio_is_write;
     }
-    /////////////////////////////
+
+#ifdef _KERNEL
+    cb_args = create_cb_func_callsite_args(zio, 
+                                           0,
+                                           __func__);
+    execute_cb(zio->io_spa->cb_list,
+               zio->zlog_type,
+               "cb_func_callsite",
+               &cb_args);
+#endif
 
 	blkid = dbuf_whichblock(dn, 0, offset);
 	for (i = 0; i < nblks; i++) {

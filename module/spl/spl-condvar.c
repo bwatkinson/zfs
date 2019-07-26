@@ -28,11 +28,8 @@
 #include <sys/time.h>
 #include <linux/hrtimer.h>
 #include <linux/compiler_compat.h>
+#include <sys/log_cb_func_callsite.h>
 
-//////////////////////////////
-// Brian A. Added this line
-#include <sys/hrtime_spl_timestamp.h>
-//////////////////////////////
 #include <linux/sched.h>
 
 #ifdef HAVE_SCHED_SIGNAL_HEADER
@@ -42,55 +39,57 @@
 void
 __cv_init(kcondvar_t *cvp, char *name, kcv_type_t type, void *arg)
 {
-	ASSERT(cvp);
-	ASSERT(name == NULL);
-	ASSERT(type == CV_DEFAULT);
-	ASSERT(arg == NULL);
+    ASSERT(cvp);
+    ASSERT(name == NULL);
+    ASSERT(type == CV_DEFAULT);
+    ASSERT(arg = NULL);
 
-	cvp->cv_magic = CV_MAGIC;
-	init_waitqueue_head(&cvp->cv_event);
-	init_waitqueue_head(&cvp->cv_destroy);
-	atomic_set(&cvp->cv_waiters, 0);
-	atomic_set(&cvp->cv_refs, 1);
-	cvp->cv_mutex = NULL;
+    cvp->cv_magic = CV_MAGIC;
+    init_waitqueue_head(&cvp->cv_event);
+    init_waitqueue_head(&cvp->cv_destroy);
+    atomic_set(&cvp->cv_waiters, 0);
+    atomic_set(&cvp->cv_refs, 1);
+    cvp->cv_mutex = NULL;
 }
 EXPORT_SYMBOL(__cv_init);
 
 static int
 cv_destroy_wakeup(kcondvar_t *cvp)
 {
-	if (!atomic_read(&cvp->cv_waiters) && !atomic_read(&cvp->cv_refs)) {
-		ASSERT(cvp->cv_mutex == NULL);
-		ASSERT(!waitqueue_active(&cvp->cv_event));
-		return (1);
-	}
+    if (!atomic_read(&cvp->cv_waiters) && !atomic_read(&cvp->cv_refs)) {
+        ASSERT(cvp->cv_mutex == NULL);
+        ASSERT(!waitqueue_active(&cvp->cv_event));
+        return (1);
+    }
 
-	return (0);
+    return (0);
 }
 
 void
 __cv_destroy(kcondvar_t *cvp)
 {
-	ASSERT(cvp);
-	ASSERT(cvp->cv_magic == CV_MAGIC);
+    ASSERT(cvp);
+    ASSERT(cvp->cv_magic == CV_MAGIC);
+    
+    cvp->cv_magic = CV_DESTROY;
+    atomic_dec(&cvp->cv_refs);
 
-	cvp->cv_magic = CV_DESTROY;
-	atomic_dec(&cvp->cv_refs);
+    /* Block until all waiters are woken and references dropped */
+    while (cv_destroy_wakeup(cvp) == 0)
+        wait_event_timeout(cvp->cv_destroy, cv_destroy_wakeup(cvp), 1);
 
-	/* Block until all waiters are woken and references dropped. */
-	while (cv_destroy_wakeup(cvp) == 0)
-		wait_event_timeout(cvp->cv_destroy, cv_destroy_wakeup(cvp), 1);
-
-	ASSERT3P(cvp->cv_mutex, ==, NULL);
-	ASSERT3S(atomic_read(&cvp->cv_refs), ==, 0);
-	ASSERT3S(atomic_read(&cvp->cv_waiters), ==, 0);
-	ASSERT3S(waitqueue_active(&cvp->cv_event), ==, 0);
+    ASSERT3P(cvp->cv_mutex, ==, NULL);
+    ASSERT3S(atomic_read(&cvp->cv_refs), ==, 0);
+    ASSERT3S(atomic_read(&cvp->cv_waiters), ==, 0);
+    ASSERT3S(waitqueue_active(&cvp->cv_event), ==, 0);
 }
 EXPORT_SYMBOL(__cv_destroy);
 
+
 static void
-cv_wait_common(kcondvar_t *cvp, kmutex_t *mp, int state, int io, int is_read)
+cv_wait_common(kcondvar_t *cvp, kmutex_t *mp, int state, int io, void *z)
 {
+    cb_func_callsite_args_t cb_args;
 	DEFINE_WAIT(wait);
 	kmutex_t *m;
 
@@ -115,14 +114,19 @@ cv_wait_common(kcondvar_t *cvp, kmutex_t *mp, int state, int io, int is_read)
 	 * race where 'cvp->cv_waiters > 0' but the list is empty.
 	 */
 	mutex_exit(mp);
-	if (io) {
-#if defined (HRTIME_CALL_SITE_STAMP)
-        /////////////////////////////
-        // Brian A. Added this line
-        if (is_read) {
-            hrtime_add_timestamp_call_sites(getpid(), 2, __func__);
-        }
-#endif
+    
+	if (z && IS_ZIO_STRUCT(z)) {
+        zio_t *zio = (zio_t *)z;
+        cb_args = create_cb_func_callsite_args(zio, 
+                                               2, 
+                                               __func__);
+        execute_cb(zio->io_spa->cb_list,
+                   zio->zlog_type,
+                   "cb_func_callsite",
+                   &cb_args);
+    }
+
+    if (io) {
     	io_schedule();
 	} else {
 		schedule();
@@ -151,21 +155,21 @@ cv_wait_common(kcondvar_t *cvp, kmutex_t *mp, int state, int io, int is_read)
 void
 __cv_wait(kcondvar_t *cvp, kmutex_t *mp)
 {
-	cv_wait_common(cvp, mp, TASK_UNINTERRUPTIBLE, 0, 0);
+	cv_wait_common(cvp, mp, TASK_UNINTERRUPTIBLE, 0, NULL);
 }
 EXPORT_SYMBOL(__cv_wait);
 
 void
-__cv_wait_io(kcondvar_t *cvp, kmutex_t *mp, int is_read)
+__cv_wait_io(kcondvar_t *cvp, kmutex_t *mp, void *z)
 {
-	cv_wait_common(cvp, mp, TASK_UNINTERRUPTIBLE, 1, is_read);
+	cv_wait_common(cvp, mp, TASK_UNINTERRUPTIBLE, 1, z);
 }
 EXPORT_SYMBOL(__cv_wait_io);
 
 int
 __cv_wait_io_sig(kcondvar_t *cvp, kmutex_t *mp)
 {
-	cv_wait_common(cvp, mp, TASK_INTERRUPTIBLE, 1, 0);
+	cv_wait_common(cvp, mp, TASK_INTERRUPTIBLE, 1, NULL);
 
 	return (signal_pending(current) ? 0 : 1);
 }
@@ -174,13 +178,13 @@ EXPORT_SYMBOL(__cv_wait_io_sig);
 int
 __cv_wait_sig(kcondvar_t *cvp, kmutex_t *mp)
 {
-	cv_wait_common(cvp, mp, TASK_INTERRUPTIBLE, 0, 0);
+	cv_wait_common(cvp, mp, TASK_INTERRUPTIBLE, 0, NULL);
 	return (signal_pending(current) ? 0 : 1);
 }
 EXPORT_SYMBOL(__cv_wait_sig);
 
 #if defined(HAVE_IO_SCHEDULE_TIMEOUT)
-#define	spl_io_schedule_timeout(t, r)	io_schedule_timeout(t)
+#define	spl_io_schedule_timeout(t)	io_schedule_timeout(t)
 #else
 
 struct spl_task_timer {
@@ -198,7 +202,7 @@ __cv_wakeup(spl_timer_list_t t)
 }
 
 static long
-spl_io_schedule_timeout(long time_left, int is_read)
+spl_io_schedule_timeout(long time_left)
 {
 	long expire_time = jiffies + time_left;
 	struct spl_task_timer task_timer;
@@ -211,13 +215,6 @@ spl_io_schedule_timeout(long time_left, int is_read)
 	timer->expires = expire_time;
 	add_timer(timer);
 
-#if defined (HRTIME_CALL_SITE_STAMP)
-    /////////////////////////////
-    // Brian A. Added this line
-    if (is_read) {
-        hrtime_add_timestamp_call_sites(getpid(), 2, __func__);
-    }
-#endif
 	io_schedule();
 
 	del_timer_sync(timer);
@@ -234,8 +231,9 @@ spl_io_schedule_timeout(long time_left, int is_read)
  */
 static clock_t
 __cv_timedwait_common(kcondvar_t *cvp, kmutex_t *mp, clock_t expire_time,
-    int state, int io, int is_read)
+    int state, int io, void *z)
 {
+    cb_func_callsite_args_t cb_args;
 	DEFINE_WAIT(wait);
 	kmutex_t *m;
 	clock_t time_left;
@@ -266,16 +264,20 @@ __cv_timedwait_common(kcondvar_t *cvp, kmutex_t *mp, clock_t expire_time,
 	 * race where 'cvp->cv_waiters > 0' but the list is empty.
 	 */
 	mutex_exit(mp);
+
+    if (z && IS_ZIO_STRUCT(z)) {
+        zio_t *zio = (zio_t *)z;
+        cb_args = create_cb_func_callsite_args(zio, 
+                                               2, 
+                                               __func__);
+        execute_cb(zio->io_spa->cb_list,
+                   zio->zlog_type,
+                   "cb_func_callsite",
+                   &cb_args);
+    }
+    
 	if (io) {
-#if defined(HAVE_IO_SCHEDULE_TIMEOUT) && defined(HRTIME_CALL_SITE_STAMP)
-        ///////////////////////////////
-        // Brian A. Added this line
-        if (is_read) {
-            hrtime_add_timestamp_call_sites(getpid(), 2, __func__);
-        }
-        ///////////////////////////////
-#endif
-		time_left = spl_io_schedule_timeout(time_left, is_read);
+		time_left = spl_io_schedule_timeout(time_left);
     } else {
 		time_left = schedule_timeout(time_left);
     }
@@ -305,15 +307,15 @@ clock_t
 __cv_timedwait(kcondvar_t *cvp, kmutex_t *mp, clock_t exp_time)
 {
 	return (__cv_timedwait_common(cvp, mp, exp_time,
-	    TASK_UNINTERRUPTIBLE, 0, 0));
+	    TASK_UNINTERRUPTIBLE, 0, NULL));
 }
 EXPORT_SYMBOL(__cv_timedwait);
 
 clock_t
-__cv_timedwait_io(kcondvar_t *cvp, kmutex_t *mp, clock_t exp_time, int is_read)
+__cv_timedwait_io(kcondvar_t *cvp, kmutex_t *mp, clock_t exp_time, void *z)
 {
 	return (__cv_timedwait_common(cvp, mp, exp_time,
-	    TASK_UNINTERRUPTIBLE, 1, is_read));
+	    TASK_UNINTERRUPTIBLE, 1, z));
 }
 EXPORT_SYMBOL(__cv_timedwait_io);
 
@@ -321,7 +323,7 @@ clock_t
 __cv_timedwait_sig(kcondvar_t *cvp, kmutex_t *mp, clock_t exp_time)
 {
 	return (__cv_timedwait_common(cvp, mp, exp_time,
-	    TASK_INTERRUPTIBLE, 0, 0));
+	    TASK_INTERRUPTIBLE, 0, NULL));
 }
 EXPORT_SYMBOL(__cv_timedwait_sig);
 

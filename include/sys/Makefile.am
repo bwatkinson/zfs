@@ -43,6 +43,8 @@ COMMON_H = \
 	$(top_srcdir)/include/sys/efi_partition.h \
 	$(top_srcdir)/include/sys/frame.h \
 	$(top_srcdir)/include/sys/hkdf.h \
+	$(top_srcdir)/include/sys/log_callbacks_impl.h \
+	$(top_srcdir)/include/sys/log_callbacks.h \
 	$(top_srcdir)/include/sys/metaslab.h \
 	$(top_srcdir)/include/sys/metaslab_impl.h \
 	$(top_srcdir)/include/sys/mmp.h \

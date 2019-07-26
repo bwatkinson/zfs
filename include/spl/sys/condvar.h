@@ -53,11 +53,11 @@ typedef enum { CV_DEFAULT = 0, CV_DRIVER } kcv_type_t;
 extern void __cv_init(kcondvar_t *, char *, kcv_type_t, void *);
 extern void __cv_destroy(kcondvar_t *);
 extern void __cv_wait(kcondvar_t *, kmutex_t *);
-extern void __cv_wait_io(kcondvar_t *, kmutex_t *, int);
+extern void __cv_wait_io(kcondvar_t *, kmutex_t *, void *);
 extern int __cv_wait_io_sig(kcondvar_t *, kmutex_t *);
 extern int __cv_wait_sig(kcondvar_t *, kmutex_t *);
 extern clock_t __cv_timedwait(kcondvar_t *, kmutex_t *, clock_t);
-extern clock_t __cv_timedwait_io(kcondvar_t *, kmutex_t *, clock_t, int);
+extern clock_t __cv_timedwait_io(kcondvar_t *, kmutex_t *, clock_t, void *);
 extern clock_t __cv_timedwait_sig(kcondvar_t *, kmutex_t *, clock_t);
 extern clock_t cv_timedwait_hires(kcondvar_t *, kmutex_t *, hrtime_t,
     hrtime_t res, int flag);
@@ -69,12 +69,12 @@ extern void __cv_broadcast(kcondvar_t *c);
 #define	cv_init(cvp, name, type, arg)		__cv_init(cvp, name, type, arg)
 #define	cv_destroy(cvp)				__cv_destroy(cvp)
 #define	cv_wait(cvp, mp)			__cv_wait(cvp, mp)
-#define	cv_wait_io(cvp, mp, r)			__cv_wait_io(cvp, mp, r)
+#define	cv_wait_io(cvp, mp, z)			__cv_wait_io(cvp, mp, z)
 #define	cv_wait_io_sig(cvp, mp)			__cv_wait_io_sig(cvp, mp)
 #define	cv_wait_sig(cvp, mp)			__cv_wait_sig(cvp, mp)
 #define	cv_wait_interruptible(cvp, mp)		cv_wait_sig(cvp, mp)
 #define	cv_timedwait(cvp, mp, t)		__cv_timedwait(cvp, mp, t)
-#define	cv_timedwait_io(cvp, mp, t, r)		__cv_timedwait_io(cvp, mp, t, r)
+#define	cv_timedwait_io(cvp, mp, t, z)		__cv_timedwait_io(cvp, mp, t, z)
 #define	cv_timedwait_sig(cvp, mp, t)		__cv_timedwait_sig(cvp, mp, t)
 #define	cv_timedwait_interruptible(cvp, mp, t)	cv_timedwait_sig(cvp, mp, t)
 #define	cv_signal(cvp)				__cv_signal(cvp)

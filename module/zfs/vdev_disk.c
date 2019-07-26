@@ -37,6 +37,7 @@
 #include <linux/mod_compat.h>
 #include <linux/msdos_fs.h>
 #include <linux/vfs_compat.h>
+#include <sys/log_cb_func_callsite.h>
 
 char *zfs_vdev_scheduler = VDEV_SCHEDULER;
 static void *zfs_vdev_holder = VDEV_HOLDER;
@@ -522,18 +523,20 @@ bio_map_abd_off(struct bio *bio, abd_t *abd, unsigned int size, size_t off)
 static inline void
 vdev_submit_bio_impl(struct bio *bio)
 {
-#if defined (HRTIME_CALL_SITE_STAMP)
-    ////////////////////////////
-    // Brian A. Added this line
-    zio_t *zio_root_parent = NULL;
+#ifdef _KERNEL
+    cb_func_callsite_args_t cb_args;
     dio_request_t *dr = bio->bi_private;
-    if (dr->dr_zio) {
-        zio_root_parent = zio_hrtime_stamp_get_root_parent(dr->dr_zio);
-        if (zio_root_parent && zio_root_parent->is_read == ZIO_IS_READ) {
-            hrtime_add_timestamp_call_sites(zio_root_parent->zio_pid, 1, __func__);
-        }
+
+    if (dr && dr->dr_zio) {
+        cb_args = create_cb_func_callsite_args(dr->dr_zio, 
+                                               1,
+                                                __func__);
+        execute_cb(dr->dr_zio->io_spa->cb_list,
+                   dr->dr_zio->zlog_type,
+                   "cb_func_callsite",
+                   &cb_args);
     }
-    ////////////////////////////
+
 #endif
 
 #ifdef HAVE_1ARG_SUBMIT_BIO
@@ -703,7 +706,9 @@ retry:
 
 BIO_END_IO_PROTO(vdev_disk_io_flush_completion, bio, error)
 {
-	zio_t *zio = bio->bi_private;
+	dio_request_t *dr = bio->bi_private;
+    zio_t *zio = dr->dr_zio;
+    vdev_disk_dio_free(dr);
 #ifdef HAVE_1ARG_BIO_END_IO_T
 	zio->io_error = BIO_END_IO_ERROR(bio);
 #else
@@ -724,11 +729,17 @@ static int
 vdev_disk_io_flush(struct block_device *bdev, zio_t *zio)
 {
 	struct request_queue *q;
-	struct bio *bio;
+	dio_request_t *dr;
+    struct bio *bio;
 
 	q = bdev_get_queue(bdev);
 	if (!q)
 		return (SET_ERROR(ENXIO));
+
+    dr = vdev_disk_dio_alloc(0);
+    if (dr == NULL)
+        return (SET_ERROR(ENOMEM));
+    dr->dr_zio = zio;
 
 	bio = bio_alloc(GFP_NOIO, 0);
 	/* bio_alloc() with __GFP_WAIT never returns NULL */
@@ -736,7 +747,7 @@ vdev_disk_io_flush(struct block_device *bdev, zio_t *zio)
 		return (SET_ERROR(ENOMEM));
 
 	bio->bi_end_io = vdev_disk_io_flush_completion;
-	bio->bi_private = zio;
+	bio->bi_private = dr;
 	bio_set_dev(bio, bdev);
 	bio_set_flush(bio);
 	vdev_submit_bio(bio);

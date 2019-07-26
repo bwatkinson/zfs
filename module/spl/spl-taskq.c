@@ -28,17 +28,7 @@
 #include <sys/taskq.h>
 #include <sys/kmem.h>
 #include <sys/tsd.h>
-
-/////////////////////////////
-// Brian A. Added this
-#include <sys/hrtime_spl_timestamp.h>
-#if defined (HRTIME_TASKQS_STAMP)
-typedef struct zio
-{
-    long unsigned is_read;
-} zio_t;
-/////////////////////////////
-#endif
+#include <sys/log_cb_taskq.h>
 
 int spl_taskq_thread_bind = 0;
 module_param(spl_taskq_thread_bind, int, 0644);
@@ -853,6 +843,9 @@ taskq_thread(void *args)
 	int seq_tasks = 0;
 	unsigned long flags;
 	taskq_ent_t dup_task = {};
+    zio_cb_log_type_e taskq_ent_log_type;
+    zio_t *taskq_ent_zio = NULL;
+    spa_t *taskq_ent_spa = NULL;
 
 	ASSERT(tqt);
 	ASSERT(tqt->tqt_tq);
@@ -932,27 +925,40 @@ taskq_thread(void *args)
 
 			taskq_insert_in_order(tq, tqt);
 			tq->tq_nactive++;
-#if defined (HRTIME_TASKQS_STAMP)
-            ///////////////////////////////
-            // Brian A. Added this line
-            if (t->tqent_arg && (((zio_t *)t->tqent_arg)->is_read == ZIO_IS_READ)) {
-                hrtime_taskq_count_add_count(tq->tq_name, tq->tq_nactive);
+            
+            /* Logging taskq counts */
+            taskq_ent_log_type = zio_ignore;
+            taskq_ent_zio = NULL;
+            taskq_ent_spa = NULL;
+            if (t->tqent_arg && IS_ZIO_STRUCT(t->tqent_arg)) {
+                zio_t *curr_zio = ((zio_t *)t->tqent_arg);
+                taskq_ent_zio = cb_zio_log_cb_root_parent(curr_zio);
+                taskq_ent_log_type = taskq_ent_zio->zlog_type;
+                taskq_ent_spa = taskq_ent_zio->io_spa;
             }
-            ///////////////////////////////
-#endif
+
+            if (taskq_ent_spa) {
+                cb_spl_taskq_args_t cb_args;
+                cb_args = create_cb_spl_taskq_args(tq->tq_name, tq->tq_nactive);
+                execute_cb(taskq_ent_spa->cb_list,
+                           taskq_ent_log_type,
+                           "cb_spl_taskq",
+                           &cb_args);
+            }
+            
             spin_unlock_irqrestore(&tq->tq_lock, flags);
+
 
 			/* Perform the requested task */
 			t->tqent_func(t->tqent_arg);
 
-#if defined (HRTIME_TASKQS_STAMP)
-            //////////////////////////////
-            // Brian A. Added this line
-            if (t->tqent_arg && (((zio_t *)t->tqent_arg)->is_read == ZIO_IS_READ)) {
-                hrtime_taskq_count_dump();
+            /* Dumping taskq counts if we have reached our limit */
+            if (taskq_ent_spa) {
+                execute_dump_func(taskq_ent_spa->cb_list,
+                                  taskq_ent_log_type,
+                                  "cb_spl_taskq",
+                                  NULL);
             }
-            //////////////////////////////
-#endif
 
 			spin_lock_irqsave_nested(&tq->tq_lock, flags,
 			    tq->tq_lock_class);
