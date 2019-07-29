@@ -2029,9 +2029,6 @@ __attribute__((always_inline))
 static inline void
 __zio_execute(zio_t *zio)
 {
-#ifdef _KERNEL
-    cb_zio_pipeline_args_t cb_args;
-#endif
 	ASSERT3U(zio->io_queued_timestamp, >, 0);
 
 	while (zio->io_stage < ZIO_STAGE_DONE) {
