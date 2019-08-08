@@ -74,7 +74,7 @@ static int cb_zio_pipeline_initialized = 0;
 static kmutex_t *cb_zio_pipeline_mutex = NULL;
 
 /*
- * Defines whether for not the counters should be reset
+ * Defines whether or not the counters should be reset
  */
 static uint_t spl_log_cb_zio_pipeline_reset_counters = 0;
 module_param(spl_log_cb_zio_pipeline_reset_counters, uint, 0644);
@@ -182,6 +182,7 @@ static void cb_zio_pipeline_ctor(void *ctor_args)
     int j;
   
     mutex_enter(cb_zio_pipeline_mutex);
+   
     /* There is no constructor args needed, so always pass NULL to this */
     VERIFY3P(ctor_args, ==, NULL);
     
@@ -208,7 +209,7 @@ static void cb_zio_pipeline_ctor(void *ctor_args)
         spl_log_cb_zio_pipeline_reset_counters = 0;
         if (spl_log_cb_debug_enabled()) {
             cmn_err(CE_WARN, "Initialized the data for timestamping ZIO pipeline in %s and will watch up to %d pids",
-                     __func__, all_pid_io_stages.total_pids);
+                     __func__, all_pid_io_stages.pid_cap);
         }
     }
     mutex_exit(cb_zio_pipeline_mutex);

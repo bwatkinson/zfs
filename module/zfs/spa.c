@@ -1036,8 +1036,8 @@ spa_taskqs_init(spa_t *spa, zio_type_t t, zio_taskq_type_t q)
 
 #ifdef _KERNEL
    if (create_cb_taskq_ctor_args) {
-        //log_cb_spl_taskq.ctor(ctor_args);
-        //add_callback_to_list(spa->cb_list, &log_cb_spl_taskq);
+        log_callback_t *log_cb = create_cb_spl_taskq(ctor_args); 
+        add_callback_to_list(spa->cb_list, log_cb);
         destroy_cb_spl_taskq_ctor_args(ctor_args);
     }
 #endif
@@ -1370,7 +1370,6 @@ spa_deactivate(spa_t *spa)
 	}
 
 #ifdef _KERNEL
-    boolean_t holding_lock = B_FALSE;
     log_callback_t *current_cb = NULL;
     current_cb = remove_callback_from_list(spa->cb_list, "cb_func_callsite");
     if (current_cb)
@@ -1380,7 +1379,7 @@ spa_deactivate(spa_t *spa)
         destroy_cb_zio_pipeline(current_cb);
     current_cb = remove_callback_from_list(spa->cb_list, "cb_spl_taskq");
     if (current_cb)
-        current_cb->dtor(&holding_lock);
+        destroy_cb_spl_taskq(current_cb);
 #endif
 
 	metaslab_class_destroy(spa->spa_normal_class);

@@ -5,10 +5,9 @@
  * This header file defines three #defines:
  * HRTIME_TASKQ_STAMP     : Take counts of total number of threads active in
  *                          SPL taskqs
- * STATIC_PID_CAP         : Maximum number of PID's to take timestamps for
  *
- * Only the STATIC_PER_TASKQ_COUNT_CAP and STATIC_PID_CAP values should be adjusted.
- * They specify the total count numbers and maximum number of PID's to collect for.
+ * Only the STATIC_PER_TASKQ_COUNT_CAP value should be adjusted.
+ * They specify the total count numbers per PID to collect for.
  *
  * The log file written out will have the following format:
  *     1. Total number of taskq's counts collected for (int)
@@ -38,12 +37,6 @@ extern "C" {
  */
 #define STATIC_PER_TASKQ_COUNT_CAP 5000 
 
-/*
- * Change this variable in order to set the maximum number of PID's
- * to collect timestamps for
- */
-#define STATIC_PID_CAP 48
-
 /****************************************************************/
 /****************************************************************/
 /*          NEVER MANUALLY CHANGE THIS VARIABLE!!!!!            */
@@ -56,6 +49,14 @@ extern "C" {
  */
 #define STATIC_COL_CAP_TASKQ (STATIC_PER_TASKQ_COUNT_CAP + 1)
 
+typedef enum call_ctor_dtor_settings_s
+{
+    CTOR_INITIAL      = 1 << 1,
+    CTOR_RESET        = 1 << 2,
+    DTOR_DUMP_FUNC    = 1 << 3,
+    DTOR_DESTROY_FUNC = 1 << 4
+} call_ctor_dtor_settings_e;
+
 typedef struct cb_func_spl_taskq_args_s
 {
     const char *taskq_name;
@@ -66,6 +67,7 @@ typedef struct cb_spl_taskq_ctor_args_s
 {
     char **taskq_names;
     int num_taskqs;
+    call_ctor_dtor_settings_e settings;
 } cb_spl_taskq_ctor_args_t;
 
 /*************************************************************/
@@ -82,10 +84,9 @@ void add_taskq_to_cb_spl_taskq_ctor_args(cb_spl_taskq_ctor_args_t *ctor_args,
                                          char *taskq_nm, 
                                          int offset);
 
-/*************************************************************/
-/*       External Structs Defined/Exported in .c file        */
-/*************************************************************/
-extern log_callback_t log_cb_spl_taskq; 
+log_callback_t *create_cb_spl_taskq(cb_spl_taskq_ctor_args_t *ctor_args);
+
+void destroy_cb_spl_taskq(log_callback_t *cb_spl_taskq);
 
 #ifdef __cplusplus
 }

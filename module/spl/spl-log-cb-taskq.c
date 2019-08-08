@@ -17,29 +17,34 @@
 #include <sys/mutex.h>
 #include <sys/strings.h>
 
+#define TASKQ_NM_LEN 32
+
 /* 
  * Change this variable in order to set a default location where
  * the log file is dumped
  */
 const static char *LOG_FILE_TASKQ = "/var/log/hrtime_taskq_counts.log";
 
-/* 
- * Just a simple debugging enable (1) disable (0)
- */
-#define CB_FUNC_SPL_TASKQ_DEBUG 1
-
 /*
  * Initialization variable that is set and checked
  */
 static int cb_spl_taskq_initialized = 0;
+static kmutex_t *cb_spl_taskq_mutex = NULL;
 
+/*
+ * Defines whether or not the counters should be reset
+ */
+static uint_t spl_log_cb_spl_taskqs_reset_counters = 0;
+module_param(spl_log_cb_spl_taskqs_reset_counters, uint, 0644);
+MODULE_PARM_DESC(spl_log_cb_spl_taskqs_reset_counters,
+    "Resets the counters for the SPL taskq SPL callback log");
 
 /*******************************************************/
 /* Struct definitions for taskq counts.                */
 /*******************************************************/
 typedef struct taskq_name_thread_counts_s
 {
-    char taskq_name[32];
+    char taskq_name[TASKQ_NM_LEN];
     int num_threads_present;
     int num_threads[STATIC_COL_CAP_TASKQ];
     int num_counts_collected;
@@ -48,6 +53,7 @@ typedef struct taskq_name_thread_counts_s
 typedef struct taskq_counts_s
 {
     taskq_name_thread_counts_t *taskqs;
+    char **taskq_names;
     int dumped;
     int total_taskqs;
     struct file *dump_file;
@@ -64,15 +70,18 @@ static taskq_counts_t all_taskq_counts;
 /***********************************************************/
 /*              Static Function Defintions                 */
 /***********************************************************/
-static void cb_spl_taskq_dtor(void *lock_held)
+static void cb_spl_taskq_dtor(void *dtor_settings)
 {
     int i;
-#if CB_FUNC_SPL_TASKQ_DEBUG
-    cmn_err(CE_WARN, "Inside %s", __func__);
-#endif 
-    if (!(*((boolean_t *)lock_held))) {
-        mutex_enter(&all_taskq_counts.lock);
+    call_ctor_dtor_settings_e settings;
+
+    if (spl_log_cb_debug_enabled()) {
+        cmn_err(CE_WARN, "Inside %s", __func__);
     }
+    
+    VERIFY3P(dtor_settings, !=, NULL);
+
+    settings = *((call_ctor_dtor_settings_e *)dtor_settings);
 
     if (cb_spl_taskq_initialized) {
         cb_spl_taskq_initialized = 0;
@@ -81,19 +90,26 @@ static void cb_spl_taskq_dtor(void *lock_held)
             /* Busy wait till all threads are no longer using the taskqs */
             while (all_taskq_counts.taskqs[i].num_threads_present > 0) {}
         } 
-#if CB_FUNC_SPL_TASKQ_DEBUG
-        cmn_err(CE_WARN, "cb_spl_taskq_initialized = %d",
-                cb_spl_taskq_initialized);
-        for (i = 0; i < all_taskq_counts.total_taskqs; i++){
-            cmn_err(CE_WARN, "all_taskq_counts.taskq[%d].taskq_name = %s collected = %d counts", 
-                    i, all_taskq_counts.taskqs[i].taskq_name, all_taskq_counts.taskqs[i].num_counts_collected);
+        
+        if (spl_log_cb_debug_enabled()) {
+            cmn_err(CE_WARN, "cb_spl_taskq_initialized = %d",
+                    cb_spl_taskq_initialized);
+            for (i = 0; i < all_taskq_counts.total_taskqs; i++){
+                cmn_err(CE_WARN, "all_taskq_counts.taskq[%d].taskq_name = %s collected = %d counts", 
+                        i, all_taskq_counts.taskqs[i].taskq_name, all_taskq_counts.taskqs[i].num_counts_collected);
+            }
         }
-#endif 
+        
         kmem_free(all_taskq_counts.taskqs, 
                   sizeof(taskq_name_thread_counts_t) * all_taskq_counts.total_taskqs);
         all_taskq_counts.taskqs = NULL;
+        if (settings & DTOR_DESTROY_FUNC) {
+            for (i = 0; i < all_taskq_counts.total_taskqs; i++) {
+                strfree(all_taskq_counts.taskq_names[i]);
+            }
+            vmem_free(all_taskq_counts.taskq_names, sizeof(char *) * all_taskq_counts.total_taskqs);    
+        }
     }
-    mutex_exit(&all_taskq_counts.lock);
 }
 
 /**
@@ -110,35 +126,53 @@ static void cb_spl_taskq_ctor(void *ctor_args)
 {
     int i;
     
+    mutex_enter(cb_spl_taskq_mutex);
+
     VERIFY3P(ctor_args, !=, NULL);
     char **taskq_names = ((cb_spl_taskq_ctor_args_t *)ctor_args)->taskq_names;
     int num_taskqs = ((cb_spl_taskq_ctor_args_t *)ctor_args)->num_taskqs;
-    
+    call_ctor_dtor_settings_e settings = ((cb_spl_taskq_ctor_args_t *)ctor_args)->settings;
+     
     if (!cb_spl_taskq_initialized) {
         all_taskq_counts.taskqs = NULL;
-        all_taskq_counts.taskqs = vmem_zalloc(sizeof(taskq_name_thread_counts_t) * num_taskqs, KM_SLEEP);
-        ASSERT3P(all_taskq_counts.taskqs, !=, NULL);
-        all_taskq_counts.dumped = 0;
         all_taskq_counts.total_taskqs = num_taskqs;
+        all_taskq_counts.dumped = 0;
         all_taskq_counts.dump_file = NULL;
         all_taskq_counts.file_offset = 0;
         all_taskq_counts.num_taskqs_done = 0;
+        while (!all_taskq_counts.taskqs) {
+            all_taskq_counts.taskqs = 
+                vmem_zalloc(sizeof(taskq_name_thread_counts_t) * all_taskq_counts.total_taskqs, KM_NOSLEEP);
+        }
+        ASSERT3P(all_taskq_counts.taskqs, !=, NULL);
         mutex_init(&all_taskq_counts.lock, NULL, MUTEX_DEFAULT, NULL);
-        for (i = 0; i < num_taskqs; i++) {
+        if (CTOR_INITIAL & settings) {
+            all_taskq_counts.taskq_names = NULL;
+            while (!all_taskq_counts.taskq_names) {
+                all_taskq_counts.taskq_names = 
+                    vmem_alloc(sizeof(char *) * all_taskq_counts.total_taskqs, KM_SLEEP);
+            }
+            for (i = 0; i < all_taskq_counts.total_taskqs; i++) {
+                all_taskq_counts.taskq_names[i] = strdup(taskq_names[i]);
+            }
+        }
+        for (i = 0; i < all_taskq_counts.total_taskqs; i++) {
             all_taskq_counts.taskqs[i].num_threads_present = 0;
-            strcpy(all_taskq_counts.taskqs[i].taskq_name, taskq_names[i]);
+            strcpy(all_taskq_counts.taskqs[i].taskq_name, all_taskq_counts.taskq_names[i]);
         }
         cb_spl_taskq_initialized = 1;
-#if CB_FUNC_SPL_TASKQ_DEBUG
-        cmn_err(CE_WARN, "Initialized the data for timestamping taskq's where all_taskq_counts.total_taskqs = %d in %s",
-                all_taskq_counts.total_taskqs, __func__);
-        for (i = 0; i < num_taskqs; i++) {
-            cmn_err(CE_WARN, "all_taskq_counts.taskq[%d].taskq_name = %s in %s with num_threads_present = %d", 
-                    i, all_taskq_counts.taskqs[i].taskq_name,
-                     __func__, all_taskq_counts.taskqs[i].num_threads_present);
+        spl_log_cb_spl_taskqs_reset_counters = 0;
+        if (spl_log_cb_debug_enabled()) {
+            cmn_err(CE_WARN, "Initialized the data for timestamping taskq's where all_taskq_counts.total_taskqs = %d in %s",
+                    all_taskq_counts.total_taskqs, __func__);
+            for (i = 0; i < all_taskq_counts.total_taskqs; i++) {
+                cmn_err(CE_WARN, "all_taskq_counts.taskq[%d].taskq_name = %s in %s with num_threads_present = %d", 
+                        i, all_taskq_counts.taskqs[i].taskq_name,
+                         __func__, all_taskq_counts.taskqs[i].num_threads_present);
+            }
         }
-#endif /* CB_FUNC_SPL_TASKQ_DEBUG */
     }
+    mutex_exit(cb_spl_taskq_mutex);
 }
 
 /**
@@ -157,6 +191,17 @@ static void cb_spl_taskq_cb(void *cb_args)
 
     VERIFY3P(cb_args, !=, NULL);
 
+    if (cb_spl_taskq_initialized == 0 &&
+        spl_log_cb_spl_taskqs_reset_counters == 1) {
+        cb_spl_taskq_ctor_args_t ctor_args =
+        {
+            .taskq_names = NULL,
+            .num_taskqs = all_taskq_counts.total_taskqs,
+            .settings = CTOR_RESET
+        };
+        cb_spl_taskq_ctor(&ctor_args);
+    }
+        
     const char *taskq_name = ((cb_spl_taskq_args_t *)cb_args)->taskq_name;
     int num_threads = ((cb_spl_taskq_args_t *)cb_args)->num_threads;
 
@@ -204,7 +249,7 @@ static void cb_spl_taskq_dump(void *cb_args)
 {
     int taskq_name_len = 0;
     int i;
-    boolean_t holding_lock = B_TRUE;
+    call_ctor_dtor_settings_e dtor_settings = DTOR_DUMP_FUNC;
 
     /* The arguements to this function should always be NULL */
     VERIFY3P(cb_args, ==, NULL);
@@ -228,7 +273,7 @@ static void cb_spl_taskq_dump(void *cb_args)
                 }
                 all_taskq_counts.dumped = 1;
             } else {
-                cb_spl_taskq_dtor(&holding_lock);
+                mutex_exit(&all_taskq_counts.lock);
                 return;
             }
             
@@ -275,7 +320,8 @@ static void cb_spl_taskq_dump(void *cb_args)
             }
             
             spl_filp_close(all_taskq_counts.dump_file);
-            cb_spl_taskq_dtor(&holding_lock);
+            cb_spl_taskq_dtor(&dtor_settings);
+            mutex_exit(&all_taskq_counts.lock);
             return;
         }
     }
@@ -308,6 +354,7 @@ cb_spl_taskq_ctor_args_t *create_init_cb_spl_taskq_ctor_args(int num_taskqs)
         kmem_alloc(num_taskqs * sizeof(char *), KM_SLEEP);
     VERIFY3P(ctor_args->taskq_names, !=, NULL);
     ctor_args->num_taskqs = num_taskqs;
+    ctor_args->settings = CTOR_INITIAL;
     return (ctor_args); 
 }
 EXPORT_SYMBOL(create_init_cb_spl_taskq_ctor_args);
@@ -334,13 +381,33 @@ void add_taskq_to_cb_spl_taskq_ctor_args(cb_spl_taskq_ctor_args_t *ctor_args,
 }
 EXPORT_SYMBOL(add_taskq_to_cb_spl_taskq_ctor_args);
 
-log_callback_t log_cb_spl_taskq =
+log_callback_t *create_cb_spl_taskq(cb_spl_taskq_ctor_args_t *ctor_args)
 {
-    .cb_name = "cb_spl_taskq",
-    .zio_type = zio_is_read,
-    .ctor = cb_spl_taskq_ctor,
-    .dtor = cb_spl_taskq_dtor,
-    .cb_func = cb_spl_taskq_cb,
-    .dump_func = cb_spl_taskq_dump
-};
-EXPORT_SYMBOL(log_cb_spl_taskq);
+    VERIFY3P(ctor_args, !=, NULL);
+    log_callback_t *cb_log =
+        kmem_alloc(sizeof(log_callback_t), KM_SLEEP);
+    VERIFY3P(cb_log, !=, NULL);
+    cb_log->cb_name = "cb_spl_taskq";
+    cb_log->zio_type = zio_is_read;
+    cb_log->ctor = cb_spl_taskq_ctor;
+    cb_log->dtor = cb_spl_taskq_dtor;
+    cb_log->cb_func = cb_spl_taskq_cb;
+    cb_log->dump_func = cb_spl_taskq_dump;
+    cb_spl_taskq_mutex =
+        kmem_alloc(sizeof(kmutex_t), KM_SLEEP);
+    VERIFY3P(cb_spl_taskq_mutex, !=, NULL);
+    mutex_init(cb_spl_taskq_mutex, NULL, MUTEX_DEFAULT, NULL);
+    cb_log->ctor(ctor_args);
+    return (cb_log);
+}
+EXPORT_SYMBOL(create_cb_spl_taskq);
+
+void destroy_cb_spl_taskq(log_callback_t *cb_spl_taskq)
+{
+    call_ctor_dtor_settings_e settings = DTOR_DESTROY_FUNC;
+    VERIFY3P(cb_spl_taskq, !=, NULL);
+    cb_spl_taskq->dtor(&settings);
+    kmem_free(cb_spl_taskq_mutex, sizeof(kmutex_t));
+    kmem_free(cb_spl_taskq, sizeof(log_callback_t));
+}
+EXPORT_SYMBOL(destroy_cb_spl_taskq);

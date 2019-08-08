@@ -80,6 +80,7 @@ cb_zio_pipeline_args_t create_cb_zio_pipeline_args(zio_t *zio,
                                                    zio_stage io_stage);
 
 log_callback_t *create_cb_zio_pipeline(void);
+
 void destroy_cb_zio_pipeline(log_callback_t *cb_zio_pipeline);
 
 #ifdef __cplusplus
