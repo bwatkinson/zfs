@@ -20,7 +20,6 @@ $(MODULE)-objs += spl-log-callbacks.o
 $(MODULE)-objs += spl-log-cb-taskq.o 
 $(MODULE)-objs += spl-log-cb-func-callsite.o 
 $(MODULE)-objs += spl-log-cb-zio-pipeline.o 
-$(MODULE)-objs += spl-mutex.o
 $(MODULE)-objs += spl-proc.o
 $(MODULE)-objs += spl-procfs-list.o
 $(MODULE)-objs += spl-taskq.o
