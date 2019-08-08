@@ -23,7 +23,7 @@
  * Use is subject to license terms.
  */
 /*
- * Copyright (c) 2013, 2017 by Delphix. All rights reserved.
+ * Copyright (c) 2013, 2019 by Delphix. All rights reserved.
  */
 
 #include <sys/zfs_context.h>
@@ -525,6 +525,36 @@ range_tree_contains(range_tree_t *rt, uint64_t start, uint64_t size)
 }
 
 /*
+ * Returns the first subset of the given range which overlaps with the range
+ * tree. Returns true if there is a segment in the range, and false if there
+ * isn't.
+ */
+boolean_t
+range_tree_find_in(range_tree_t *rt, uint64_t start, uint64_t size,
+    uint64_t *ostart, uint64_t *osize)
+{
+	range_seg_t rsearch;
+	rsearch.rs_start = start;
+	rsearch.rs_end = start + 1;
+
+	avl_index_t where;
+	range_seg_t *rs = avl_find(&rt->rt_root, &rsearch, &where);
+	if (rs != NULL) {
+		*ostart = start;
+		*osize = MIN(size, rs->rs_end - start);
+		return (B_TRUE);
+	}
+
+	rs = avl_nearest(&rt->rt_root, where, AVL_AFTER);
+	if (rs == NULL || rs->rs_start > start + size)
+		return (B_FALSE);
+
+	*ostart = rs->rs_start;
+	*osize = MIN(start + size, rs->rs_end) - rs->rs_start;
+	return (B_TRUE);
+}
+
+/*
  * Ensure that this range is not in the tree, regardless of whether
  * it is currently in the tree.
  */
@@ -578,10 +608,10 @@ range_tree_vacate(range_tree_t *rt, range_tree_func_t *func, void *arg)
 void
 range_tree_walk(range_tree_t *rt, range_tree_func_t *func, void *arg)
 {
-	range_seg_t *rs;
-
-	for (rs = avl_first(&rt->rt_root); rs; rs = AVL_NEXT(&rt->rt_root, rs))
+	for (range_seg_t *rs = avl_first(&rt->rt_root); rs;
+	    rs = AVL_NEXT(&rt->rt_root, rs)) {
 		func(arg, rs->rs_start, rs->rs_end - rs->rs_start);
+	}
 }
 
 range_seg_t *
@@ -594,6 +624,12 @@ uint64_t
 range_tree_space(range_tree_t *rt)
 {
 	return (rt->rt_space);
+}
+
+uint64_t
+range_tree_numsegs(range_tree_t *rt)
+{
+	return ((rt == NULL) ? 0 : avl_numnodes(&rt->rt_root));
 }
 
 boolean_t
@@ -666,4 +702,74 @@ uint64_t
 range_tree_span(range_tree_t *rt)
 {
 	return (range_tree_max(rt) - range_tree_min(rt));
+}
+
+/*
+ * Remove any overlapping ranges between the given segment [start, end)
+ * from removefrom. Add non-overlapping leftovers to addto.
+ */
+void
+range_tree_remove_xor_add_segment(uint64_t start, uint64_t end,
+    range_tree_t *removefrom, range_tree_t *addto)
+{
+	avl_index_t where;
+	range_seg_t starting_rs = {
+		.rs_start = start,
+		.rs_end = start + 1
+	};
+
+	range_seg_t *curr = avl_find(&removefrom->rt_root,
+	    &starting_rs, &where);
+
+	if (curr == NULL)
+		curr = avl_nearest(&removefrom->rt_root, where, AVL_AFTER);
+
+	range_seg_t *next;
+	for (; curr != NULL; curr = next) {
+		next = AVL_NEXT(&removefrom->rt_root, curr);
+
+		if (start == end)
+			return;
+		VERIFY3U(start, <, end);
+
+		/* there is no overlap */
+		if (end <= curr->rs_start) {
+			range_tree_add(addto, start, end - start);
+			return;
+		}
+
+		uint64_t overlap_start = MAX(curr->rs_start, start);
+		uint64_t overlap_end = MIN(curr->rs_end, end);
+		uint64_t overlap_size = overlap_end - overlap_start;
+		ASSERT3S(overlap_size, >, 0);
+		range_tree_remove(removefrom, overlap_start, overlap_size);
+
+		if (start < overlap_start)
+			range_tree_add(addto, start, overlap_start - start);
+
+		start = overlap_end;
+	}
+	VERIFY3P(curr, ==, NULL);
+
+	if (start != end) {
+		VERIFY3U(start, <, end);
+		range_tree_add(addto, start, end - start);
+	} else {
+		VERIFY3U(start, ==, end);
+	}
+}
+
+/*
+ * For each entry in rt, if it exists in removefrom, remove it
+ * from removefrom. Otherwise, add it to addto.
+ */
+void
+range_tree_remove_xor_add(range_tree_t *rt, range_tree_t *removefrom,
+    range_tree_t *addto)
+{
+	for (range_seg_t *rs = avl_first(&rt->rt_root); rs;
+	    rs = AVL_NEXT(&rt->rt_root, rs)) {
+		range_tree_remove_xor_add_segment(rs->rs_start, rs->rs_end,
+		    removefrom, addto);
+	}
 }

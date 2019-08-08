@@ -159,8 +159,8 @@ dmu_buf_hold_noread_by_dnode(dnode_t *dn, uint64_t offset,
 	uint64_t blkid;
 	dmu_buf_impl_t *db;
 
-	blkid = dbuf_whichblock(dn, 0, offset);
 	rw_enter(&dn->dn_struct_rwlock, RW_READER);
+	blkid = dbuf_whichblock(dn, 0, offset);
 	db = dbuf_hold(dn, blkid, tag);
 	rw_exit(&dn->dn_struct_rwlock);
 
@@ -184,8 +184,8 @@ dmu_buf_hold_noread(objset_t *os, uint64_t object, uint64_t offset,
 	err = dnode_hold(os, object, FTAG, &dn);
 	if (err)
 		return (err);
-	blkid = dbuf_whichblock(dn, 0, offset);
 	rw_enter(&dn->dn_struct_rwlock, RW_READER);
+	blkid = dbuf_whichblock(dn, 0, offset);
 	db = dbuf_hold(dn, blkid, tag);
 	rw_exit(&dn->dn_struct_rwlock);
 	dnode_rele(dn, FTAG);
@@ -570,7 +570,7 @@ dmu_buf_hold_array_by_dnode(dnode_t *dn, uint64_t offset, uint64_t length,
 	if ((flags & DMU_READ_NO_PREFETCH) == 0 &&
 	    DNODE_META_IS_CACHEABLE(dn) && length <= zfetch_array_rd_sz) {
 		dmu_zfetch(&dn->dn_zfetch, blkid, nblks,
-		    read && DNODE_IS_CACHEABLE(dn));
+		    read && DNODE_IS_CACHEABLE(dn), B_TRUE);
 	}
 	rw_exit(&dn->dn_struct_rwlock);
 
@@ -702,7 +702,6 @@ dmu_prefetch(objset_t *os, uint64_t object, int64_t level, uint64_t offset,
 	if (err != 0)
 		return;
 
-	rw_enter(&dn->dn_struct_rwlock, RW_READER);
 	/*
 	 * offset + len - 1 is the last byte we want to prefetch for, and offset
 	 * is the first.  Then dbuf_whichblk(dn, level, off + len - 1) is the
@@ -710,6 +709,7 @@ dmu_prefetch(objset_t *os, uint64_t object, int64_t level, uint64_t offset,
 	 * offset)  is the first.  Then the number we need to prefetch is the
 	 * last - first + 1.
 	 */
+	rw_enter(&dn->dn_struct_rwlock, RW_READER);
 	if (level > 0 || dn->dn_datablkshift != 0) {
 		nblks = dbuf_whichblock(dn, level, offset + len - 1) -
 		    dbuf_whichblock(dn, level, offset) + 1;
@@ -722,7 +722,6 @@ dmu_prefetch(objset_t *os, uint64_t object, int64_t level, uint64_t offset,
 		for (int i = 0; i < nblks; i++)
 			dbuf_prefetch(dn, level, blkid + i, pri, 0);
 	}
-
 	rw_exit(&dn->dn_struct_rwlock);
 
 	dnode_rele(dn, FTAG);

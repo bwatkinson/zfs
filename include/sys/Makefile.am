@@ -13,7 +13,6 @@ COMMON_H = \
 	$(top_srcdir)/include/sys/bptree.h \
 	$(top_srcdir)/include/sys/bqueue.h \
 	$(top_srcdir)/include/sys/cityhash.h \
-	$(top_srcdir)/include/sys/spa_checkpoint.h \
 	$(top_srcdir)/include/sys/dataset_kstats.h \
 	$(top_srcdir)/include/sys/dbuf.h \
 	$(top_srcdir)/include/sys/ddt.h \
@@ -65,6 +64,8 @@ COMMON_H = \
 	$(top_srcdir)/include/sys/sha2.h \
 	$(top_srcdir)/include/sys/skein.h \
 	$(top_srcdir)/include/sys/spa_boot.h \
+	$(top_srcdir)/include/sys/spa_checkpoint.h \
+	$(top_srcdir)/include/sys/spa_log_spacemap.h \
 	$(top_srcdir)/include/sys/space_map.h \
 	$(top_srcdir)/include/sys/space_reftree.h \
 	$(top_srcdir)/include/sys/spa.h \
@@ -80,6 +81,7 @@ COMMON_H = \
 	$(top_srcdir)/include/sys/trace_dmu.h \
 	$(top_srcdir)/include/sys/trace_dnode.h \
 	$(top_srcdir)/include/sys/trace_multilist.h \
+	$(top_srcdir)/include/sys/trace_rrwlock.h \
 	$(top_srcdir)/include/sys/trace_txg.h \
 	$(top_srcdir)/include/sys/trace_vdev.h \
 	$(top_srcdir)/include/sys/trace_zil.h \

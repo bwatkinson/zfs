@@ -775,7 +775,11 @@ zfs_write(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 		 */
 		dmu_tx_t *tx = dmu_tx_create(zfsvfs->z_os);
 		dmu_tx_hold_sa(tx, zp->z_sa_hdl, B_FALSE);
-		dmu_tx_hold_write(tx, zp->z_id, woff, MIN(n, max_blksz));
+		dmu_buf_impl_t *db = (dmu_buf_impl_t *)sa_get_db(zp->z_sa_hdl);
+		DB_DNODE_ENTER(db);
+		dmu_tx_hold_write_by_dnode(tx, DB_DNODE(db), woff,
+		    MIN(n, max_blksz));
+		DB_DNODE_EXIT(db);
 		zfs_sa_upgrade_txholds(tx, zp);
 		error = dmu_tx_assign(tx, TXG_WAIT);
 		if (error) {
@@ -1048,7 +1052,7 @@ zfs_get_data(void *arg, lr_write_t *lr, char *buf, struct lwb *lwb, zio_t *zio)
 		return (SET_ERROR(ENOENT));
 	}
 
-	zgd = (zgd_t *)kmem_zalloc(sizeof (zgd_t), KM_SLEEP);
+	zgd = kmem_zalloc(sizeof (zgd_t), KM_SLEEP);
 	zgd->zgd_lwb = lwb;
 	zgd->zgd_private = zp;
 
@@ -5074,13 +5078,14 @@ zfs_setsecattr(struct inode *ip, vsecattr_t *vsecp, int flag, cred_t *cr)
 
 #ifdef HAVE_UIO_ZEROCOPY
 /*
- * Tunable, both must be a power of 2.
- *
- * zcr_blksz_min: the smallest read we may consider to loan out an arcbuf
- * zcr_blksz_max: if set to less than the file block size, allow loaning out of
- *		an arcbuf for a partial block read
+ * The smallest read we may consider to loan out an arcbuf.
+ * This must be a power of 2.
  */
 int zcr_blksz_min = (1 << 10);	/* 1K */
+/*
+ * If set to less than the file block size, allow loaning out of an
+ * arcbuf for a partial block read.  This must be a power of 2.
+ */
 int zcr_blksz_max = (1 << 17);	/* 128K */
 
 /*ARGSUSED*/
@@ -5259,9 +5264,11 @@ EXPORT_SYMBOL(zfs_putpage);
 EXPORT_SYMBOL(zfs_dirty_inode);
 EXPORT_SYMBOL(zfs_map);
 
-/* CSTYLED */
+/* BEGIN CSTYLED */
 module_param(zfs_delete_blocks, ulong, 0644);
 MODULE_PARM_DESC(zfs_delete_blocks, "Delete files larger than N blocks async");
-module_param(zfs_read_chunk_size, long, 0644);
+module_param(zfs_read_chunk_size, ulong, 0644);
 MODULE_PARM_DESC(zfs_read_chunk_size, "Bytes to read per chunk");
+/* END CSTYLED */
+
 #endif

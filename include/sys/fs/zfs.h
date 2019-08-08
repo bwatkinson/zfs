@@ -118,11 +118,11 @@ typedef enum {
 	ZFS_PROP_PRIVATE,		/* not exposed to user, temporary */
 	ZFS_PROP_ACLINHERIT,
 	ZFS_PROP_CREATETXG,
-	ZFS_PROP_NAME,
+	ZFS_PROP_NAME,			/* not exposed to the user */
 	ZFS_PROP_CANMOUNT,
-	ZFS_PROP_ISCSIOPTIONS,
+	ZFS_PROP_ISCSIOPTIONS,		/* not exposed to the user */
 	ZFS_PROP_XATTR,
-	ZFS_PROP_NUMCLONES,
+	ZFS_PROP_NUMCLONES,		/* not exposed to the user */
 	ZFS_PROP_COPIES,
 	ZFS_PROP_VERSION,
 	ZFS_PROP_UTF8ONLY,
@@ -140,12 +140,12 @@ typedef enum {
 	ZFS_PROP_USEDDS,
 	ZFS_PROP_USEDCHILD,
 	ZFS_PROP_USEDREFRESERV,
-	ZFS_PROP_USERACCOUNTING,
-	ZFS_PROP_STMF_SHAREINFO,
+	ZFS_PROP_USERACCOUNTING,	/* not exposed to the user */
+	ZFS_PROP_STMF_SHAREINFO,	/* not exposed to the user */
 	ZFS_PROP_DEFER_DESTROY,
 	ZFS_PROP_USERREFS,
 	ZFS_PROP_LOGBIAS,
-	ZFS_PROP_UNIQUE,
+	ZFS_PROP_UNIQUE,		/* not exposed to the user */
 	ZFS_PROP_OBJSETID,
 	ZFS_PROP_DEDUP,
 	ZFS_PROP_MLSLABEL,
@@ -156,7 +156,7 @@ typedef enum {
 	ZFS_PROP_CLONES,
 	ZFS_PROP_LOGICALUSED,
 	ZFS_PROP_LOGICALREFERENCED,
-	ZFS_PROP_INCONSISTENT,
+	ZFS_PROP_INCONSISTENT,		/* not exposed to the user */
 	ZFS_PROP_VOLMODE,
 	ZFS_PROP_FILESYSTEM_LIMIT,
 	ZFS_PROP_SNAPSHOT_LIMIT,
@@ -770,6 +770,8 @@ typedef struct zpool_load_policy {
 	"com.delphix:obsolete_counts_are_precise"
 #define	VDEV_TOP_ZAP_POOL_CHECKPOINT_SM \
 	"com.delphix:pool_checkpoint_sm"
+#define	VDEV_TOP_ZAP_MS_UNFLUSHED_PHYS_TXGS \
+	"com.delphix:ms_unflushed_phys_txgs"
 
 #define	VDEV_TOP_ZAP_ALLOCATION_BIAS \
 	"org.zfsonlinux:allocation_bias"
@@ -1322,6 +1324,7 @@ typedef enum {
 	ZFS_ERR_FROM_IVSET_GUID_MISMATCH,
 	ZFS_ERR_SPILL_BLOCK_FLAG_MISSING,
 	ZFS_ERR_UNKNOWN_SEND_STREAM_FEATURE,
+	ZFS_ERR_EXPORT_IN_PROGRESS,
 } zfs_errno_t;
 
 /*

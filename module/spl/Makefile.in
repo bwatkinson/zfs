@@ -23,7 +23,6 @@ $(MODULE)-objs += spl-log-cb-zio-pipeline.o
 $(MODULE)-objs += spl-mutex.o
 $(MODULE)-objs += spl-proc.o
 $(MODULE)-objs += spl-procfs-list.o
-$(MODULE)-objs += spl-rwlock.o
 $(MODULE)-objs += spl-taskq.o
 $(MODULE)-objs += spl-thread.o
 $(MODULE)-objs += spl-tsd.o

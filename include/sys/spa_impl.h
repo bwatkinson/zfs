@@ -20,7 +20,7 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2011, 2018 by Delphix. All rights reserved.
+ * Copyright (c) 2011, 2019 by Delphix. All rights reserved.
  * Copyright 2011 Nexenta Systems, Inc.  All rights reserved.
  * Copyright (c) 2014 Spectra Logic Corporation, All rights reserved.
  * Copyright 2013 Saso Kiselkov. All rights reserved.
@@ -34,6 +34,7 @@
 
 #include <sys/spa.h>
 #include <sys/spa_checkpoint.h>
+#include <sys/spa_log_spacemap.h>
 #include <sys/vdev.h>
 #include <sys/vdev_removal.h>
 #include <sys/metaslab.h>
@@ -48,6 +49,7 @@
 #include <sys/dsl_crypt.h>
 #include <sys/zfeature.h>
 #include <sys/zthr.h>
+#include <sys/dsl_deadlist.h>
 #include <zfeature_common.h>
 #include <sys/log_callbacks_impl.h>
 
@@ -220,6 +222,7 @@ struct spa {
 	spa_taskqs_t	spa_zio_taskq[ZIO_TYPES][ZIO_TASKQ_TYPES];
 	dsl_pool_t	*spa_dsl_pool;
 	boolean_t	spa_is_initializing;	/* true while opening pool */
+	boolean_t	spa_is_exporting;	/* true while exporting pool */
 	metaslab_class_t *spa_normal_class;	/* normal data class */
 	metaslab_class_t *spa_log_class;	/* intent log data class */
 	metaslab_class_t *spa_special_class;	/* special allocation class */
@@ -307,6 +310,19 @@ struct spa {
 	uint64_t	spa_checkpoint_txg;	/* the txg of the checkpoint */
 	spa_checkpoint_info_t spa_checkpoint_info; /* checkpoint accounting */
 	zthr_t		*spa_checkpoint_discard_zthr;
+
+	space_map_t	*spa_syncing_log_sm;	/* current log space map */
+	avl_tree_t	spa_sm_logs_by_txg;
+	kmutex_t	spa_flushed_ms_lock;	/* for metaslabs_by_flushed */
+	avl_tree_t	spa_metaslabs_by_flushed;
+	spa_unflushed_stats_t	spa_unflushed_stats;
+	list_t		spa_log_summary;
+	uint64_t	spa_log_flushall_txg;
+
+	zthr_t		*spa_livelist_delete_zthr; /* deleting livelists */
+	zthr_t		*spa_livelist_condense_zthr; /* condensing livelists */
+	uint64_t	spa_livelists_to_delete; /* set of livelists to free */
+	livelist_condense_entry_t	spa_to_condense; /* next to condense */
 
 	char		*spa_root;		/* alternate root directory */
 	uint64_t	spa_ena;		/* spa-wide ereport ENA */

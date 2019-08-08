@@ -242,7 +242,7 @@ returned to the \fBenabled\fR state when all v2 bookmarks are destroyed.
 .RS 4n
 .TS
 l l .
-GUID	com.delphxi:bookmark_written
+GUID	com.delphix:bookmark_written
 READ\-ONLY COMPATIBLE	no
 DEPENDENCIES	bookmark, extensible_dataset, bookmark_v2
 .TE
@@ -545,6 +545,48 @@ feature will return to being \fBenabled\fR once all filesystems that
 have ever contained a dnode larger than 512B are destroyed. Large dnodes
 allow more data to be stored in the bonus buffer, thus potentially
 improving performance by avoiding the use of spill blocks.
+.RE
+
+.sp
+.ne 2
+.na
+\fB\fBlivelist\fR\fR
+.ad
+.RS 4n
+.TS
+l l .
+GUID	com.delphix:livelist
+READ\-ONLY COMPATIBLE	yes
+DEPENDENCIES	none
+.TE
+This feature allows clones to be deleted faster than the traditional method
+when a large number of random/sparse writes have been made to the clone.
+All blocks allocated and freed after a clone is created are tracked by the
+the clone's livelist which is referenced during the deletion of the clone.
+The feature is activated when a clone is created and remains active until all
+clones have been destroyed.
+.RE
+
+.sp
+.ne 2
+.na
+\fBlog_spacemap\fR
+.ad
+.RS 4n
+.TS
+l l .
+GUID	com.delphix:log_spacemap
+READ\-ONLY COMPATIBLE	yes
+DEPENDENCIES	com.delphix:spacemap_v2
+.TE
+
+This feature improves performance for heavily-fragmented pools,
+especially when workloads are heavy in random-writes. It does so by
+logging all the metaslab changes on a single spacemap every TXG
+instead of scattering multiple writes to all the metaslab spacemaps.
+
+This feature becomes \fBactive\fR as soon as it is enabled and will never
+return to being \fBenabled\fR.
 .RE
 
 .sp
@@ -882,7 +924,6 @@ This feature becomes \fBactive\fR when the \fBzpool checkpoint\fR subcommand
 is used to checkpoint the pool.
 The feature will only return back to being \fBenabled\fR when the pool
 is rewound or the checkpoint has been discarded.
-.RE
 
 .SH "SEE ALSO"
 zpool(8)

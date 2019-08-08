@@ -2422,6 +2422,10 @@ zfs_send(zfs_handle_t *zhp, const char *fromsnap, const char *tosnap,
 		}
 		zfs_handle_t *tosnap = zfs_open(zhp->zfs_hdl,
 		    full_tosnap_name, ZFS_TYPE_SNAPSHOT);
+		if (tosnap == NULL) {
+			err = -1;
+			goto err_out;
+		}
 		err = send_prelim_records(tosnap, fromsnap, outfd,
 		    flags->replicate || flags->props || flags->holds,
 		    flags->replicate, flags->verbosity > 0, flags->dryrun,
@@ -2707,6 +2711,8 @@ zfs_send_one(zfs_handle_t *zhp, const char *from, int fd, sendflags_t *flags,
 	if (from != NULL && strchr(from, '@')) {
 		zfs_handle_t *from_zhp = zfs_open(hdl, from,
 		    ZFS_TYPE_DATASET);
+		if (from_zhp == NULL)
+			return (-1);
 		if (!snapshot_is_before(from_zhp, zhp)) {
 			zfs_close(from_zhp);
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
@@ -5021,14 +5027,15 @@ zfs_receive_one(libzfs_handle_t *hdl, int infd, const char *tosnap,
 			*cp = '@';
 			break;
 		case EINVAL:
-			if (flags->resumable)
+			if (flags->resumable) {
 				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
 				    "kernel modules must be upgraded to "
 				    "receive this stream."));
-			if (embedded && !raw)
+			} else if (embedded && !raw) {
 				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
 				    "incompatible embedded data stream "
 				    "feature with encrypted receive."));
+			}
 			(void) zfs_error(hdl, EZFS_BADSTREAM, errbuf);
 			break;
 		case ECKSUM:
