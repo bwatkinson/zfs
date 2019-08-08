@@ -9,8 +9,6 @@
 extern "C" {
 #endif
 
-#define LOG_CALLBACK_DEBUG 1
-
 static inline zio_t *cb_zio_walk_parents(zio_t *cio, zio_link_t **zl)
 {
     list_t *pl = &cio->io_parent_list;
@@ -65,6 +63,8 @@ static inline unsigned int cb_zio_log_get_correct_pid(zio_t *zio)
     _ret_do_log;                    \
 })
 
+extern uint_t spl_cb_log_debug;
+
 extern log_callback_list_t *create_log_callback_list(void);
 
 extern void init_log_callback_list(log_callback_list_t *cb_list);
@@ -86,6 +86,10 @@ extern int execute_dump_func(log_callback_list_t *cb_list,
                              zio_cb_log_type_e zlog_t,
                              const char *cb_nm,
                              void *dump_args);
+
+extern uint_t get_log_cb_max_pids(void);
+
+boolean_t spl_log_cb_debug_enabled(void);
 
 #ifdef __cplusplus
 }

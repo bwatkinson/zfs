@@ -44,12 +44,6 @@ extern "C" {
  */
 #define STATIC_PIPELINE_PID_CAP 50000
 
-/*
- * Change this variable in order to set the maximum number of PID's
- * to collect timestamps for
- */
-#define STATIC_PID_CAP 48
-
 /****************************************************************/
 /****************************************************************/
 /*          NEVER MANUALLY CHANGE THIS VARIABLE!!!!!            */
@@ -71,8 +65,6 @@ extern "C" {
 
 #define ZIO_PIPELINE_STAGES 25
 
-
-
 typedef unsigned int zio_stage;
 
 typedef struct cb_zio_pipeline_args_s
@@ -87,10 +79,8 @@ typedef struct cb_zio_pipeline_args_s
 cb_zio_pipeline_args_t create_cb_zio_pipeline_args(zio_t *zio,
                                                    zio_stage io_stage);
 
-/*************************************************************/
-/*       External Structs Defined/Exported in .c file        */
-/*************************************************************/
-extern log_callback_t log_cb_zio_pipeline;
+log_callback_t *create_cb_zio_pipeline(void);
+void destroy_cb_zio_pipeline(log_callback_t *cb_zio_pipeline);
 
 #ifdef __cplusplus
 }

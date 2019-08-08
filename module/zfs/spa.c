@@ -1036,8 +1036,8 @@ spa_taskqs_init(spa_t *spa, zio_type_t t, zio_taskq_type_t q)
 
 #ifdef _KERNEL
    if (create_cb_taskq_ctor_args) {
-        log_cb_spl_taskq.ctor(ctor_args);
-        add_callback_to_list(spa->cb_list, &log_cb_spl_taskq);
+        //log_cb_spl_taskq.ctor(ctor_args);
+        //add_callback_to_list(spa->cb_list, &log_cb_spl_taskq);
         destroy_cb_spl_taskq_ctor_args(ctor_args);
     }
 #endif
@@ -1246,11 +1246,12 @@ spa_activate(spa_t *spa, int mode)
 
 #ifdef _KERNEL
     /* Allocating callback logging and registering callbacks */
+    log_callback_t *log_cb = NULL;
     spa->cb_list = create_log_callback_list();
-    log_cb_zio_pipeline.ctor(NULL);
-    add_callback_to_list(spa->cb_list, &log_cb_zio_pipeline);
-    log_cb_func_callsite.ctor(NULL);
-    add_callback_to_list(spa->cb_list, &log_cb_func_callsite);
+    log_cb = create_cb_zio_pipeline();
+    add_callback_to_list(spa->cb_list, log_cb);
+    log_cb = create_cb_func_callsite();
+    add_callback_to_list(spa->cb_list, log_cb);
 #else	
     /* We presently only allow cb's to called while in the kernel */
     spa->cb_list = NULL;
@@ -1373,10 +1374,10 @@ spa_deactivate(spa_t *spa)
     log_callback_t *current_cb = NULL;
     current_cb = remove_callback_from_list(spa->cb_list, "cb_func_callsite");
     if (current_cb)
-        current_cb->dtor(NULL);
+        destroy_cb_func_callsite(current_cb);
     current_cb = remove_callback_from_list(spa->cb_list, "cb_zio_pipeline");
     if (current_cb)
-        current_cb->dtor(&holding_lock);
+        destroy_cb_zio_pipeline(current_cb);
     current_cb = remove_callback_from_list(spa->cb_list, "cb_spl_taskq");
     if (current_cb)
         current_cb->dtor(&holding_lock);

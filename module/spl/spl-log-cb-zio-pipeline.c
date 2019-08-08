@@ -24,11 +24,6 @@
 const static char *LOG_FILE_PIPELINE = "/var/log/hrtime_zio_pipeline.log";
 
 /* 
- * Just a simple debugging enable (1) disable (0)
- */
-#define CB_FUNC_ZIO_PIPELINE_DEBUG 1
-
-/* 
  * Ignoring PID's with only 10% of requested timestamps
  */
 #define MIN_TS_TO_IGNORE (STATIC_PIPELINE_PID_CAP / 10)
@@ -74,8 +69,17 @@ static const char *no_stage = "NO_STAGE";
 /*
  * Initialization variable that is set and checked
  */
+static int cb_zio_pipeline_max_pids = 0;
 static int cb_zio_pipeline_initialized = 0;
+static kmutex_t *cb_zio_pipeline_mutex = NULL;
 
+/*
+ * Defines whether for not the counters should be reset
+ */
+static uint_t spl_log_cb_zio_pipeline_reset_counters = 0;
+module_param(spl_log_cb_zio_pipeline_reset_counters, uint, 0644);
+MODULE_PARM_DESC(spl_log_cb_zio_pipeline_reset_counters,
+    "Resets the counters for the ZIO pipeline SPL callback log");
 
 /*******************************************************/
 /* Struct definitions for ZIO pipeline                 */
@@ -93,6 +97,8 @@ typedef struct all_pid_io_stages_s
 {
     pid_io_stages_t *pid_io_stages;
     int dumped;
+    unsigned int *pids;
+    uint_t pid_cap;
     hrtime_t total_pids;
     int row_select_iter;
     struct file *dump_file;
@@ -113,7 +119,7 @@ static boolean_t cb_zio_pipeline_all_pids_done(void)
     int i;
     boolean_t done_collecting = B_TRUE;
 
-    for (i = 0; i < STATIC_PID_CAP; i++) {
+    for (i = 0; i < all_pid_io_stages.pid_cap; i++) {
         if (all_pid_io_stages.pid_io_stages[i].curr_pid && 
            !all_pid_io_stages.pid_io_stages[i].done_collecting) {
             if (all_pid_io_stages.pid_io_stages[i].num_of_ts_collected <= MIN_TS_TO_IGNORE) {
@@ -132,39 +138,35 @@ static boolean_t cb_zio_pipeline_all_pids_done(void)
     return done_collecting;
 }
 
-static void cb_zio_pipeline_dtor(void  *lock_held)
+static void cb_zio_pipeline_dtor(void  *dtor_args)
 {
-#if CB_FUNC_ZIO_PIPELINE_DEBUG
-    int i;
-    cmn_err(CE_WARN, "Inside %s", __func__);
-#endif 
-    if (!(*((boolean_t *)lock_held))) {
-        mutex_enter(&all_pid_io_stages.lock);
-    }
-
+    VERIFY3P(dtor_args, ==, NULL);
+        
     if (cb_zio_pipeline_initialized) {
         cb_zio_pipeline_initialized = 0;
-#if CB_FUNC_ZIO_PIPELINE_DEBUG
-        cmn_err(CE_WARN, "Contents of the pipeline counts with %d total pids",
-                all_pid_io_stages.total_pids);
-        for (i = 0; i < STATIC_PID_CAP; i++) {
-            if (all_pid_io_stages.pid_io_stages[i].curr_pid &&
-               all_pid_io_stages.pid_io_stages[i].num_of_ts_collected <= MIN_TS_TO_IGNORE) {
-                cmn_err(CE_WARN, "PID = %u with num_of_ts_collected %d <= %d so will not be in log",
-                        all_pid_io_stages.pid_io_stages[i].curr_pid,
-                        all_pid_io_stages.pid_io_stages[i].num_of_ts_collected,
-                        MIN_TS_TO_IGNORE);
-            } else if (all_pid_io_stages.pid_io_stages[i].curr_pid) { 
-                cmn_err(CE_WARN, "PID = %u with num_of_ts_collected = %d",
-                        all_pid_io_stages.pid_io_stages[i].curr_pid,
-                        all_pid_io_stages.pid_io_stages[i].num_of_ts_collected);
+        if (spl_log_cb_debug_enabled()) {
+            int i;
+            cmn_err(CE_WARN, "Inside %s", __func__);
+            cmn_err(CE_WARN, "Contents of the pipeline counts with %d total pids",
+                    all_pid_io_stages.total_pids);
+            for (i = 0; i < all_pid_io_stages.pid_cap; i++) {
+                if (all_pid_io_stages.pid_io_stages[i].curr_pid &&
+                    all_pid_io_stages.pid_io_stages[i].num_of_ts_collected <= MIN_TS_TO_IGNORE) {
+                    cmn_err(CE_WARN, "PID = %u with num_of_ts_collected %d <= %d so will not be in log",
+                            all_pid_io_stages.pid_io_stages[i].curr_pid,
+                            all_pid_io_stages.pid_io_stages[i].num_of_ts_collected,
+                            MIN_TS_TO_IGNORE);
+                } else if (all_pid_io_stages.pid_io_stages[i].curr_pid) { 
+                    cmn_err(CE_WARN, "PID = %u with num_of_ts_collected = %d",
+                            all_pid_io_stages.pid_io_stages[i].curr_pid,
+                            all_pid_io_stages.pid_io_stages[i].num_of_ts_collected);
+                }
             }
         }
-#endif /* CB_FUNC_ZIO_PIPELINE_DEBUG */
-        kmem_free(all_pid_io_stages.pid_io_stages, sizeof(pid_io_stages_t) * STATIC_PID_CAP);
+        vmem_free(all_pid_io_stages.pids, sizeof(unsigned int) * all_pid_io_stages.pid_cap);
+        vmem_free(all_pid_io_stages.pid_io_stages, sizeof(pid_io_stages_t) * all_pid_io_stages.pid_cap);
         all_pid_io_stages.pid_io_stages = NULL;
     }
-    mutex_exit(&all_pid_io_stages.lock);
 }
 
 /**
@@ -178,30 +180,38 @@ static void cb_zio_pipeline_ctor(void *ctor_args)
 {
     int i;
     int j;
-   
+  
+    mutex_enter(cb_zio_pipeline_mutex);
     /* There is no constructor args needed, so always pass NULL to this */
     VERIFY3P(ctor_args, ==, NULL);
     
     if (!cb_zio_pipeline_initialized) {
+        cb_zio_pipeline_max_pids = get_log_cb_max_pids();
+        all_pid_io_stages.pid_cap = cb_zio_pipeline_max_pids;
         all_pid_io_stages.pid_io_stages = NULL;
-        all_pid_io_stages.pid_io_stages = vmem_zalloc(sizeof(pid_io_stages_t) * STATIC_PID_CAP, KM_SLEEP);
-        ASSERT3P(all_pid_io_stages.pid_io_stages, !=, NULL);
+        all_pid_io_stages.pids = vmem_zalloc(sizeof(unsigned int) * all_pid_io_stages.pid_cap, KM_SLEEP);
+        all_pid_io_stages.pid_io_stages = vmem_zalloc(sizeof(pid_io_stages_t) * all_pid_io_stages.pid_cap, KM_SLEEP);
+        VERIFY3P(all_pid_io_stages.pids, !=, NULL);
+        VERIFY3P(all_pid_io_stages.pid_io_stages, !=, NULL);
         all_pid_io_stages.dumped = 0;
         all_pid_io_stages.total_pids = 0;
         all_pid_io_stages.row_select_iter = 0;
         all_pid_io_stages.dump_file = NULL;
         all_pid_io_stages.file_offset = 0;
         mutex_init(&all_pid_io_stages.lock, NULL, MUTEX_DEFAULT, NULL);
-        for (i = 0; i < STATIC_PID_CAP; i++) {
+        for (i = 0; i < all_pid_io_stages.pid_cap; i++) {
             for (j = 0; j < ZIO_PIPELINE_STAGES; j++) {
                 all_pid_io_stages.pid_io_stages[i].zio_pipeline_stage[j] = no_stage;
             }
         }
         cb_zio_pipeline_initialized = 1;
-#if CB_FUNC_ZIO_PIPELINE_DEBUG
-        cmn_err(CE_WARN, "Initialized the data for timestamping ZIO pipeline in %s", __func__);
-#endif /* CB_FUNC_ZIO_PIPELINE_DEBUG */
+        spl_log_cb_zio_pipeline_reset_counters = 0;
+        if (spl_log_cb_debug_enabled()) {
+            cmn_err(CE_WARN, "Initialized the data for timestamping ZIO pipeline in %s and will watch up to %d pids",
+                     __func__, all_pid_io_stages.total_pids);
+        }
     }
+    mutex_exit(cb_zio_pipeline_mutex);
 }
 
 /**
@@ -226,16 +236,22 @@ static void cb_zio_pipeline_cb(void *cb_args)
     int next_ts_slot;
     int pipeline_stage_name_len = 0;
     hrtime_t num_pipeline_stages = ZIO_PIPELINE_STAGES;
-    boolean_t holding_lock = B_TRUE;
+    boolean_t pid_in_slot = B_FALSE; 
 
     VERIFY3P(cb_args, !=, NULL);
+
+    if (cb_zio_pipeline_initialized == 0 &&
+        spl_log_cb_zio_pipeline_reset_counters == 1) {
+        cb_zio_pipeline_ctor(NULL);
+    }
+
     unsigned int curr_pid = ((cb_zio_pipeline_args_t *)cb_args)->pid;
     zio_stage io_stage = ((cb_zio_pipeline_args_t *)cb_args)->io_stage;
 
     ASSERT3U(io_stage, <=, ZIO_PIPELINE_STAGES);
 
     /* First find the row for curr_pid */
-    pid_arr_offset = curr_pid % STATIC_PID_CAP;
+    pid_arr_offset = curr_pid % all_pid_io_stages.pid_cap;
     /* Next get the pipeline offset for correct pid array */
     pid_stage_offset = ZIOSTAGE_TO_OFFSET(io_stage);
 
@@ -248,18 +264,35 @@ static void cb_zio_pipeline_cb(void *cb_args)
         /* If another PID resides in the slot, find next available slot. If no
          * slots is available just bail
          */
-        while ((all_pid_io_stages.pid_io_stages[pid_arr_offset].curr_pid != curr_pid) && 
-               (all_pid_io_stages.row_select_iter < STATIC_PID_CAP)) {
-            if (all_pid_io_stages.pid_io_stages[pid_arr_offset].curr_pid != 0) {
+        while ((all_pid_io_stages.pids[pid_arr_offset] != curr_pid) && 
+               (all_pid_io_stages.row_select_iter < all_pid_io_stages.pid_cap)) {
+            if (all_pid_io_stages.pids[pid_arr_offset] != 0) {
                 all_pid_io_stages.row_select_iter += 1;
-                pid_arr_offset += 1;
+                pid_arr_offset = (pid_arr_offset + 1) % all_pid_io_stages.pid_cap;
             } else {
+                all_pid_io_stages.pids[pid_arr_offset] = curr_pid;
+                pid_in_slot = B_TRUE;
                 break;
             }
         }
-        
+       
+        /*
+         * While this seems rather pointless... It is the only way to avoid locking the array and throwing
+         * off time stamp values. Just simply do a final check to see if we are in the PID array. There is always
+         * the possibility we landed in another slot other than pid_arr_offset when less threads are run then
+         * pid_cap.
+         */
+        if (!pid_in_slot) {
+            for (i = 0; i < all_pid_io_stages.pid_cap; i++) {
+                if (all_pid_io_stages.pids[i] == curr_pid) {
+                    pid_in_slot = B_TRUE;
+                    break;
+                }
+            }
+        }
+
         /* Bailing here if no avialable slot */
-        if (all_pid_io_stages.row_select_iter >= STATIC_PID_CAP) {
+        if (!pid_in_slot) {
             return;
         }
        
@@ -301,12 +334,12 @@ static void cb_zio_pipeline_cb(void *cb_args)
                 }
                 all_pid_io_stages.dumped = 1;
             } else {
-                cb_zio_pipeline_dtor(&holding_lock);
+                mutex_exit(&all_pid_io_stages.lock);
                 return;
             }
             
             /* First writing out the total number or PID's with timestamps to the file */
-            for (i = 0; i < STATIC_PID_CAP; i++) {
+            for (i = 0; i < all_pid_io_stages.pid_cap; i++) {
                 if (all_pid_io_stages.pid_io_stages[i].curr_pid != 0
                     && all_pid_io_stages.pid_io_stages[i].num_of_ts_collected > MIN_TS_TO_IGNORE) {
                     all_pid_io_stages.total_pids += 1;
@@ -324,7 +357,7 @@ static void cb_zio_pipeline_cb(void *cb_args)
                              &all_pid_io_stages.file_offset);
 
             /* Now writing out each PID and its corresponding timestamps */
-            for (i = 0; i < STATIC_PID_CAP; i++) {
+            for (i = 0; i < all_pid_io_stages.pid_cap; i++) {
                 if (all_pid_io_stages.pid_io_stages[i].curr_pid != 0 
                     && all_pid_io_stages.pid_io_stages[i].num_of_ts_collected > MIN_TS_TO_IGNORE) {
                     /* Writing out PID */
@@ -372,7 +405,8 @@ static void cb_zio_pipeline_cb(void *cb_args)
                 }
             }
             spl_filp_close(all_pid_io_stages.dump_file);
-            cb_zio_pipeline_dtor(&holding_lock);
+            cb_zio_pipeline_dtor(NULL);
+            mutex_exit(&all_pid_io_stages.lock);
             return;
         }
     }
@@ -393,13 +427,31 @@ create_cb_zio_pipeline_args(zio_t *zio,
 }
 EXPORT_SYMBOL(create_cb_zio_pipeline_args);
 
-log_callback_t log_cb_zio_pipeline =
+log_callback_t *create_cb_zio_pipeline(void)
 {
-    .cb_name = "cb_zio_pipeline",
-    .zio_type = zio_is_read,
-    .ctor = cb_zio_pipeline_ctor,
-    .dtor = cb_zio_pipeline_dtor,
-    .cb_func = cb_zio_pipeline_cb,
-    .dump_func = NULL
-};
-EXPORT_SYMBOL(log_cb_zio_pipeline);
+    log_callback_t *cb_log =
+        kmem_alloc(sizeof(log_callback_t), KM_SLEEP);
+    VERIFY3P(cb_log, !=, NULL);
+    cb_log->cb_name = "cb_zio_pipeline";
+    cb_log->zio_type = zio_is_read;
+    cb_log->ctor = cb_zio_pipeline_ctor;
+    cb_log->dtor = cb_zio_pipeline_dtor;
+    cb_log->cb_func = cb_zio_pipeline_cb;
+    cb_log->dump_func = NULL;
+    cb_zio_pipeline_mutex =
+        kmem_alloc(sizeof(kmutex_t), KM_SLEEP);
+    VERIFY3P(cb_zio_pipeline_mutex, !=, NULL);
+    mutex_init(cb_zio_pipeline_mutex, NULL, MUTEX_DEFAULT, NULL);
+    cb_log->ctor(NULL);
+    return (cb_log);
+}
+EXPORT_SYMBOL(create_cb_zio_pipeline);
+
+void destroy_cb_zio_pipeline(log_callback_t *cb_zio_pipeline)
+{
+    VERIFY3P(cb_zio_pipeline, !=, NULL);
+    cb_zio_pipeline->dtor(NULL);
+    kmem_free(cb_zio_pipeline_mutex, sizeof(kmutex_t));
+    kmem_free(cb_zio_pipeline, sizeof(log_callback_t));
+}
+EXPORT_SYMBOL(destroy_cb_zio_pipeline);

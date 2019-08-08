@@ -1,5 +1,17 @@
 #include <sys/log_callbacks.h>
 
+/* Defines the total number of PID's a cb log will track */
+static uint_t spl_log_cb_max_pids = 42;
+module_param(spl_log_cb_max_pids, uint, 0644);
+MODULE_PARM_DESC(spl_log_cb_max_pids,
+    "Total number of PIDs to monitor while using SPL callback logs");
+
+/* Defines whether debug messages are output to kernel ring buffer */
+static uint_t spl_log_cb_debug_enable = 0;
+module_param(spl_log_cb_debug_enable, uint, 0644);
+MODULE_PARM_DESC(spl_log_cb_debug_enable,
+    "If enabled (1) will print debug messages using kernel ring buffer otherwise nothing if disabled (0)");
+
 /*
  * This macro allows for a log_callback_list_t to be
  * iterated through
@@ -37,10 +49,10 @@ log_callback_list_t *create_log_callback_list(void)
     log_callback_list_t *cb_list = NULL;
     cb_list = kmem_alloc(sizeof (log_callback_list_t), KM_SLEEP);
     init_log_callback_list(cb_list);
-#if defined(LOG_CALLBACK_DEBUG)
-    cmn_err(CE_NOTE, "in function: %s", __func__);
-    print_callbacks(cb_list);
-#endif
+    if (spl_log_cb_debug_enabled()) {
+        cmn_err(CE_NOTE, "in function: %s", __func__);
+        print_callbacks(cb_list);
+    }
     return (cb_list);        
 }
 EXPORT_SYMBOL(create_log_callback_list);
@@ -61,10 +73,10 @@ void add_callback_to_list(log_callback_list_t *cb_list, log_callback_t *cb)
 
     list_insert_tail(&cb_list->list, cb);
     cb_list->num_callbacks += 1;
-#if defined(LOG_CALLBACK_DEBUG)
-    cmn_err(CE_NOTE, "in function: %s", __func__);
-    print_callbacks(cb_list);
-#endif
+    if (spl_log_cb_debug_enabled()) {
+        cmn_err(CE_NOTE, "in function: %s", __func__);
+        print_callbacks(cb_list);
+    }
 }
 EXPORT_SYMBOL(add_callback_to_list);
 
@@ -80,10 +92,10 @@ log_callback_t *remove_callback_from_list(log_callback_list_t *cb_list, const ch
         list_remove(&cb_list->list, cb);
         cb_list->num_callbacks -= 1;
     }
-#if defined(LOG_CALLBACK_DEBUG)
-    cmn_err(CE_NOTE, "in function: %s", __func__);
-    print_callbacks(cb_list);
-#endif
+    if (spl_log_cb_debug_enabled()) {
+        cmn_err(CE_NOTE, "in function: %s", __func__);
+        print_callbacks(cb_list);
+    }
     return (cb);
 }
 EXPORT_SYMBOL(remove_callback_from_list);
@@ -98,11 +110,11 @@ EXPORT_SYMBOL(get_length_of_log_callback_list);
 void destroy_log_callback_list(log_callback_list_t *cb_list)
 {
     VERIFY3P(cb_list, !=, NULL);
-
-#if defined(LOG_CALLBACK_DEBUG)
-    cmn_err(CE_NOTE, "in function: %s", __func__);
-    print_callbacks(cb_list);
-#endif
+    
+    if (spl_log_cb_debug_enabled()) {
+        cmn_err(CE_NOTE, "in function: %s", __func__);
+        print_callbacks(cb_list);
+    }
     list_destroy(&cb_list->list);
     kmem_free(cb_list, sizeof(log_callback_list_t));
 }
@@ -153,6 +165,21 @@ int execute_dump_func(log_callback_list_t *cb_list,
     return (ret);
 }
 EXPORT_SYMBOL(execute_dump_func);
+
+uint_t get_log_cb_max_pids(void)
+{
+    return (spl_log_cb_max_pids);
+}
+EXPORT_SYMBOL(get_log_cb_max_pids);
+
+boolean_t spl_log_cb_debug_enabled(void)
+{
+    boolean_t debug_enable = B_FALSE;
+    if (spl_log_cb_debug_enable)
+        debug_enable = B_TRUE;
+    return (debug_enable);
+}
+EXPORT_SYMBOL(spl_log_cb_debug_enabled);
 
 static void print_callbacks(log_callback_list_t *cb_list)
 {

@@ -4,9 +4,8 @@
 /*
  * This header file defines:
  * HRTIME_CALL_SITE_STAMP : Take timestamps for callsite for multiple PID's
- * STATIC_PID_CAP         : Maximum number of PID's to take timestamps for
  *
- * Only the STATIC_LIST_CAP and STATIC_PID_CAP values should be adjusted. They specify
+ * Only the STATIC_LIST_CAP value should be adjusted. They specify
  * the total count numbers and maximum number of PID's to collect for.
  *
  * The log files written out will have the following format:
@@ -44,12 +43,6 @@ extern "C" {
  */
 #define STATIC_LIST_CAP 110000
 
-/*
- * Change this variable in order to set the maximum number of PID's
- * to collect timestamps for
- */
-#define STATIC_PID_CAP 48
-
 /****************************************************************/
 /****************************************************************/
 /*          NEVER MANUALLY CHANGE THIS VARIABLE!!!!!            */
@@ -75,10 +68,8 @@ cb_func_callsite_args_t create_cb_func_callsite_args(zio_t *zio,
                                                      unsigned int offset, 
                                                      const char *call_site_name); 
 
-/*************************************************************/
-/*       External Structs Defined/Exported in .c file        */
-/*************************************************************/
-extern log_callback_t log_cb_func_callsite;
+log_callback_t *create_cb_func_callsite(void);
+void destroy_cb_func_callsite(log_callback_t *cb_func_callsite);
 
 #ifdef __cplusplus
 }
