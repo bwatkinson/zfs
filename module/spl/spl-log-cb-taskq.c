@@ -1,7 +1,3 @@
-////////////////////////////////////
-// Brian A. Added this file
-////////////////////////////////////
-
 /*
  * This file defines the following #defines and static variables
  * that can be udpated:
@@ -39,6 +35,14 @@ module_param(spl_log_cb_spl_taskqs_reset_counters, uint, 0644);
 MODULE_PARM_DESC(spl_log_cb_spl_taskqs_reset_counters,
     "Resets the counters for the SPL taskq SPL callback log");
 
+/*
+ * Defines the total number of counts to collect per SPL TASKQ
+ */
+static uint_t spl_log_cb_spl_taskqs_num_counts = 5000;
+module_param(spl_log_cb_spl_taskqs_num_counts, uint, 0644);
+MODULE_PARM_DESC(spl_log_cb_spl_taskqs_num_counts,
+    "Sets the number of counts to collect for each of the SPL taskqs");
+
 /*******************************************************/
 /* Struct definitions for taskq counts.                */
 /*******************************************************/
@@ -46,7 +50,7 @@ typedef struct taskq_name_thread_counts_s
 {
     char taskq_name[TASKQ_NM_LEN];
     int num_threads_present;
-    int num_threads[STATIC_COL_CAP_TASKQ];
+    int *num_threads;
     int num_counts_collected;
 } taskq_name_thread_counts_t;
 
@@ -58,6 +62,7 @@ typedef struct taskq_counts_s
     int total_taskqs;
     struct file *dump_file;
     loff_t file_offset;
+    unsigned int counts_per_taskq;
     int num_taskqs_done;
     kmutex_t lock;
 } taskq_counts_t;
@@ -76,7 +81,7 @@ static void cb_spl_taskq_dtor(void *dtor_settings)
     call_ctor_dtor_settings_e settings;
 
     if (spl_log_cb_debug_enabled()) {
-        cmn_err(CE_WARN, "Inside %s", __func__);
+        cmn_err(CE_NOTE, "Inside %s", __func__);
     }
     
     VERIFY3P(dtor_settings, !=, NULL);
@@ -92,15 +97,19 @@ static void cb_spl_taskq_dtor(void *dtor_settings)
         } 
         
         if (spl_log_cb_debug_enabled()) {
-            cmn_err(CE_WARN, "cb_spl_taskq_initialized = %d",
+            cmn_err(CE_NOTE, "cb_spl_taskq_initialized = %d",
                     cb_spl_taskq_initialized);
             for (i = 0; i < all_taskq_counts.total_taskqs; i++){
-                cmn_err(CE_WARN, "all_taskq_counts.taskq[%d].taskq_name = %s collected = %d counts", 
+                cmn_err(CE_NOTE, "all_taskq_counts.taskq[%d].taskq_name = %s collected = %d counts", 
                         i, all_taskq_counts.taskqs[i].taskq_name, all_taskq_counts.taskqs[i].num_counts_collected);
             }
         }
-        
-        kmem_free(all_taskq_counts.taskqs, 
+       
+        for (i = 0; i < all_taskq_counts.total_taskqs; i++) {
+            vmem_free(all_taskq_counts.taskqs[i].num_threads, sizeof(int) * 
+                      STATIC_COL_CAP_TASKQ(all_taskq_counts.counts_per_taskq));
+        } 
+        vmem_free(all_taskq_counts.taskqs, 
                   sizeof(taskq_name_thread_counts_t) * all_taskq_counts.total_taskqs);
         all_taskq_counts.taskqs = NULL;
         if (settings & DTOR_DESTROY_FUNC) {
@@ -136,6 +145,7 @@ static void cb_spl_taskq_ctor(void *ctor_args)
     if (!cb_spl_taskq_initialized) {
         all_taskq_counts.taskqs = NULL;
         all_taskq_counts.total_taskqs = num_taskqs;
+        all_taskq_counts.counts_per_taskq = spl_log_cb_spl_taskqs_num_counts;
         all_taskq_counts.dumped = 0;
         all_taskq_counts.dump_file = NULL;
         all_taskq_counts.file_offset = 0;
@@ -143,6 +153,13 @@ static void cb_spl_taskq_ctor(void *ctor_args)
         while (!all_taskq_counts.taskqs) {
             all_taskq_counts.taskqs = 
                 vmem_zalloc(sizeof(taskq_name_thread_counts_t) * all_taskq_counts.total_taskqs, KM_NOSLEEP);
+        }
+        for (i = 0; i < all_taskq_counts.total_taskqs; i++) {
+            all_taskq_counts.taskqs[i].num_threads = NULL;
+            while (all_taskq_counts.taskqs[i].num_threads == NULL) {
+                all_taskq_counts.taskqs[i].num_threads = 
+                    vmem_zalloc(sizeof(int) * STATIC_COL_CAP_TASKQ(all_taskq_counts.counts_per_taskq), KM_NOSLEEP);
+            }
         }
         ASSERT3P(all_taskq_counts.taskqs, !=, NULL);
         mutex_init(&all_taskq_counts.lock, NULL, MUTEX_DEFAULT, NULL);
@@ -163,10 +180,10 @@ static void cb_spl_taskq_ctor(void *ctor_args)
         cb_spl_taskq_initialized = 1;
         spl_log_cb_spl_taskqs_reset_counters = 0;
         if (spl_log_cb_debug_enabled()) {
-            cmn_err(CE_WARN, "Initialized the data for timestamping taskq's where all_taskq_counts.total_taskqs = %d in %s",
-                    all_taskq_counts.total_taskqs, __func__);
+            cmn_err(CE_NOTE, "Initialized the data for timestamping taskq's where all_taskq_counts.total_taskqs = %d in %s and will collect %d counts per taskq",
+                    all_taskq_counts.total_taskqs, __func__, all_taskq_counts.counts_per_taskq);
             for (i = 0; i < all_taskq_counts.total_taskqs; i++) {
-                cmn_err(CE_WARN, "all_taskq_counts.taskq[%d].taskq_name = %s in %s with num_threads_present = %d", 
+                cmn_err(CE_NOTE, "all_taskq_counts.taskq[%d].taskq_name = %s in %s with num_threads_present = %d", 
                         i, all_taskq_counts.taskqs[i].taskq_name,
                          __func__, all_taskq_counts.taskqs[i].num_threads_present);
             }
@@ -225,13 +242,15 @@ static void cb_spl_taskq_cb(void *cb_args)
             return;
         }
 
-        if ((all_taskq_counts.taskqs[taskq_offset].num_counts_collected + 1) <= STATIC_PER_TASKQ_COUNT_CAP) {
+        if ((all_taskq_counts.taskqs[taskq_offset].num_counts_collected + 1) <= 
+             all_taskq_counts.counts_per_taskq) {
             all_taskq_counts.taskqs[taskq_offset].num_threads_present += 1;
             all_taskq_counts.taskqs[taskq_offset].num_counts_collected += 1;
             thread_count_offset = all_taskq_counts.taskqs[taskq_offset].num_threads[0] + 1;
             all_taskq_counts.taskqs[taskq_offset].num_threads[thread_count_offset] = num_threads;
             all_taskq_counts.taskqs[taskq_offset].num_threads[0] += 1;
-            if (all_taskq_counts.taskqs[taskq_offset].num_counts_collected >= STATIC_PER_TASKQ_COUNT_CAP) {
+            if (all_taskq_counts.taskqs[taskq_offset].num_counts_collected >= 
+                all_taskq_counts.counts_per_taskq) {
                 all_taskq_counts.num_taskqs_done += 1;
             }
             all_taskq_counts.taskqs[taskq_offset].num_threads_present -= 1;

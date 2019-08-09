@@ -1,7 +1,3 @@
-////////////////////////////////////
-// Brian A. Added this file
-////////////////////////////////////
-
 /*
  * This file defines the following #defines and static variables
  * that can be udpated:
@@ -46,6 +42,19 @@ static uint_t spl_log_cb_func_callsite_reset_counters =  0;
 module_param(spl_log_cb_func_callsite_reset_counters, uint, 0644);
 MODULE_PARM_DESC(spl_log_cb_func_callsite_reset_counters,
     "Resets the counters for the callsite SPL callback log");
+/*
+ * Defines the total number of timestamps to collect per PID at
+ * each callsite
+ */
+static uint_t spl_log_cb_func_callsite_num_ts = 110000;
+module_param(spl_log_cb_func_callsite_num_ts, uint, 0644);
+MODULE_PARM_DESC(spl_log_cb_func_callsite_num_ts,
+    "Sets the number of timestamps to collect for each PID at a callsite");
+
+/* 
+ * Ignoring PID's with only 10% of requested timestamps
+ */
+#define MIN_TS_TO_IGNORE(s) (((s).num_ts_to_collect / 10) / (s).pid_cap)
 
 /*******************************************************/
 /* Struct definitions for call site timestamps/counts. */
@@ -66,6 +75,7 @@ typedef struct ts_cs_array_s
     int row_select_iter;
     unsigned int *pids;
     uint_t pid_cap;
+    unsigned int num_ts_to_collect;
     call_site_data_t arrays[NUM_LOG_FILES];
 } ts_cs_array_t;
 
@@ -90,15 +100,21 @@ static void cb_func_callsite_dtor(void *dtor_args)
         num_logs_written += 1;
         if (spl_log_cb_debug_enabled()) {
             int offset;
-            cmn_err(CE_WARN, "Inside %s", __func__);
+            cmn_err(CE_NOTE, "Inside %s", __func__);
             if (num_logs_written >= NUM_LOG_FILES || called_from_destroy_func) {
                 for (offset = 0; offset < NUM_LOG_FILES; offset++) {
-                    cmn_err(CE_WARN, "For callsite %d", offset);
-                    cmn_err(CE_WARN, "callsite %d collected %d timestamps for %d PIDs",
+                    cmn_err(CE_NOTE, "For callsite %d", offset);
+                    cmn_err(CE_NOTE, "callsite %d collected %d timestamps for %d PIDs",
                             offset, cs_arrays.arrays[offset].array_size, cs_arrays.arrays[offset].total_pids);
                     for (i = 0; i < cs_arrays.pid_cap; i++) {
-                        if (cs_arrays.arrays[offset].arr[i][0] != 0) {
-                            cmn_err(CE_WARN, "PID: %d collected %d timestamps",
+                        if (cs_arrays.arrays[offset].arr[i][0] != 0 &&
+                            cs_arrays.arrays[offset].arr[i][1] <= MIN_TS_TO_IGNORE(cs_arrays)) {
+                            cmn_err(CE_NOTE, "PID: %d with colleted %d timestamps <= %d so will not be in log",
+                                    cs_arrays.arrays[offset].arr[i][0],
+                                    cs_arrays.arrays[offset].arr[i][1],
+                                    MIN_TS_TO_IGNORE(cs_arrays));
+                        } else if (cs_arrays.arrays[offset].arr[i][0] != 0) {
+                            cmn_err(CE_NOTE, "PID: %d collected %d timestamps",
                                     cs_arrays.arrays[offset].arr[i][0],
                                     cs_arrays.arrays[offset].arr[i][1]);
                         }
@@ -114,7 +130,7 @@ static void cb_func_callsite_dtor(void *dtor_args)
             vmem_free(cs_arrays.pids, sizeof(unsigned int) * cs_arrays.pid_cap);
             for (i = 0; i < NUM_LOG_FILES; i++) {
                 for (j = 0; j < cs_arrays.pid_cap; j++) {
-                    vmem_free(cs_arrays.arrays[i].arr[j], sizeof(hrtime_t) * STATIC_COL_CAP);
+                    vmem_free(cs_arrays.arrays[i].arr[j], sizeof(hrtime_t) * STATIC_COL_CAP(cs_arrays.num_ts_to_collect));
                 }
                 vmem_free(cs_arrays.arrays[i].arr, sizeof(hrtime_t *) * cs_arrays.pid_cap);
             }
@@ -141,6 +157,7 @@ static void cb_func_callsite_ctor(void *ctor_args)
     if (!cb_func_callsite_initialized) {
         cb_func_callsite_max_pids = get_log_cb_max_pids();
         cs_arrays.pid_cap = cb_func_callsite_max_pids;
+        cs_arrays.num_ts_to_collect = spl_log_cb_func_callsite_num_ts;
         cs_arrays.row_select_iter = 0;
         cs_arrays.pids = vmem_zalloc(sizeof(unsigned int) * cs_arrays.pid_cap, KM_SLEEP);
         VERIFY3P(cs_arrays.pids, !=, NULL);
@@ -156,15 +173,15 @@ static void cb_func_callsite_ctor(void *ctor_args)
             VERIFY3P(cs_arrays.arrays[i].arr, !=, NULL);
             for (j = 0; j < cs_arrays.pid_cap; j++) {
                 cs_arrays.arrays[i].arr[j] = 
-                    vmem_zalloc(sizeof(hrtime_t) * STATIC_COL_CAP, KM_SLEEP);
+                    vmem_zalloc(sizeof(hrtime_t) * STATIC_COL_CAP(cs_arrays.num_ts_to_collect), KM_SLEEP);
                 VERIFY3P(cs_arrays.arrays[i].arr[j], !=, NULL);
             }
         } 
         cb_func_callsite_initialized = 1;
         spl_log_cb_func_callsite_reset_counters = 0;
         if (spl_log_cb_debug_enabled()) {
-            cmn_err(CE_WARN, "Initialized the data for timestamping call sites in %s and will watch up to %d pids", 
-                    __func__, cs_arrays.pid_cap);
+            cmn_err(CE_NOTE, "Initialized the data for timestamping call sites in %s and will collect %d time stamps for up to %d pids", 
+                    __func__, cs_arrays.num_ts_to_collect, cs_arrays.pid_cap);
         }
     }
     mutex_exit(cb_func_callsite_mutex);
@@ -176,7 +193,7 @@ static void cb_func_callsite_ctor(void *ctor_args)
  *
  * This function adds a timestamp for the PID for the current call site specified
  * by the offset parameter. Once all PID's for a given call site have collected
- * a total of STATIC_LIST_CAP, the log file specifed by LOG_FILE_CS[offset] will
+ * a total of num_ts_to_collect, the log file specifed by LOG_FILE_CS[offset] will
  * be written out.
  *
  * Ideally this should be used with threads where no locking should occcur; however, 
@@ -254,7 +271,7 @@ static void cb_func_callsite_cb(void *cb_args)
         cs_arrays.arrays[offset].arr[pid_row][0] = curr_pid;
         cs_arrays.arrays[offset].arr[pid_row][cs_arrays.arrays[offset].arr[pid_row][1] + 2] = NSEC2USEC(gethrtime());
         cs_arrays.arrays[offset].arr[pid_row][1] += 1;
-        if (cs_arrays.arrays[offset].array_size >= STATIC_LIST_CAP) {
+        if (cs_arrays.arrays[offset].array_size >= cs_arrays.num_ts_to_collect) {
             /* Only a single thread will write the log file */
             mutex_enter(&cs_arrays.arrays[offset].lock);
             
@@ -273,7 +290,8 @@ static void cb_func_callsite_cb(void *cb_args)
 
             /* First writing out the total number of PID's with timestamps to file */
             for (i = 0; i < cs_arrays.pid_cap; i++) {
-                if (cs_arrays.arrays[offset].arr[i][0] != 0) {
+                if (cs_arrays.arrays[offset].arr[i][0] != 0 &&
+                    cs_arrays.arrays[offset].arr[i][1] > MIN_TS_TO_IGNORE(cs_arrays)) {
                     cs_arrays.arrays[offset].total_pids += 1;
                 }
             }
@@ -302,7 +320,8 @@ static void cb_func_callsite_cb(void *cb_args)
 
             /* Now writing out each PID with it corresponding timestamps */
             for (i = 0; i < cs_arrays.pid_cap; i++) {
-                if (cs_arrays.arrays[offset].arr[i][0] != 0) {
+                if (cs_arrays.arrays[offset].arr[i][0] != 0 &&
+                    cs_arrays.arrays[offset].arr[i][1] > MIN_TS_TO_IGNORE(cs_arrays)) {
                     spl_kernel_write(cs_arrays.arrays[offset].dump_file, 
                                      &cs_arrays.arrays[offset].arr[i], 
                                      sizeof(hrtime_t)*(cs_arrays.arrays[offset].arr[i][1] + 2), 

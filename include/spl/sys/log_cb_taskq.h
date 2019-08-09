@@ -1,14 +1,4 @@
-//////////////////////////////////////////
-// Brian A. Added this file
-//////////////////////////////////////////
 /*
- * This header file defines three #defines:
- * HRTIME_TASKQ_STAMP     : Take counts of total number of threads active in
- *                          SPL taskqs
- *
- * Only the STATIC_PER_TASKQ_COUNT_CAP value should be adjusted.
- * They specify the total count numbers per PID to collect for.
- *
  * The log file written out will have the following format:
  *     1. Total number of taskq's counts collected for (int)
  *     2. For each taskq we then write out
@@ -30,24 +20,11 @@ extern "C" {
 #endif
 
 /*
- * Change this variable in order to adjust collections of taskq counts
- *
- * STATIC_PER_TASKSQ_COUNT_CAP: This is used by hrtime_count_add_count and
- *     specifies the total number of counts to collect per SPL taskq
- */
-#define STATIC_PER_TASKQ_COUNT_CAP 5000 
-
-/****************************************************************/
-/****************************************************************/
-/*          NEVER MANUALLY CHANGE THIS VARIABLE!!!!!            */
-/****************************************************************/
-/****************************************************************/
-/*
  * For each row for a taskq the first number is the total number
  * of thread counts collected followed by the thread counts collected
  * hence the + 1
  */
-#define STATIC_COL_CAP_TASKQ (STATIC_PER_TASKQ_COUNT_CAP + 1)
+#define STATIC_COL_CAP_TASKQ(c) ((c) + 1)
 
 typedef enum call_ctor_dtor_settings_s
 {
