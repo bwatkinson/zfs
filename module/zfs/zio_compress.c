@@ -69,6 +69,8 @@ zio_compress_info_t zio_compress_table[ZIO_COMPRESS_FUNCTIONS] = {
 #else
 	{"gzip-noload",         0,      NULL,           NULL, NULL},
 #endif
+	{"nullcp",		0,	nullcp_compress, nullcp_decompress},
+	{"null",		0,	null_compress, null_decompress}
 };
 
 enum zio_compress

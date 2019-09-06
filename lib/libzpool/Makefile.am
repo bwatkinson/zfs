@@ -89,6 +89,7 @@ KERNEL_C = \
 	mmp.c \
 	multilist.c \
 	objlist.c \
+	nullc.c \
 	pathname.c \
 	range_tree.c \
 	refcount.c \

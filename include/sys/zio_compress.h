@@ -52,6 +52,8 @@ enum zio_compress {
 	ZIO_COMPRESS_ZLE,
 	ZIO_COMPRESS_LZ4,
 	ZIO_COMPRESS_GZIP_NOLOAD,
+	ZIO_COMPRESS_NULLCP,
+	ZIO_COMPRESS_NULL,
 	ZIO_COMPRESS_FUNCTIONS
 };
 
@@ -109,7 +111,14 @@ extern size_t lz4_compress_zfs(void *src, void *dst, size_t s_len, size_t d_len,
     int level);
 extern int lz4_decompress_zfs(void *src, void *dst, size_t s_len, size_t d_len,
     int level);
-
+extern size_t nullcp_compress(void *src, void *dst, size_t s_len, size_t d_len,
+    int level);
+extern int nullcp_decompress(void *src, void *dst, size_t s_len, size_t d_len,
+    int level);
+extern size_t null_compress(void *src, void *dst, size_t s_len, size_t d_len,
+    int level);
+extern int null_decompress(void *src, void *dst, size_t s_len, size_t d_len,
+    int level);
 /*
  * Compress and decompress data if necessary.
  */
