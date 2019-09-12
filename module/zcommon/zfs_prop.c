@@ -119,6 +119,7 @@ zfs_prop_init(void)
 		{ "gzip-9",	ZIO_COMPRESS_GZIP_9 },
 		{ "zle",	ZIO_COMPRESS_ZLE },
 		{ "lz4",	ZIO_COMPRESS_LZ4 },
+		{ "gzip-noload",ZIO_COMPRESS_GZIP_NOLOAD },
 		{ NULL }
 	};
 
