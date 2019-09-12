@@ -108,7 +108,8 @@ zio_compress_data(enum zio_compress c, abd_t *src, void *dst, size_t s_len)
 	zio_compress_info_t *ci = &zio_compress_table[c];
 
 	ASSERT((uint_t)c < ZIO_COMPRESS_FUNCTIONS);
-	ASSERT((uint_t)c == ZIO_COMPRESS_EMPTY || ci->ci_compress != NULL);
+	ASSERT((uint_t)c == ZIO_COMPRESS_EMPTY || ci->ci_compress != NULL ||
+	       ci->ci_compress_abd != NULL);
 
 	/*
 	 * If the data is all zeroes, we don't even need to allocate
@@ -123,10 +124,15 @@ zio_compress_data(enum zio_compress c, abd_t *src, void *dst, size_t s_len)
 	/* Compress at least 12.5% */
 	d_len = s_len - (s_len >> 3);
 
-	/* No compression algorithms can read from ABDs directly */
-	void *tmp = abd_borrow_buf_copy(src, s_len);
-	c_len = ci->ci_compress(tmp, dst, s_len, d_len, ci->ci_level);
-	abd_return_buf(src, tmp, s_len);
+	if (ci->ci_compress_abd) {
+		c_len = ci->ci_compress_abd(src, dst, s_len, d_len,
+					    ci->ci_level);
+	} else {
+		/* No compression algorithms can read from ABDs directly */
+		void *tmp = abd_borrow_buf_copy(src, s_len);
+		c_len = ci->ci_compress(tmp, dst, s_len, d_len, ci->ci_level);
+		abd_return_buf(src, tmp, s_len);
+	}
 
 	if (c_len > d_len)
 		return (s_len);
