@@ -5,6 +5,7 @@ AC_DEFUN([ZFS_AC_CONFIG_KERNEL], [
 	ZFS_AC_KERNEL
 	ZFS_AC_QAT
 	ZFS_AC_KERNEL_ACCESS_OK_TYPE
+	ZFS_AC_KERNEL_NVME_ALGO
 	ZFS_AC_TEST_MODULE
 	ZFS_AC_KERNEL_MISC_MINOR
 	ZFS_AC_KERNEL_OBJTOOL
@@ -397,6 +398,25 @@ AC_DEFUN([ZFS_AC_QAT], [
 			$QAT_SYMBOLS])
 			])
 		])
+	])
+])
+
+dnl #
+dnl # Check if kernel has NVMe algorithm support
+dnl #
+AC_DEFUN([ZFS_AC_KERNEL_NVME_ALGO], [
+	AC_MSG_CHECKING([whether kernel has NVMe algorithm support])
+	ZFS_LINUX_TRY_COMPILE([
+		#include <linux/module.h>
+	],[
+		#ifndef CONFIG_NVME_ALGO
+		#error "NVME ALGO not supported"
+		#endif
+	],[
+		AC_MSG_RESULT([yes])
+		AC_DEFINE(HAVE_NVME_ALGO, 1, [kernel has nvme algorithm support])
+	],[
+		AC_MSG_RESULT([no])
 	])
 ])
 
