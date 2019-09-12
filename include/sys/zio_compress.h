@@ -51,6 +51,7 @@ enum zio_compress {
 	ZIO_COMPRESS_GZIP_9,
 	ZIO_COMPRESS_ZLE,
 	ZIO_COMPRESS_LZ4,
+	ZIO_COMPRESS_GZIP_NOLOAD,
 	ZIO_COMPRESS_FUNCTIONS
 };
 
@@ -119,6 +120,21 @@ extern int zio_decompress_data(enum zio_compress c, abd_t *src, void *dst,
     size_t s_len, size_t d_len);
 extern int zio_decompress_data_buf(enum zio_compress c, void *src, void *dst,
     size_t s_len, size_t d_len);
+
+extern size_t noload_compress(abd_t *src, void *dst, size_t s_len,
+    size_t d_len, int level);
+extern int noload_decompress(abd_t *src, void *dst, size_t s_len,
+    size_t d_len, int level);
+
+#if defined(_KERNEL) && defined(HAVE_NVME_ALGO)
+extern void noload_disable(void);
+extern void noload_request(void);
+extern void noload_release(void);
+#else
+static inline void noload_disable(void) {}
+static inline void noload_request(void) {}
+static inline void noload_release(void) {}
+#endif /* _KERNEL && HAVE_NVME_ALGO */
 
 #ifdef	__cplusplus
 }

@@ -104,21 +104,22 @@ zfs_prop_init(void)
 	};
 
 	static zprop_index_t compress_table[] = {
-		{ "on",		ZIO_COMPRESS_ON },
-		{ "off",	ZIO_COMPRESS_OFF },
-		{ "lzjb",	ZIO_COMPRESS_LZJB },
-		{ "gzip",	ZIO_COMPRESS_GZIP_6 },	/* gzip default */
-		{ "gzip-1",	ZIO_COMPRESS_GZIP_1 },
-		{ "gzip-2",	ZIO_COMPRESS_GZIP_2 },
-		{ "gzip-3",	ZIO_COMPRESS_GZIP_3 },
-		{ "gzip-4",	ZIO_COMPRESS_GZIP_4 },
-		{ "gzip-5",	ZIO_COMPRESS_GZIP_5 },
-		{ "gzip-6",	ZIO_COMPRESS_GZIP_6 },
-		{ "gzip-7",	ZIO_COMPRESS_GZIP_7 },
-		{ "gzip-8",	ZIO_COMPRESS_GZIP_8 },
-		{ "gzip-9",	ZIO_COMPRESS_GZIP_9 },
-		{ "zle",	ZIO_COMPRESS_ZLE },
-		{ "lz4",	ZIO_COMPRESS_LZ4 },
+		{ "on",		 ZIO_COMPRESS_ON },
+		{ "off",	 ZIO_COMPRESS_OFF },
+		{ "lzjb",	 ZIO_COMPRESS_LZJB },
+		{ "gzip",	 ZIO_COMPRESS_GZIP_6 },	/* gzip default */
+		{ "gzip-1",	 ZIO_COMPRESS_GZIP_1 },
+		{ "gzip-2",	 ZIO_COMPRESS_GZIP_2 },
+		{ "gzip-3",	 ZIO_COMPRESS_GZIP_3 },
+		{ "gzip-4",	 ZIO_COMPRESS_GZIP_4 },
+		{ "gzip-5",	 ZIO_COMPRESS_GZIP_5 },
+		{ "gzip-6",	 ZIO_COMPRESS_GZIP_6 },
+		{ "gzip-7",	 ZIO_COMPRESS_GZIP_7 },
+		{ "gzip-8",	 ZIO_COMPRESS_GZIP_8 },
+		{ "gzip-9",	 ZIO_COMPRESS_GZIP_9 },
+		{ "zle",	 ZIO_COMPRESS_ZLE },
+		{ "lz4",	 ZIO_COMPRESS_LZ4 },
+		{ "gzip-noload", ZIO_COMPRESS_GZIP_NOLOAD },
 		{ NULL }
 	};
 

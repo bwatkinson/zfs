@@ -61,6 +61,7 @@
 #include <sys/spa_impl.h>
 #include <sys/dmu_recv.h>
 #include <sys/zfs_project.h>
+#include <sys/zio_compress.h>
 #include "zfs_namecheck.h"
 
 /*
@@ -192,6 +193,13 @@ compression_changed_cb(void *arg, uint64_t newval)
 	 * Inheritance and range checking should have been done by now.
 	 */
 	ASSERT(newval != ZIO_COMPRESS_INHERIT);
+
+	if (os->os_compress == ZIO_COMPRESS_GZIP_NOLOAD &&
+	    newval != ZIO_COMPRESS_GZIP_NOLOAD)
+		noload_release();
+	else if (os->os_compress != ZIO_COMPRESS_GZIP_NOLOAD &&
+	    newval == ZIO_COMPRESS_GZIP_NOLOAD)
+		noload_request();
 
 	os->os_compress = zio_compress_select(os->os_spa, newval,
 	    ZIO_COMPRESS_ON);
