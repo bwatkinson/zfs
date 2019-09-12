@@ -200,6 +200,7 @@
 #include <sys/zfeature.h>
 #include <sys/zcp.h>
 #include <sys/zio_checksum.h>
+#include <sys/zio_compress.h>
 #include <sys/vdev_removal.h>
 #include <sys/zfs_sysfs.h>
 #include <sys/vdev_impl.h>
@@ -7428,6 +7429,8 @@ out:
 static void __exit
 _fini(void)
 {
+	noload_disable();
+
 	zfs_detach();
 	zfs_sysfs_fini();
 	zfs_fini();
