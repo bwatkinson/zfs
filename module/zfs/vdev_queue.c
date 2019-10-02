@@ -535,16 +535,17 @@ vdev_queue_pending_remove(vdev_queue_t *vq, zio_t *zio)
 static void
 vdev_queue_agg_io_done(zio_t *aio)
 {
-	if (aio->io_type == ZIO_TYPE_READ) {
+	abd_put(aio->io_abd);
+	if (aio->io_type == ZIO_TYPE_WRITE) {
 		zio_t *pio;
 		zio_link_t *zl = NULL;
 		while ((pio = zio_walk_parents(aio, &zl)) != NULL) {
-			abd_copy_off(pio->io_abd, aio->io_abd,
-			    0, pio->io_offset - aio->io_offset, pio->io_size);
+			if (pio->io_flags & ZIO_FLAG_NODATA) {
+				abd_put(pio->io_abd);
+				pio->io_abd = NULL;
+			}
 		}
 	}
-
-	abd_free(aio->io_abd);
 }
 
 /*
@@ -568,6 +569,7 @@ vdev_queue_aggregate(vdev_queue_t *vq, zio_t *zio)
 	boolean_t stretch = B_FALSE;
 	avl_tree_t *t = vdev_queue_type_tree(vq, zio->io_type);
 	enum zio_flag flags = zio->io_flags & ZIO_FLAG_AGG_INHERIT;
+	uint64_t next_offset;
 	abd_t *abd;
 
 	maxblocksize = spa_maxblocksize(vq->vq_vdev->vdev_spa);
@@ -695,7 +697,7 @@ vdev_queue_aggregate(vdev_queue_t *vq, zio_t *zio)
 	size = IO_SPAN(first, last);
 	ASSERT3U(size, <=, maxblocksize);
 
-	abd = abd_alloc_for_io(size, B_TRUE);
+	abd = abd_alloc_multi();
 	if (abd == NULL)
 		return (NULL);
 
@@ -706,12 +708,37 @@ vdev_queue_aggregate(vdev_queue_t *vq, zio_t *zio)
 	aio->io_timestamp = first->io_timestamp;
 
 	nio = first;
+	next_offset = first->io_offset;
 	do {
 		dio = nio;
 		nio = AVL_NEXT(t, dio);
 		zio_add_child(dio, aio);
 		vdev_queue_io_remove(vq, dio);
+
+		if (dio->io_offset != next_offset) {
+			/* allocate a buffer for a read gap */
+			ASSERT3U(dio->io_type, ==, ZIO_TYPE_READ);
+			ASSERT3U(dio->io_offset, >, next_offset);
+			abd = abd_alloc_for_io(
+			    dio->io_offset - next_offset, B_TRUE);
+			abd_add_child(aio->io_abd, abd, B_TRUE);
+		} else if (dio->io_flags & ZIO_FLAG_NODATA) {
+			/* allocate a buffer for a write gap */
+			ASSERT3U(dio->io_type, ==, ZIO_TYPE_WRITE);
+			ASSERT3P(dio->io_abd, ==, NULL);
+			dio->io_abd = abd_get_zeros(dio->io_size);
+		}
+		if (dio->io_size != dio->io_abd->abd_size) {
+			/* abd size not the same as IO size */
+			ASSERT3U(dio->io_abd->abd_size, >, dio->io_size);
+			abd = abd_get_offset_size(dio->io_abd, 0, dio->io_size);
+			abd_add_child(aio->io_abd, abd, B_TRUE);
+		} else {
+			abd_add_child(aio->io_abd, dio->io_abd, B_FALSE);
+		}
+		next_offset = dio->io_offset + dio->io_size;
 	} while (dio != last);
+	ASSERT3U(aio->io_abd->abd_size, ==, aio->io_size);
 
 	/*
 	 * We need to drop the vdev queue's lock during zio_execute() to
@@ -722,15 +749,6 @@ vdev_queue_aggregate(vdev_queue_t *vq, zio_t *zio)
 	mutex_exit(&vq->vq_lock);
 	while ((dio = zio_walk_parents(aio, &zl)) != NULL) {
 		ASSERT3U(dio->io_type, ==, aio->io_type);
-
-		if (dio->io_flags & ZIO_FLAG_NODATA) {
-			ASSERT3U(dio->io_type, ==, ZIO_TYPE_WRITE);
-			abd_zero_off(aio->io_abd,
-			    dio->io_offset - aio->io_offset, dio->io_size);
-		} else if (dio->io_type == ZIO_TYPE_WRITE) {
-			abd_copy_off(aio->io_abd, dio->io_abd,
-			    dio->io_offset - aio->io_offset, 0, dio->io_size);
-		}
 
 		zio_vdev_io_bypass(dio);
 		zio_execute(dio);

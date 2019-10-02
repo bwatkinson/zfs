@@ -45,5 +45,7 @@ extern int uiomove(void *, size_t, enum uio_rw, uio_t *);
 extern int uio_prefaultpages(ssize_t, uio_t *);
 extern int uiocopy(void *, size_t, enum uio_rw, uio_t *, size_t *);
 extern void uioskip(uio_t *, size_t);
+extern int uio_get_user_pages(uio_t *, struct page **, unsigned maxpages,
+    enum uio_rw);
 
 #endif	/* _SYS_UIO_IMPL_H */

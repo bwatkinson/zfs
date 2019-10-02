@@ -298,6 +298,26 @@ zfs_prop_init(void)
 		{ NULL }
 	};
 
+	static zprop_index_t directio_table[] = {
+		{ "off",	ZFS_DIRECTIO_OFF },
+		{ "on",		ZFS_DIRECTIO_ON },
+		{ "strict",	ZFS_DIRECTIO_STRICT },
+		{ "legacy",	ZFS_DIRECTIO_LEGACY },
+		{ NULL }
+	};
+
+	static zprop_index_t directio_write_table[] = {
+		{ "page",	ZFS_DIRECTIO_WRITE_ALIGN_PAGE },
+		{ "record",	ZFS_DIRECTIO_WRITE_ALIGN_BLOCK },
+		{ NULL }
+	};
+
+	static zprop_index_t directio_read_table[] = {
+		{ "page",	ZFS_DIRECTIO_READ_ALIGN_PAGE },
+		{ "record",	ZFS_DIRECTIO_READ_ALIGN_BLOCK },
+		{ NULL }
+	};
+
 	/* inherit index properties */
 	zprop_register_index(ZFS_PROP_REDUNDANT_METADATA, "redundant_metadata",
 	    ZFS_REDUNDANT_METADATA_ALL,
@@ -375,6 +395,18 @@ zfs_prop_init(void)
 	    ZFS_VOLMODE_DEFAULT, PROP_INHERIT,
 	    ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME,
 	    "default | full | geom | dev | none", "VOLMODE", volmode_table);
+	zprop_register_index(ZFS_PROP_DIRECTIO, "directio",
+	    ZFS_DIRECTIO_STRICT, PROP_INHERIT, ZFS_TYPE_FILESYSTEM |
+	    ZFS_TYPE_VOLUME, "off | on | strict | legacy", "DIRECTIO",
+	    directio_table);
+	zprop_register_index(ZFS_PROP_DIRECTIO_WRITE_ALIGN,
+	    "directio_write_align", ZFS_DIRECTIO_WRITE_ALIGN_PAGE, PROP_INHERIT,
+	    ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME, "page | record",
+	    "DIRECTIO_WRITE_ALIGN", directio_write_table);
+	zprop_register_index(ZFS_PROP_DIRECTIO_READ_ALIGN,
+	    "directio_read_align", ZFS_DIRECTIO_READ_ALIGN_PAGE, PROP_INHERIT,
+	    ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME, "page | record",
+	    "DIRECTIO_READ_ALIGN", directio_read_table);
 
 	/* inherit index (boolean) properties */
 	zprop_register_index(ZFS_PROP_ATIME, "atime", 1, PROP_INHERIT,

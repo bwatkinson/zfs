@@ -53,6 +53,8 @@
 #include <sys/strings.h>
 #include <linux/kmap_compat.h>
 #include <linux/uaccess.h>
+#include <linux/kmap_compat.h>
+#include <sys/errno.h>
 
 /*
  * Move "n" bytes at byte address "p"; "rw" indicates the direction
@@ -284,4 +286,94 @@ uioskip(uio_t *uiop, size_t n)
 	uiop->uio_resid -= n;
 }
 EXPORT_SYMBOL(uioskip);
+
+/*
+ * Both uio_iov_step() and uio_get_user_pages() are merely modified
+ * functions of the Linux kernel function iov_iter_get_pages().
+ *
+ * iov_iter_get_pages() was not introduced until the 3.15 kernel, so
+ * this code is used instead of directly calling iov_get_get_pages()
+ * to make sure we can pinning user pages from an uio_t struct iovec.
+ */
+static size_t
+uio_iov_step(struct iovec *v, unsigned maxpages, enum uio_rw rw,
+    struct page **pages, int *nr_pages)
+{
+	size_t start;
+	unsigned long addr = (unsigned long)(v->iov_base);
+	size_t len = v->iov_len + (start = addr & (PAGE_SIZE - 1));
+	int n;
+	int res;
+
+	if (len > maxpages * PAGE_SIZE)
+		len = maxpages * PAGE_SIZE;
+	addr &= ~(PAGE_SIZE - 1);
+	n = DIV_ROUND_UP(len, PAGE_SIZE);
+	res = zfs_get_user_pages(addr, n, rw != UIO_WRITE, pages);
+	if (res < 0)
+		return (res);
+	*nr_pages = res;
+	return ((res == n ? len : res * PAGE_SIZE) - start);
+}
+
+/*
+ * This function returns the total number of pages pinned on success.
+ * In the case of a uio with bvec is passed, then ENOTSUP will be
+ * returned. It is callers responsiblity to check for ENOTSUP.
+ */
+int
+uio_get_user_pages(uio_t *uio, struct page **pages, unsigned maxpages,
+    enum uio_rw rw)
+{
+	size_t n = maxpages * PAGE_SIZE;
+	size_t left;
+	int pinned_pages = 0;
+	int local_pin;
+	struct iovec v;
+
+	/*
+	 * Currently we only support pinning iovec's. It is possibly
+	 * to allow for bvec's as well, it would just mean adding the kernel
+	 * code in iov_iter_get_pages() in the kernel to handle the correct
+	 * step function.
+	 */
+	if (uio->uio_segflg == UIO_BVEC)
+		return (ENOTSUP);
+
+	if (n > uio->uio_resid)
+		n = uio->uio_resid;
+
+	const struct iovec *p = uio->uio_iov;
+	size_t skip = uio->uio_skip;
+	v.iov_len = MIN(n, p->iov_len - skip);
+	if (v.iov_len) {
+		v.iov_base = p->iov_base + skip;
+		left = uio_iov_step(&v, maxpages, rw != UIO_WRITE, pages,
+		    &local_pin);
+		v.iov_len -= left;
+		skip += v.iov_len;
+		n -= v.iov_len;
+		pinned_pages += local_pin;
+	} else {
+		left = 0;
+	}
+
+	while (!left && n) {
+		p++;
+		v.iov_len = MIN(n, p->iov_len);
+		if (!v.iov_len)
+			continue;
+		v.iov_base = p->iov_base;
+		left = uio_iov_step(&v, maxpages, rw != UIO_WRITE, pages,
+		    &local_pin);
+		v.iov_len -= left;
+		skip = v.iov_len;
+		n -= v.iov_len;
+		pinned_pages += local_pin;
+	}
+
+	return (pinned_pages);
+}
+EXPORT_SYMBOL(uio_get_user_pages);
+
 #endif /* _KERNEL */

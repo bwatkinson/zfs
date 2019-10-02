@@ -125,6 +125,9 @@ struct objset {
 	zfs_cache_type_t os_primary_cache;
 	zfs_cache_type_t os_secondary_cache;
 	zfs_sync_type_t os_sync;
+	zfs_directio_t os_directio;
+	zfs_directio_write_align_t os_directio_write_align;
+	zfs_directio_read_align_t os_directio_read_align;
 	zfs_redundant_metadata_type_t os_redundant_metadata;
 	uint64_t os_recordsize;
 	/*
@@ -202,6 +205,41 @@ struct objset {
 #define	DMU_OS_IS_L2CACHEABLE(os)				\
 	((os)->os_secondary_cache == ZFS_CACHE_ALL ||		\
 	(os)->os_secondary_cache == ZFS_CACHE_METADATA)
+
+/*
+ * Quick Direct IO check macros
+ */
+#define	DMU_OS_DIRECTIO_IS_ON(os) \
+	((os)->os_directio == ZFS_DIRECTIO_ON)
+
+#define	DMU_OS_DIRECTIO_IS_OFF(os) \
+	((os)->os_directio == ZFS_DIRECTIO_OFF)
+
+#define	DMU_OS_DIRECTIO_IS_LEGACY(os) \
+	((os)->os_directio == ZFS_DIRECTIO_LEGACY)
+
+#define	DMU_OS_DIRECTIO_IS_STRICT(os) \
+	((os)->os_directio == ZFS_DIRECTIO_STRICT)
+
+#define	DMU_OS_DIRECT_PAGE_ALIGNED(os, w) \
+	w ? ((os)->os_directio_write_align == ZFS_DIRECTIO_WRITE_ALIGN_PAGE) \
+	: ((os)->os_directio_read_align == ZFS_DIRECTIO_READ_ALIGN_PAGE)
+
+#define	DMU_OS_DIRECT_BLOCK_ALIGNED(os, w) \
+	w ? ((os)->os_directio_write_align == ZFS_DIRECTIO_WRITE_ALIGN_BLOCK) \
+	: ((os)->os_directio_read_align == ZFS_DIRECTIO_READ_ALIGN_BLOCK)
+
+#define	DMU_OS_DIRECTIO_WRITE_IS_PAGE_ALIGNED(os) \
+	(DMU_OS_DIRECT_PAGE_ALIGNED(os, 1))
+
+#define	DMU_OS_DIRECTIO_WRITE_IS_BLOCK_ALIGNED(os) \
+	(DMU_OS_DIRECT_BLOCK_ALIGNED(os, 1))
+
+#define	DMU_OS_DIRECTIO_READ_IS_PAGE_ALIGNED(os) \
+	(DMU_OS_DIRECT_PAGE_ALIGNED(os, 0))
+
+#define	DMU_OS_DIRECTIO_READ_IS_BLOCK_ALIGNED(os) \
+	(DMU_OS_DIRECT_BLOCK_ALIGNED(os, 0))
 
 /* called from zpl */
 int dmu_objset_hold(const char *name, void *tag, objset_t **osp);

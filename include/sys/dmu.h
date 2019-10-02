@@ -565,9 +565,7 @@ int dmu_buf_hold(objset_t *os, uint64_t object, uint64_t offset,
     void *tag, dmu_buf_t **, int flags);
 int dmu_buf_hold_by_dnode(dnode_t *dn, uint64_t offset,
     void *tag, dmu_buf_t **dbp, int flags);
-int dmu_buf_hold_array_by_dnode(dnode_t *dn, uint64_t offset,
-    uint64_t length, boolean_t read, void *tag, int *numbufsp,
-    dmu_buf_t ***dbpp, uint32_t flags);
+
 /*
  * Add a reference to a dmu buffer that has already been held via
  * dmu_buf_hold() in the current context.
@@ -826,7 +824,8 @@ int dmu_free_range(objset_t *os, uint64_t object, uint64_t offset,
 int dmu_free_long_range(objset_t *os, uint64_t object, uint64_t offset,
     uint64_t size);
 int dmu_free_long_object(objset_t *os, uint64_t object);
-
+int dmu_check_directio_valid(dnode_t *dn, uint64_t offset, uint64_t size,
+    boolean_t read);
 /*
  * Convenience functions.
  *
@@ -836,12 +835,15 @@ int dmu_free_long_object(objset_t *os, uint64_t object);
 #define	DMU_READ_PREFETCH	0 /* prefetch */
 #define	DMU_READ_NO_PREFETCH	1 /* don't prefetch */
 #define	DMU_READ_NO_DECRYPT	2 /* don't decrypt */
+#define	DMU_DIRECTIO		4 /* use direct IO */
 int dmu_read(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	void *buf, uint32_t flags);
 int dmu_read_by_dnode(dnode_t *dn, uint64_t offset, uint64_t size, void *buf,
     uint32_t flags);
 void dmu_write(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	const void *buf, dmu_tx_t *tx);
+void dmu_write_direct_by_dnode(dnode_t *dn, uint64_t offset, uint64_t size,
+    const void *buf, dmu_tx_t *tx);
 void dmu_write_by_dnode(dnode_t *dn, uint64_t offset, uint64_t size,
     const void *buf, dmu_tx_t *tx);
 void dmu_prealloc(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,

@@ -257,6 +257,7 @@ typedef struct kmutex {
 extern void mutex_init(kmutex_t *mp, char *name, int type, void *cookie);
 extern void mutex_destroy(kmutex_t *mp);
 extern void mutex_enter(kmutex_t *mp);
+extern void mutex_transfer_ownership(kmutex_t *mp);
 extern void mutex_exit(kmutex_t *mp);
 extern int mutex_tryenter(kmutex_t *mp);
 

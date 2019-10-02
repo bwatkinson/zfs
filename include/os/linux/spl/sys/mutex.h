@@ -151,6 +151,15 @@ spl_mutex_lockdep_on_maybe(kmutex_t *mp)			\
 
 #define	mutex_enter(mp) mutex_enter_nested((mp), 0)
 
+#define	mutex_transfer_ownership(mp)		 	 \
+{								\
+	if (mutex_owner((mp)) != current) {		\
+		ASSERT3P(mutex_owner((mp)), !=, NULL);		\
+		spl_mutex_set_owner((mp));		\
+	}							\
+}
+
+
 /*
  * The reason for the spinlock:
  *

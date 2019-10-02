@@ -206,6 +206,15 @@ mutex_enter(kmutex_t *mp)
 	mp->m_owner = pthread_self();
 }
 
+void
+mutex_transfer_ownership(kmutex_t *mp)
+{
+	if (mp->m_owner != pthread_self()) {
+		ASSERT3P(mp->m_owner, !=, NULL);
+		mp->m_owner = pthread_self();
+	}
+}
+
 int
 mutex_tryenter(kmutex_t *mp)
 {

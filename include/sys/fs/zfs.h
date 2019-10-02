@@ -186,6 +186,9 @@ typedef enum {
 	ZFS_PROP_IVSET_GUID,		/* not exposed to the user */
 	ZFS_PROP_REDACTED,
 	ZFS_PROP_REDACT_SNAPS,
+	ZFS_PROP_DIRECTIO,
+	ZFS_PROP_DIRECTIO_WRITE_ALIGN,
+	ZFS_PROP_DIRECTIO_READ_ALIGN,
 	ZFS_NUM_PROPS
 } zfs_prop_t;
 
@@ -431,6 +434,23 @@ typedef enum {
 	ZFS_VOLMODE_DEV = 2,
 	ZFS_VOLMODE_NONE = 3
 } zfs_volmode_t;
+
+typedef enum {
+	ZFS_DIRECTIO_OFF = 0,
+	ZFS_DIRECTIO_ON,
+	ZFS_DIRECTIO_STRICT,
+	ZFS_DIRECTIO_LEGACY
+} zfs_directio_t;
+
+typedef enum {
+	ZFS_DIRECTIO_WRITE_ALIGN_PAGE = 0,
+	ZFS_DIRECTIO_WRITE_ALIGN_BLOCK
+} zfs_directio_write_align_t;
+
+typedef enum {
+	ZFS_DIRECTIO_READ_ALIGN_PAGE = 0,
+	ZFS_DIRECTIO_READ_ALIGN_BLOCK
+} zfs_directio_read_align_t;
 
 typedef enum zfs_keystatus {
 	ZFS_KEYSTATUS_NONE = 0,

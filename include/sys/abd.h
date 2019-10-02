@@ -35,13 +35,22 @@
 extern "C" {
 #endif
 
+#ifndef _KERNEL
+struct page; /* forward declaration to be used in abd.c */
+#endif
+
 typedef enum abd_flags {
-	ABD_FLAG_LINEAR	= 1 << 0,	/* is buffer linear (or scattered)? */
-	ABD_FLAG_OWNER	= 1 << 1,	/* does it own its data buffers? */
-	ABD_FLAG_META	= 1 << 2,	/* does this represent FS metadata? */
-	ABD_FLAG_MULTI_ZONE  = 1 << 3,	/* pages split over memory zones */
-	ABD_FLAG_MULTI_CHUNK = 1 << 4,	/* pages split over multiple chunks */
-	ABD_FLAG_LINEAR_PAGE = 1 << 5,	/* linear but allocd from page */
+	ABD_FLAG_LINEAR		= 1 << 0, /* is ABD linear/scattered? */
+	ABD_FLAG_OWNER		= 1 << 1, /* own its data buffers? */
+	ABD_FLAG_META		= 1 << 2, /* represents FS metadata? */
+	ABD_FLAG_MULTI_ZONE	= 1 << 3, /* pages split over memory zones */
+	ABD_FLAG_MULTI_CHUNK	= 1 << 4, /* pages split over multiple chunks */
+	ABD_FLAG_LINEAR_PAGE	= 1 << 5, /* linear but allocd from page */
+	ABD_FLAG_FROM_PAGES	= 1 << 6, /* does not own the pages */
+	ABD_FLAG_MULTI_LIST	= 1 << 7, /* mult ABDs chained together */
+	ABD_FLAG_LINKED		= 1 << 8, /* ABD is on a chained list */
+	ABD_FLAG_GAP		= 1 << 9, /* ABD is for read gap */
+	ABD_FLAG_ZEROS		= 1 << 10 /* ABD a zero-filled buffer */
 } abd_flags_t;
 
 typedef struct abd {
@@ -64,6 +73,9 @@ typedef struct abd {
 			void		*abd_buf;
 			struct scatterlist *abd_sgl; /* for LINEAR_PAGE */
 		} abd_linear;
+		struct abd_multi {
+			list_t abd_chain;
+		} abd_multi;
 	} abd_u;
 } abd_t;
 
@@ -75,14 +87,19 @@ extern int zfs_abd_scatter_enabled;
 static inline boolean_t
 abd_is_linear(abd_t *abd)
 {
-	return ((abd->abd_flags & ABD_FLAG_LINEAR) != 0 ? B_TRUE : B_FALSE);
+	return ((abd->abd_flags & ABD_FLAG_LINEAR) != 0);
 }
 
 static inline boolean_t
 abd_is_linear_page(abd_t *abd)
 {
-	return ((abd->abd_flags & ABD_FLAG_LINEAR_PAGE) != 0 ?
-	    B_TRUE : B_FALSE);
+	return ((abd->abd_flags & ABD_FLAG_LINEAR_PAGE) != 0);
+}
+
+static inline boolean_t
+abd_is_zero_buf(abd_t *abd)
+{
+	return ((abd->abd_flags & ABD_FLAG_ZEROS) != 0);
 }
 
 /*
@@ -91,12 +108,18 @@ abd_is_linear_page(abd_t *abd)
 
 abd_t *abd_alloc(size_t, boolean_t);
 abd_t *abd_alloc_linear(size_t, boolean_t);
+abd_t *abd_alloc_multi(void);
 abd_t *abd_alloc_for_io(size_t, boolean_t);
 abd_t *abd_alloc_sametype(abd_t *, size_t);
+void abd_add_child(abd_t *, abd_t *, boolean_t);
 void abd_free(abd_t *);
 abd_t *abd_get_offset(abd_t *, size_t);
 abd_t *abd_get_offset_size(abd_t *, size_t, size_t);
+abd_t *abd_get_zeros(size_t);
 abd_t *abd_get_from_buf(void *, size_t);
+#ifdef _KERNEL
+abd_t *abd_get_from_pages(struct page **, uint_t);
+#endif
 void abd_put(abd_t *);
 
 /*
@@ -126,8 +149,7 @@ int abd_cmp_buf_off(abd_t *, const void *, size_t, size_t);
 void abd_zero_off(abd_t *, size_t, size_t);
 
 #if defined(_KERNEL)
-unsigned int abd_scatter_bio_map_off(struct bio *, abd_t *, unsigned int,
-		size_t);
+unsigned int abd_bio_map_off(struct bio *, abd_t *, unsigned int, size_t);
 unsigned long abd_nr_pages_off(abd_t *, unsigned int, size_t);
 #endif
 

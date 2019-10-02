@@ -330,6 +330,48 @@ smallblk_changed_cb(void *arg, uint64_t newval)
 }
 
 static void
+directio_changed_cb(void *arg, uint64_t newval)
+{
+	objset_t *os = arg;
+
+	/*
+	 * Inheritance and range checking should have been done by now.
+	 */
+	ASSERT(newval == ZFS_DIRECTIO_OFF || newval == ZFS_DIRECTIO_ON ||
+	    newval == ZFS_DIRECTIO_STRICT || newval == ZFS_DIRECTIO_LEGACY);
+
+	os->os_directio = newval;
+}
+
+static void
+directio_write_align_changed_cb(void *arg, uint64_t newval)
+{
+	objset_t *os = arg;
+
+	/*
+	 * Inheritance and range checking should have been done by now.
+	 */
+	ASSERT(newval == ZFS_DIRECTIO_WRITE_ALIGN_PAGE ||
+	    newval == ZFS_DIRECTIO_WRITE_ALIGN_BLOCK);
+
+	os->os_directio_write_align = newval;
+}
+
+static void
+directio_read_align_changed_cb(void *arg, uint64_t newval)
+{
+	objset_t *os = arg;
+
+	/*
+	 * Inheritance and range checking should have been done by now.
+	 */
+	ASSERT(newval == ZFS_DIRECTIO_READ_ALIGN_PAGE ||
+	    newval == ZFS_DIRECTIO_READ_ALIGN_BLOCK);
+
+	os->os_directio_read_align = newval;
+}
+
+static void
 logbias_changed_cb(void *arg, uint64_t newval)
 {
 	objset_t *os = arg;
@@ -570,6 +612,23 @@ dmu_objset_open_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 				    zfs_prop_to_name(
 				    ZFS_PROP_SPECIAL_SMALL_BLOCKS),
 				    smallblk_changed_cb, os);
+			}
+			if (err == 0) {
+				err = dsl_prop_register(ds,
+				    zfs_prop_to_name(ZFS_PROP_DIRECTIO),
+				    directio_changed_cb, os);
+			}
+			if (err == 0) {
+				err = dsl_prop_register(ds,
+				    zfs_prop_to_name(
+				    ZFS_PROP_DIRECTIO_WRITE_ALIGN),
+				    directio_write_align_changed_cb, os);
+			}
+			if (err == 0) {
+				err = dsl_prop_register(ds,
+				    zfs_prop_to_name(
+				    ZFS_PROP_DIRECTIO_READ_ALIGN),
+				    directio_read_align_changed_cb, os);
 			}
 		}
 		if (err != 0) {

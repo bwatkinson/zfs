@@ -963,6 +963,103 @@ Unless necessary, deduplication should NOT be enabled on a system. See the
 section of
 .Xr zfsconcepts 8 .
 .It Xo
+.Sy directio Ns = Ns Sy off Ns | Ns Sy on Ns | Ns Sy strict Ns | Ns
+.Sy legacy
+.Xc
+Sets the policy for Direct IO when an IO request uses the
+.Sx O_DIRECT
+flag. The default value is
+.Sy strict.
+.Pp
+All Direct IO requests must be page-aligned.
+.Pp
+If this property is set to
+.Sy off
+all Direct IO requests will always fail.
+.Pp
+If this property is set to
+.Sy on
+all IO requests requesting Direct IO will attempt to bypass the ARC
+based on the
+.Sx alignment
+of the IO request descripted below by
+.Sy directio_write_align
+and
+.Sy directio_read_align
+properties. In the event the IO request is not properly aligned based on
+the alignment property, the request will just be redirected to use the ARC.
+.Pp
+If this parameter is set to
+.Sy strict
+all IO requests requesting Direct IO will not fail as long as they follow
+the alignment property. However, if the alignment policy is not followed
+the IO request will fail.
+.Pp
+If this parameter is set to
+.Sy legacy
+all IO requests requesting Direct IO will always use the ARC. This is
+based on the original mode for the
+.Sx O_DIRECT
+flag in ZFS. This allows ZFS to accept and silently ignore
+.Sx O_DIRECT
+flag.
+.Pp
+.Sx NOTE:
+By default all
+.Sx O_DIRECT
+IO requests that are page-aligned are valid for Direct IO. However,
+this is not highly performant for
+.Sx writes .
+Any page-aligned Direct IO
+.Sx write
+request that is not also recordsize-aligned will require a
+read, write, and modify cycle. This can cause quite a large
+performance penalty to occur. It is suggested to set this property to
+.Sy on
+with the write alignment property (described below) to
+.Sy record .
+This will allow all recordsize-aligned
+.Sx O_DIRECT
+writes to only bypass the ARC in the event the IO request will not
+require the read, write, and modify cycle; otherwise, the write request
+just take the normal ZFS path through the ARC.
+.It Xo
+.Sy directio_write_align Ns = Ns Sy page Ns | Ns Sy record
+.Xc
+Sets the alignment preference for write requests using the
+.Sx O_DIRECT
+flag. This paramter works in conjuction with the
+.Sy directio
+parameter described above. The default value is
+.Sy page.
+If this paramter is set to
+.Sy page
+then all page-aligned write requests are valid for Direct IO. If
+this is set to
+.Sy record
+then all recordsize-aligned IO requests are valid for Direct IO.
+Also see notes above in
+.Sy directio
+with regards to performance considerations with this setting.
+.It Xo
+.Sy directio_read_align Ns = Ns Sy page Ns | Ns Sy record
+.Xc
+Sets the alignment perference for read requests using the
+.Sx O_DIRECT
+flag. This parameter works in conjuction with the
+.Sy directio
+setting described above. The default value is
+.Sy page.
+If this parameter is set to
+.Sy page
+then all page-aligned read requests are valid for Direct IO. If
+this paramter is set to
+.Sy record
+then all recordsize-aligned IO requtest are valid for Direct IO.
+Also see notes above in
+.Sy directio
+with regards to performance considerations with this setting.
+.It Xo
 .Sy dnodesize Ns = Ns Sy legacy Ns | Ns Sy auto Ns | Ns Sy 1k Ns | Ns
 .Sy 2k Ns | Ns Sy 4k Ns | Ns Sy 8k Ns | Ns Sy 16k
 .Xc

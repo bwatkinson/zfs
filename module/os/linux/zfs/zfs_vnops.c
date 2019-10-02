@@ -533,6 +533,9 @@ zfs_read(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 	}
 #endif /* HAVE_UIO_ZEROCOPY */
 
+	if (ioflag & O_DIRECT)
+		uio->uio_extflg |= UIO_DIRECT;
+
 	while (n > 0) {
 		ssize_t nbytes = MIN(n, zfs_read_chunk_size -
 		    P2PHASE(uio->uio_loffset, zfs_read_chunk_size));
@@ -589,6 +592,7 @@ zfs_write(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 {
 	int error = 0;
 	ssize_t start_resid = uio->uio_resid;
+	boolean_t check_directio_align = B_FALSE;
 
 	/*
 	 * Fasttrack empty write
@@ -658,7 +662,7 @@ zfs_write(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 		xuio = (xuio_t *)uio;
 	else
 #endif
-		if (uio_prefaultpages(MIN(n, max_blksz), uio)) {
+		if (uio_prefaultpages(n, uio)) {
 			ZFS_EXIT(zfsvfs);
 			return (SET_ERROR(EFAULT));
 		}
@@ -698,8 +702,47 @@ zfs_write(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 		return (SET_ERROR(EFBIG));
 	}
 
+	if (lr->lr_length == UINT64_MAX) {
+		/*
+		 * In the event that we are increasing the file block size,
+		 * we will remove the O_DIRECT flag. Because
+		 * zfs_grow_blocksize() will read from the ARC in order to
+		 * grow the dbuf, we avoid doing Direct IO here as that
+		 * would cause data written to disk to be overwritten by
+		 * data in the ARC during the sync phase. Besides writing
+		 * the same data twice to disk, there is also consistency
+		 * concerns, so for now we just avoid doing Direct IO while
+		 * growing the file's blocksize.
+		 */
+		if (ioflag & O_DIRECT) {
+			/*
+			 * Even if we are growing the block size, we still want
+			 * to check to make sure the Direct IO operation is
+			 * valid before submitting the write request, so we
+			 * go ahead and check for proper alignment.
+			 */
+			check_directio_align = B_TRUE;
+		}
+		ioflag &= ~(O_DIRECT);
+	}
+
 	if ((woff + n) > limit || woff > (limit - n))
 		n = limit - woff;
+
+	if (check_directio_align) {
+		dmu_buf_impl_t *tmp_db =
+		    (dmu_buf_impl_t *)sa_get_db(zp->z_sa_hdl);
+		if (dmu_check_directio_valid(DB_DNODE(tmp_db), uio->uio_loffset,
+		    n, B_FALSE) == ENOTSUP) {
+			/*
+			 * If the alignment is not correct for Direct IO we will
+			 * just stop the IO transaction.
+			 */
+			zfs_rangelock_exit(lr);
+			ZFS_EXIT(zfsvfs);
+			return (SET_ERROR(ENOTSUP));
+		}
+	}
 
 	/* Will this write extend the file length? */
 	int write_eof = (woff + n > zp->z_size);
@@ -711,7 +754,6 @@ zfs_write(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 	const iovec_t *iovp = uio->uio_iov;
 	int iovcnt __maybe_unused = uio->uio_iovcnt;
 #endif
-
 
 	/*
 	 * Write the file in reasonable size chunks.  Each chunk is written
@@ -748,7 +790,7 @@ zfs_write(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 #endif
 		} else if (n >= max_blksz && woff >= zp->z_size &&
 		    P2PHASE(woff, max_blksz) == 0 &&
-		    zp->z_blksz == max_blksz) {
+		    zp->z_blksz == max_blksz && !(ioflag & O_DIRECT)) {
 			/*
 			 * This write covers a full block.  "Borrow" a buffer
 			 * from the dmu so that we can fill it before we enter
@@ -762,10 +804,13 @@ zfs_write(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 			    max_blksz);
 			ASSERT(abuf != NULL);
 			ASSERT(arc_buf_size(abuf) == max_blksz);
-			if ((error = uiocopy(abuf->b_data, max_blksz,
+			while ((error = uiocopy(abuf->b_data, max_blksz,
 			    UIO_WRITE, uio, &cbytes))) {
-				dmu_return_arcbuf(abuf);
-				break;
+				if (error != EFAULT ||
+				    uio_prefaultpages(max_blksz, uio)) {
+					dmu_return_arcbuf(abuf);
+					break;
+				}
 			}
 			ASSERT(cbytes == max_blksz);
 		}
@@ -822,7 +867,14 @@ zfs_write(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 
 		ssize_t tx_bytes;
 		if (abuf == NULL) {
+			if (ioflag & O_DIRECT)
+				uio->uio_extflg |= UIO_DIRECT;
+
 			tx_bytes = uio->uio_resid;
+			/*
+			 * Needed to resolve a deadlock which could occur when
+			 * handling a page fault
+			 */
 			uio->uio_fault_disable = B_TRUE;
 			error = dmu_write_uio_dbuf(sa_get_db(zp->z_sa_hdl),
 			    uio, nbytes, tx);

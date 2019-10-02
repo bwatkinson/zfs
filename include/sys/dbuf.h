@@ -298,6 +298,12 @@ typedef struct dmu_buf_impl {
 	uint8_t db_pending_evict;
 
 	uint8_t db_dirtycnt;
+
+	/*
+	 * Used to signal that the dbuf intends to transfer
+	 * ownership of of its db_mtx to another thread.
+	 */
+	uint8_t db_transferring_ownership;
 } dmu_buf_impl_t;
 
 /* Note: the dbuf hash table is exposed only for the mdb module */
