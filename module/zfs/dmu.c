@@ -1040,6 +1040,359 @@ dmu_read_by_dnode(dnode_t *dn, uint64_t offset, uint64_t size, void *buf,
 	return (dmu_read_impl(dn, offset, size, buf, flags));
 }
 
+typedef struct {
+	dbuf_dirty_record_t	*dsa_dr;
+	dmu_sync_cb_t		*dsa_done;
+	zgd_t			*dsa_zgd;
+	dmu_tx_t		*dsa_tx;
+} dmu_sync_arg_t;
+
+/* ARGSUSED */
+static void
+dmu_sync_ready(zio_t *zio, arc_buf_t *buf, void *varg)
+{
+	dmu_sync_arg_t *dsa = varg;
+	dmu_buf_t *db = dsa->dsa_zgd->zgd_db;
+	blkptr_t *bp = zio->io_bp;
+
+	if (zio->io_error == 0) {
+		if (BP_IS_HOLE(bp)) {
+			/*
+			 * A block of zeros may compress to a hole, but the
+			 * block size still needs to be known for replay.
+			 */
+			BP_SET_LSIZE(bp, db->db_size);
+		} else if (!BP_IS_EMBEDDED(bp)) {
+			ASSERT(BP_GET_LEVEL(bp) == 0);
+			BP_SET_FILL(bp, 1);
+		}
+	}
+}
+
+static void
+dmu_sync_late_arrival_ready(zio_t *zio)
+{
+	dmu_sync_ready(zio, NULL, zio->io_private);
+}
+
+/* ARGSUSED */
+static void
+dmu_sync_done(zio_t *zio, arc_buf_t *buf, void *varg)
+{
+	dmu_sync_arg_t *dsa = varg;
+	dbuf_dirty_record_t *dr = dsa->dsa_dr;
+	dmu_buf_impl_t *db = dr->dr_dbuf;
+	zgd_t *zgd = dsa->dsa_zgd;
+
+	/*
+	 * Record the vdev(s) backing this blkptr so they can be flushed after
+	 * the writes for the lwb have completed.
+	 */
+	if (zio->io_error == 0) {
+		zil_lwb_add_block(zgd->zgd_lwb, zgd->zgd_bp);
+	}
+
+	mutex_enter(&db->db_mtx);
+	ASSERT(dr->dt.dl.dr_override_state == DR_IN_DMU_SYNC);
+	if (zio->io_error == 0) {
+		dr->dt.dl.dr_nopwrite = !!(zio->io_flags & ZIO_FLAG_NOPWRITE);
+		if (dr->dt.dl.dr_nopwrite) {
+			blkptr_t *bp = zio->io_bp;
+			blkptr_t *bp_orig = &zio->io_bp_orig;
+			uint8_t chksum = BP_GET_CHECKSUM(bp_orig);
+
+			ASSERT(BP_EQUAL(bp, bp_orig));
+			VERIFY(BP_EQUAL(bp, db->db_blkptr));
+			ASSERT(zio->io_prop.zp_compress != ZIO_COMPRESS_OFF);
+			VERIFY(zio_checksum_table[chksum].ci_flags &
+			    ZCHECKSUM_FLAG_NOPWRITE);
+		}
+		dr->dt.dl.dr_overridden_by = *zio->io_bp;
+		dr->dt.dl.dr_override_state = DR_OVERRIDDEN;
+		dr->dt.dl.dr_copies = zio->io_prop.zp_copies;
+
+		/*
+		 * Old style holes are filled with all zeros, whereas
+		 * new-style holes maintain their lsize, type, level,
+		 * and birth time (see zio_write_compress). While we
+		 * need to reset the BP_SET_LSIZE() call that happened
+		 * in dmu_sync_ready for old style holes, we do *not*
+		 * want to wipe out the information contained in new
+		 * style holes. Thus, only zero out the block pointer if
+		 * it's an old style hole.
+		 */
+		if (BP_IS_HOLE(&dr->dt.dl.dr_overridden_by) &&
+		    dr->dt.dl.dr_overridden_by.blk_birth == 0)
+			BP_ZERO(&dr->dt.dl.dr_overridden_by);
+	} else {
+		dr->dt.dl.dr_override_state = DR_NOT_OVERRIDDEN;
+	}
+	cv_broadcast(&db->db_changed);
+	mutex_exit(&db->db_mtx);
+
+	dsa->dsa_done(dsa->dsa_zgd, zio->io_error);
+
+	kmem_free(dsa, sizeof (*dsa));
+}
+
+static void
+dmu_sync_late_arrival_done(zio_t *zio)
+{
+	blkptr_t *bp = zio->io_bp;
+	dmu_sync_arg_t *dsa = zio->io_private;
+	zgd_t *zgd = dsa->dsa_zgd;
+
+	if (zio->io_error == 0) {
+		/*
+		 * Record the vdev(s) backing this blkptr so they can be
+		 * flushed after the writes for the lwb have completed.
+		 */
+		zil_lwb_add_block(zgd->zgd_lwb, zgd->zgd_bp);
+
+		if (!BP_IS_HOLE(bp)) {
+			blkptr_t *bp_orig __maybe_unused = &zio->io_bp_orig;
+			ASSERT(!(zio->io_flags & ZIO_FLAG_NOPWRITE));
+			ASSERT(BP_IS_HOLE(bp_orig) || !BP_EQUAL(bp, bp_orig));
+			ASSERT(zio->io_bp->blk_birth == zio->io_txg);
+			ASSERT(zio->io_txg > spa_syncing_txg(zio->io_spa));
+			zio_free(zio->io_spa, zio->io_txg, zio->io_bp);
+		}
+	}
+
+	dmu_tx_commit(dsa->dsa_tx);
+
+	dsa->dsa_done(dsa->dsa_zgd, zio->io_error);
+
+	abd_put(zio->io_abd);
+	kmem_free(dsa, sizeof (*dsa));
+}
+
+static int
+dmu_sync_late_arrival(zio_t *pio, objset_t *os, dmu_sync_cb_t *done, zgd_t *zgd,
+    zio_prop_t *zp, zbookmark_phys_t *zb)
+{
+	dmu_sync_arg_t *dsa;
+	dmu_tx_t *tx;
+
+	tx = dmu_tx_create(os);
+	dmu_tx_hold_space(tx, zgd->zgd_db->db_size);
+	if (dmu_tx_assign(tx, TXG_WAIT) != 0) {
+		dmu_tx_abort(tx);
+		/* Make zl_get_data do txg_waited_synced() */
+		return (SET_ERROR(EIO));
+	}
+
+	/*
+	 * In order to prevent the zgd's lwb from being free'd prior to
+	 * dmu_sync_late_arrival_done() being called, we have to ensure
+	 * the lwb's "max txg" takes this tx's txg into account.
+	 */
+	zil_lwb_add_txg(zgd->zgd_lwb, dmu_tx_get_txg(tx));
+
+	dsa = kmem_alloc(sizeof (dmu_sync_arg_t), KM_SLEEP);
+	dsa->dsa_dr = NULL;
+	dsa->dsa_done = done;
+	dsa->dsa_zgd = zgd;
+	dsa->dsa_tx = tx;
+
+	/*
+	 * Since we are currently syncing this txg, it's nontrivial to
+	 * determine what BP to nopwrite against, so we disable nopwrite.
+	 *
+	 * When syncing, the db_blkptr is initially the BP of the previous
+	 * txg.  We can not nopwrite against it because it will be changed
+	 * (this is similar to the non-late-arrival case where the dbuf is
+	 * dirty in a future txg).
+	 *
+	 * Then dbuf_write_ready() sets bp_blkptr to the location we will write.
+	 * We can not nopwrite against it because although the BP will not
+	 * (typically) be changed, the data has not yet been persisted to this
+	 * location.
+	 *
+	 * Finally, when dbuf_write_done() is called, it is theoretically
+	 * possible to always nopwrite, because the data that was written in
+	 * this txg is the same data that we are trying to write.  However we
+	 * would need to check that this dbuf is not dirty in any future
+	 * txg's (as we do in the normal dmu_sync() path). For simplicity, we
+	 * don't nopwrite in this case.
+	 */
+	zp->zp_nopwrite = B_FALSE;
+
+	zio_nowait(zio_write(pio, os->os_spa, dmu_tx_get_txg(tx), zgd->zgd_bp,
+	    abd_get_from_buf(zgd->zgd_db->db_data, zgd->zgd_db->db_size),
+	    zgd->zgd_db->db_size, zgd->zgd_db->db_size, zp,
+	    dmu_sync_late_arrival_ready, NULL, NULL, dmu_sync_late_arrival_done,
+	    dsa, ZIO_PRIORITY_SYNC_WRITE, ZIO_FLAG_CANFAIL, zb));
+
+	return (0);
+}
+
+/*
+ * Intent log support: sync the block associated with db to disk.
+ * N.B. and XXX: the caller is responsible for making sure that the
+ * data isn't changing while dmu_sync() is writing it.
+ *
+ * Return values:
+ *
+ *	EEXIST: this txg has already been synced, so there's nothing to do.
+ *		The caller should not log the write.
+ *
+ *	ENOENT: the block was dbuf_free_range()'d, so there's nothing to do.
+ *		The caller should not log the write.
+ *
+ *	EALREADY: this block is already in the process of being synced.
+ *		The caller should track its progress (somehow).
+ *
+ *	EIO: could not do the I/O.
+ *		The caller should do a txg_wait_synced().
+ *
+ *	0: the I/O has been initiated.
+ *		The caller should log this blkptr in the done callback.
+ *		It is possible that the I/O will fail, in which case
+ *		the error will be reported to the done callback and
+ *		propagated to pio from zio_done().
+ */
+int
+dmu_sync(zio_t *pio, uint64_t txg, dmu_sync_cb_t *done, zgd_t *zgd)
+{
+	dmu_buf_impl_t *db = (dmu_buf_impl_t *)zgd->zgd_db;
+	objset_t *os = db->db_objset;
+	dsl_dataset_t *ds = os->os_dsl_dataset;
+	dbuf_dirty_record_t *dr, *dr_next;
+	dmu_sync_arg_t *dsa;
+	zbookmark_phys_t zb;
+	zio_prop_t zp;
+	dnode_t *dn;
+
+	ASSERT(pio != NULL);
+	ASSERT(txg != 0);
+
+	SET_BOOKMARK(&zb, ds->ds_object,
+	    db->db.db_object, db->db_level, db->db_blkid);
+
+	DB_DNODE_ENTER(db);
+	dn = DB_DNODE(db);
+	dmu_write_policy(os, dn, db->db_level, WP_DMU_SYNC, &zp);
+	DB_DNODE_EXIT(db);
+
+	/*
+	 * If we're frozen (running ziltest), we always need to generate a bp.
+	 */
+	if (txg > spa_freeze_txg(os->os_spa))
+		return (dmu_sync_late_arrival(pio, os, done, zgd, &zp, &zb));
+
+	/*
+	 * Grabbing db_mtx now provides a barrier between dbuf_sync_leaf()
+	 * and us.  If we determine that this txg is not yet syncing,
+	 * but it begins to sync a moment later, that's OK because the
+	 * sync thread will block in dbuf_sync_leaf() until we drop db_mtx.
+	 */
+	mutex_enter(&db->db_mtx);
+
+	if (txg <= spa_last_synced_txg(os->os_spa)) {
+		/*
+		 * This txg has already synced.  There's nothing to do.
+		 */
+		mutex_exit(&db->db_mtx);
+		return (SET_ERROR(EEXIST));
+	}
+
+	if (txg <= spa_syncing_txg(os->os_spa)) {
+		/*
+		 * This txg is currently syncing, so we can't mess with
+		 * the dirty record anymore; just write a new log block.
+		 */
+		mutex_exit(&db->db_mtx);
+		return (dmu_sync_late_arrival(pio, os, done, zgd, &zp, &zb));
+	}
+
+	dr = dbuf_find_dirty_eq(db, txg);
+
+	if (dr == NULL) {
+		/*
+		 * There's no dr for this dbuf, so it must have been freed.
+		 * There's no need to log writes to freed blocks, so we're done.
+		 */
+		mutex_exit(&db->db_mtx);
+		return (SET_ERROR(ENOENT));
+	}
+
+	dr_next = list_next(&db->db_dirty_records, dr);
+	ASSERT(dr_next == NULL || dr_next->dr_txg < txg);
+
+	if (db->db_blkptr != NULL) {
+		/*
+		 * We need to fill in zgd_bp with the current blkptr so that
+		 * the nopwrite code can check if we're writing the same
+		 * data that's already on disk.  We can only nopwrite if we
+		 * are sure that after making the copy, db_blkptr will not
+		 * change until our i/o completes.  We ensure this by
+		 * holding the db_mtx, and only allowing nopwrite if the
+		 * block is not already dirty (see below).  This is verified
+		 * by dmu_sync_done(), which VERIFYs that the db_blkptr has
+		 * not changed.
+		 */
+		*zgd->zgd_bp = *db->db_blkptr;
+	}
+
+	/*
+	 * Assume the on-disk data is X, the current syncing data (in
+	 * txg - 1) is Y, and the current in-memory data is Z (currently
+	 * in dmu_sync).
+	 *
+	 * We usually want to perform a nopwrite if X and Z are the
+	 * same.  However, if Y is different (i.e. the BP is going to
+	 * change before this write takes effect), then a nopwrite will
+	 * be incorrect - we would override with X, which could have
+	 * been freed when Y was written.
+	 *
+	 * (Note that this is not a concern when we are nop-writing from
+	 * syncing context, because X and Y must be identical, because
+	 * all previous txgs have been synced.)
+	 *
+	 * Therefore, we disable nopwrite if the current BP could change
+	 * before this TXG.  There are two ways it could change: by
+	 * being dirty (dr_next is non-NULL), or by being freed
+	 * (dnode_block_freed()).  This behavior is verified by
+	 * zio_done(), which VERIFYs that the override BP is identical
+	 * to the on-disk BP.
+	 */
+	DB_DNODE_ENTER(db);
+	dn = DB_DNODE(db);
+	if (dr_next != NULL || dnode_block_freed(dn, db->db_blkid))
+		zp.zp_nopwrite = B_FALSE;
+	DB_DNODE_EXIT(db);
+
+	ASSERT(dr->dr_txg == txg);
+	if (dr->dt.dl.dr_override_state == DR_IN_DMU_SYNC ||
+	    dr->dt.dl.dr_override_state == DR_OVERRIDDEN) {
+		/*
+		 * We have already issued a sync write for this buffer,
+		 * or this buffer has already been synced.  It could not
+		 * have been dirtied since, or we would have cleared the state.
+		 */
+		mutex_exit(&db->db_mtx);
+		return (SET_ERROR(EALREADY));
+	}
+
+	ASSERT(dr->dt.dl.dr_override_state == DR_NOT_OVERRIDDEN);
+	dr->dt.dl.dr_override_state = DR_IN_DMU_SYNC;
+	mutex_exit(&db->db_mtx);
+
+	dsa = kmem_alloc(sizeof (dmu_sync_arg_t), KM_SLEEP);
+	dsa->dsa_dr = dr;
+	dsa->dsa_done = done;
+	dsa->dsa_zgd = zgd;
+	dsa->dsa_tx = NULL;
+
+	zio_nowait(arc_write(pio, os->os_spa, txg,
+	    zgd->zgd_bp, dr->dt.dl.dr_data, DBUF_IS_L2CACHEABLE(db),
+	    &zp, dmu_sync_ready, NULL, NULL, dmu_sync_done, dsa,
+	    ZIO_PRIORITY_SYNC_WRITE, ZIO_FLAG_CANFAIL, &zb));
+
+	return (0);
+}
+
 static void
 dmu_write_impl(dmu_buf_t **dbp, int numbufs, uint64_t offset, uint64_t size,
     const void *buf, dmu_tx_t *tx)
@@ -1471,6 +1824,7 @@ dmu_write_uio_dnode(dnode_t *dn, uio_t *uio, uint64_t size, dmu_tx_t *tx)
 		err = uiomove((char *)db->db_data + bufoff, tocpy,
 		    UIO_WRITE, uio);
 #endif
+
 		if (tocpy == db->db_size)
 			dmu_buf_fill_done(db, tx);
 
@@ -1596,8 +1950,7 @@ dmu_assign_arcbuf_by_dnode(dnode_t *dn, uint64_t offset, arc_buf_t *buf,
 
 		dbuf_rele(db, FTAG);
 		dmu_write(os, object, offset, blksz, buf->b_data, tx);
-		dmu_return_arcbuf(buf);
-		XUIOSTAT_BUMP(xuiostat_wbuf_copied);
+		dmu_return_arcbuf(buf		XUIOSTAT_BUMP(xuiostat_wbuf_copied);
 	}
 
 	return (0);
@@ -1615,359 +1968,6 @@ dmu_assign_arcbuf_by_dbuf(dmu_buf_t *handle, uint64_t offset, arc_buf_t *buf,
 	DB_DNODE_EXIT(dbuf);
 
 	return (err);
-}
-
-typedef struct {
-	dbuf_dirty_record_t	*dsa_dr;
-	dmu_sync_cb_t		*dsa_done;
-	zgd_t			*dsa_zgd;
-	dmu_tx_t		*dsa_tx;
-} dmu_sync_arg_t;
-
-/* ARGSUSED */
-static void
-dmu_sync_ready(zio_t *zio, arc_buf_t *buf, void *varg)
-{
-	dmu_sync_arg_t *dsa = varg;
-	dmu_buf_t *db = dsa->dsa_zgd->zgd_db;
-	blkptr_t *bp = zio->io_bp;
-
-	if (zio->io_error == 0) {
-		if (BP_IS_HOLE(bp)) {
-			/*
-			 * A block of zeros may compress to a hole, but the
-			 * block size still needs to be known for replay.
-			 */
-			BP_SET_LSIZE(bp, db->db_size);
-		} else if (!BP_IS_EMBEDDED(bp)) {
-			ASSERT(BP_GET_LEVEL(bp) == 0);
-			BP_SET_FILL(bp, 1);
-		}
-	}
-}
-
-static void
-dmu_sync_late_arrival_ready(zio_t *zio)
-{
-	dmu_sync_ready(zio, NULL, zio->io_private);
-}
-
-/* ARGSUSED */
-static void
-dmu_sync_done(zio_t *zio, arc_buf_t *buf, void *varg)
-{
-	dmu_sync_arg_t *dsa = varg;
-	dbuf_dirty_record_t *dr = dsa->dsa_dr;
-	dmu_buf_impl_t *db = dr->dr_dbuf;
-	zgd_t *zgd = dsa->dsa_zgd;
-
-	/*
-	 * Record the vdev(s) backing this blkptr so they can be flushed after
-	 * the writes for the lwb have completed.
-	 */
-	if (zio->io_error == 0) {
-		zil_lwb_add_block(zgd->zgd_lwb, zgd->zgd_bp);
-	}
-
-	mutex_enter(&db->db_mtx);
-	ASSERT(dr->dt.dl.dr_override_state == DR_IN_DMU_SYNC);
-	if (zio->io_error == 0) {
-		dr->dt.dl.dr_nopwrite = !!(zio->io_flags & ZIO_FLAG_NOPWRITE);
-		if (dr->dt.dl.dr_nopwrite) {
-			blkptr_t *bp = zio->io_bp;
-			blkptr_t *bp_orig = &zio->io_bp_orig;
-			uint8_t chksum = BP_GET_CHECKSUM(bp_orig);
-
-			ASSERT(BP_EQUAL(bp, bp_orig));
-			VERIFY(BP_EQUAL(bp, db->db_blkptr));
-			ASSERT(zio->io_prop.zp_compress != ZIO_COMPRESS_OFF);
-			VERIFY(zio_checksum_table[chksum].ci_flags &
-			    ZCHECKSUM_FLAG_NOPWRITE);
-		}
-		dr->dt.dl.dr_overridden_by = *zio->io_bp;
-		dr->dt.dl.dr_override_state = DR_OVERRIDDEN;
-		dr->dt.dl.dr_copies = zio->io_prop.zp_copies;
-
-		/*
-		 * Old style holes are filled with all zeros, whereas
-		 * new-style holes maintain their lsize, type, level,
-		 * and birth time (see zio_write_compress). While we
-		 * need to reset the BP_SET_LSIZE() call that happened
-		 * in dmu_sync_ready for old style holes, we do *not*
-		 * want to wipe out the information contained in new
-		 * style holes. Thus, only zero out the block pointer if
-		 * it's an old style hole.
-		 */
-		if (BP_IS_HOLE(&dr->dt.dl.dr_overridden_by) &&
-		    dr->dt.dl.dr_overridden_by.blk_birth == 0)
-			BP_ZERO(&dr->dt.dl.dr_overridden_by);
-	} else {
-		dr->dt.dl.dr_override_state = DR_NOT_OVERRIDDEN;
-	}
-	cv_broadcast(&db->db_changed);
-	mutex_exit(&db->db_mtx);
-
-	dsa->dsa_done(dsa->dsa_zgd, zio->io_error);
-
-	kmem_free(dsa, sizeof (*dsa));
-}
-
-static void
-dmu_sync_late_arrival_done(zio_t *zio)
-{
-	blkptr_t *bp = zio->io_bp;
-	dmu_sync_arg_t *dsa = zio->io_private;
-	zgd_t *zgd = dsa->dsa_zgd;
-
-	if (zio->io_error == 0) {
-		/*
-		 * Record the vdev(s) backing this blkptr so they can be
-		 * flushed after the writes for the lwb have completed.
-		 */
-		zil_lwb_add_block(zgd->zgd_lwb, zgd->zgd_bp);
-
-		if (!BP_IS_HOLE(bp)) {
-			blkptr_t *bp_orig __maybe_unused = &zio->io_bp_orig;
-			ASSERT(!(zio->io_flags & ZIO_FLAG_NOPWRITE));
-			ASSERT(BP_IS_HOLE(bp_orig) || !BP_EQUAL(bp, bp_orig));
-			ASSERT(zio->io_bp->blk_birth == zio->io_txg);
-			ASSERT(zio->io_txg > spa_syncing_txg(zio->io_spa));
-			zio_free(zio->io_spa, zio->io_txg, zio->io_bp);
-		}
-	}
-
-	dmu_tx_commit(dsa->dsa_tx);
-
-	dsa->dsa_done(dsa->dsa_zgd, zio->io_error);
-
-	abd_put(zio->io_abd);
-	kmem_free(dsa, sizeof (*dsa));
-}
-
-static int
-dmu_sync_late_arrival(zio_t *pio, objset_t *os, dmu_sync_cb_t *done, zgd_t *zgd,
-    zio_prop_t *zp, zbookmark_phys_t *zb)
-{
-	dmu_sync_arg_t *dsa;
-	dmu_tx_t *tx;
-
-	tx = dmu_tx_create(os);
-	dmu_tx_hold_space(tx, zgd->zgd_db->db_size);
-	if (dmu_tx_assign(tx, TXG_WAIT) != 0) {
-		dmu_tx_abort(tx);
-		/* Make zl_get_data do txg_waited_synced() */
-		return (SET_ERROR(EIO));
-	}
-
-	/*
-	 * In order to prevent the zgd's lwb from being free'd prior to
-	 * dmu_sync_late_arrival_done() being called, we have to ensure
-	 * the lwb's "max txg" takes this tx's txg into account.
-	 */
-	zil_lwb_add_txg(zgd->zgd_lwb, dmu_tx_get_txg(tx));
-
-	dsa = kmem_alloc(sizeof (dmu_sync_arg_t), KM_SLEEP);
-	dsa->dsa_dr = NULL;
-	dsa->dsa_done = done;
-	dsa->dsa_zgd = zgd;
-	dsa->dsa_tx = tx;
-
-	/*
-	 * Since we are currently syncing this txg, it's nontrivial to
-	 * determine what BP to nopwrite against, so we disable nopwrite.
-	 *
-	 * When syncing, the db_blkptr is initially the BP of the previous
-	 * txg.  We can not nopwrite against it because it will be changed
-	 * (this is similar to the non-late-arrival case where the dbuf is
-	 * dirty in a future txg).
-	 *
-	 * Then dbuf_write_ready() sets bp_blkptr to the location we will write.
-	 * We can not nopwrite against it because although the BP will not
-	 * (typically) be changed, the data has not yet been persisted to this
-	 * location.
-	 *
-	 * Finally, when dbuf_write_done() is called, it is theoretically
-	 * possible to always nopwrite, because the data that was written in
-	 * this txg is the same data that we are trying to write.  However we
-	 * would need to check that this dbuf is not dirty in any future
-	 * txg's (as we do in the normal dmu_sync() path). For simplicity, we
-	 * don't nopwrite in this case.
-	 */
-	zp->zp_nopwrite = B_FALSE;
-
-	zio_nowait(zio_write(pio, os->os_spa, dmu_tx_get_txg(tx), zgd->zgd_bp,
-	    abd_get_from_buf(zgd->zgd_db->db_data, zgd->zgd_db->db_size),
-	    zgd->zgd_db->db_size, zgd->zgd_db->db_size, zp,
-	    dmu_sync_late_arrival_ready, NULL, NULL, dmu_sync_late_arrival_done,
-	    dsa, ZIO_PRIORITY_SYNC_WRITE, ZIO_FLAG_CANFAIL, zb));
-
-	return (0);
-}
-
-/*
- * Intent log support: sync the block associated with db to disk.
- * N.B. and XXX: the caller is responsible for making sure that the
- * data isn't changing while dmu_sync() is writing it.
- *
- * Return values:
- *
- *	EEXIST: this txg has already been synced, so there's nothing to do.
- *		The caller should not log the write.
- *
- *	ENOENT: the block was dbuf_free_range()'d, so there's nothing to do.
- *		The caller should not log the write.
- *
- *	EALREADY: this block is already in the process of being synced.
- *		The caller should track its progress (somehow).
- *
- *	EIO: could not do the I/O.
- *		The caller should do a txg_wait_synced().
- *
- *	0: the I/O has been initiated.
- *		The caller should log this blkptr in the done callback.
- *		It is possible that the I/O will fail, in which case
- *		the error will be reported to the done callback and
- *		propagated to pio from zio_done().
- */
-int
-dmu_sync(zio_t *pio, uint64_t txg, dmu_sync_cb_t *done, zgd_t *zgd)
-{
-	dmu_buf_impl_t *db = (dmu_buf_impl_t *)zgd->zgd_db;
-	objset_t *os = db->db_objset;
-	dsl_dataset_t *ds = os->os_dsl_dataset;
-	dbuf_dirty_record_t *dr, *dr_next;
-	dmu_sync_arg_t *dsa;
-	zbookmark_phys_t zb;
-	zio_prop_t zp;
-	dnode_t *dn;
-
-	ASSERT(pio != NULL);
-	ASSERT(txg != 0);
-
-	SET_BOOKMARK(&zb, ds->ds_object,
-	    db->db.db_object, db->db_level, db->db_blkid);
-
-	DB_DNODE_ENTER(db);
-	dn = DB_DNODE(db);
-	dmu_write_policy(os, dn, db->db_level, WP_DMU_SYNC, &zp);
-	DB_DNODE_EXIT(db);
-
-	/*
-	 * If we're frozen (running ziltest), we always need to generate a bp.
-	 */
-	if (txg > spa_freeze_txg(os->os_spa))
-		return (dmu_sync_late_arrival(pio, os, done, zgd, &zp, &zb));
-
-	/*
-	 * Grabbing db_mtx now provides a barrier between dbuf_sync_leaf()
-	 * and us.  If we determine that this txg is not yet syncing,
-	 * but it begins to sync a moment later, that's OK because the
-	 * sync thread will block in dbuf_sync_leaf() until we drop db_mtx.
-	 */
-	mutex_enter(&db->db_mtx);
-
-	if (txg <= spa_last_synced_txg(os->os_spa)) {
-		/*
-		 * This txg has already synced.  There's nothing to do.
-		 */
-		mutex_exit(&db->db_mtx);
-		return (SET_ERROR(EEXIST));
-	}
-
-	if (txg <= spa_syncing_txg(os->os_spa)) {
-		/*
-		 * This txg is currently syncing, so we can't mess with
-		 * the dirty record anymore; just write a new log block.
-		 */
-		mutex_exit(&db->db_mtx);
-		return (dmu_sync_late_arrival(pio, os, done, zgd, &zp, &zb));
-	}
-
-	dr = dbuf_find_dirty_eq(db, txg);
-
-	if (dr == NULL) {
-		/*
-		 * There's no dr for this dbuf, so it must have been freed.
-		 * There's no need to log writes to freed blocks, so we're done.
-		 */
-		mutex_exit(&db->db_mtx);
-		return (SET_ERROR(ENOENT));
-	}
-
-	dr_next = list_next(&db->db_dirty_records, dr);
-	ASSERT(dr_next == NULL || dr_next->dr_txg < txg);
-
-	if (db->db_blkptr != NULL) {
-		/*
-		 * We need to fill in zgd_bp with the current blkptr so that
-		 * the nopwrite code can check if we're writing the same
-		 * data that's already on disk.  We can only nopwrite if we
-		 * are sure that after making the copy, db_blkptr will not
-		 * change until our i/o completes.  We ensure this by
-		 * holding the db_mtx, and only allowing nopwrite if the
-		 * block is not already dirty (see below).  This is verified
-		 * by dmu_sync_done(), which VERIFYs that the db_blkptr has
-		 * not changed.
-		 */
-		*zgd->zgd_bp = *db->db_blkptr;
-	}
-
-	/*
-	 * Assume the on-disk data is X, the current syncing data (in
-	 * txg - 1) is Y, and the current in-memory data is Z (currently
-	 * in dmu_sync).
-	 *
-	 * We usually want to perform a nopwrite if X and Z are the
-	 * same.  However, if Y is different (i.e. the BP is going to
-	 * change before this write takes effect), then a nopwrite will
-	 * be incorrect - we would override with X, which could have
-	 * been freed when Y was written.
-	 *
-	 * (Note that this is not a concern when we are nop-writing from
-	 * syncing context, because X and Y must be identical, because
-	 * all previous txgs have been synced.)
-	 *
-	 * Therefore, we disable nopwrite if the current BP could change
-	 * before this TXG.  There are two ways it could change: by
-	 * being dirty (dr_next is non-NULL), or by being freed
-	 * (dnode_block_freed()).  This behavior is verified by
-	 * zio_done(), which VERIFYs that the override BP is identical
-	 * to the on-disk BP.
-	 */
-	DB_DNODE_ENTER(db);
-	dn = DB_DNODE(db);
-	if (dr_next != NULL || dnode_block_freed(dn, db->db_blkid))
-		zp.zp_nopwrite = B_FALSE;
-	DB_DNODE_EXIT(db);
-
-	ASSERT(dr->dr_txg == txg);
-	if (dr->dt.dl.dr_override_state == DR_IN_DMU_SYNC ||
-	    dr->dt.dl.dr_override_state == DR_OVERRIDDEN) {
-		/*
-		 * We have already issued a sync write for this buffer,
-		 * or this buffer has already been synced.  It could not
-		 * have been dirtied since, or we would have cleared the state.
-		 */
-		mutex_exit(&db->db_mtx);
-		return (SET_ERROR(EALREADY));
-	}
-
-	ASSERT(dr->dt.dl.dr_override_state == DR_NOT_OVERRIDDEN);
-	dr->dt.dl.dr_override_state = DR_IN_DMU_SYNC;
-	mutex_exit(&db->db_mtx);
-
-	dsa = kmem_alloc(sizeof (dmu_sync_arg_t), KM_SLEEP);
-	dsa->dsa_dr = dr;
-	dsa->dsa_done = done;
-	dsa->dsa_zgd = zgd;
-	dsa->dsa_tx = NULL;
-
-	zio_nowait(arc_write(pio, os->os_spa, txg,
-	    zgd->zgd_bp, dr->dt.dl.dr_data, DBUF_IS_L2CACHEABLE(db),
-	    &zp, dmu_sync_ready, NULL, NULL, dmu_sync_done, dsa,
-	    ZIO_PRIORITY_SYNC_WRITE, ZIO_FLAG_CANFAIL, &zb));
-
-	return (0);
 }
 
 int
