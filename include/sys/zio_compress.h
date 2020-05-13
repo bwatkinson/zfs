@@ -79,6 +79,7 @@ typedef const struct zio_compress_info {
 	zio_compress_func_t		*ci_compress;
 	zio_decompress_func_t		*ci_decompress;
 	zio_compress_abd_func_t		*ci_compress_abd;
+	zio_decompress_abd_func_t	*ci_decompress_abd;
 } zio_compress_info_t;
 
 extern zio_compress_info_t zio_compress_table[ZIO_COMPRESS_FUNCTIONS];
