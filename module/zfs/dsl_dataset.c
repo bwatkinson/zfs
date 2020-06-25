@@ -2424,8 +2424,10 @@ get_receive_resume_stats_impl(dsl_dataset_t *ds)
 		fnvlist_free(token_nv);
 		compressed = kmem_alloc(packed_size, KM_SLEEP);
 
-		compressed_size = gzip_compress(packed, compressed,
+		abd_t *packed_abd = abd_get_from_buf(packed, packed_size);
+		compressed_size = gzip_compress(packed_abd, compressed,
 		    packed_size, packed_size, 6);
+		abd_free(packed_abd);
 
 		zio_cksum_t cksum;
 		fletcher_4_native_varsize(compressed, compressed_size, &cksum);

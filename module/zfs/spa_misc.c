@@ -63,6 +63,7 @@
 #include <sys/zfeature.h>
 #include <sys/qat.h>
 #include <sys/zstd/zstd.h>
+#include <sys/noload.h>
 
 /*
  * SPA locking
@@ -2428,6 +2429,7 @@ spa_init(spa_mode_t mode)
 	l2arc_start();
 	scan_init();
 	qat_init();
+	noload_init();
 	spa_import_progress_init();
 }
 
@@ -2453,6 +2455,7 @@ spa_fini(void)
 	fm_fini();
 	scan_fini();
 	qat_fini();
+	noload_fini();
 	spa_import_progress_destroy();
 
 	avl_destroy(&spa_namespace_avl);

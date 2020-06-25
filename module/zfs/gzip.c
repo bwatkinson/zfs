@@ -30,6 +30,7 @@
 #include <sys/types.h>
 #include <sys/strings.h>
 #include <sys/qat.h>
+#include <sys/noload.h>
 #include <sys/zio_compress.h>
 
 #ifdef _KERNEL
@@ -48,39 +49,69 @@ typedef uLongf zlen_t;
 
 #endif
 
+/*
+ * s_start must be an ABD as we might need to use the ABD directly for
+ * Noload hardware compression.
+ */
 size_t
 gzip_compress(void *s_start, void *d_start, size_t s_len, size_t d_len, int n)
 {
 	int ret;
+	abd_t *s_abd = (abd_t *)s_start;
+	size_t ret_size;
+	void *src = NULL;
 	zlen_t dstlen = d_len;
 
 	ASSERT(d_len <= s_len);
 
 	/* check if hardware accelerator can be used */
-	if (qat_dc_use_accel(s_len)) {
-		ret = qat_compress(QAT_COMPRESS, s_start, s_len, d_start,
+	if (noload_use_accel_compress(s_len)) {
+		ret = noload_compress(s_abd, d_start, s_len, d_len, &dstlen);
+		if (ret != NOLOAD_ERR)
+			return ((size_t)dstlen);
+
+		/*
+		 * If NoLoad hardware compression fails, do it again with
+		 * software.
+		 */
+	} else if (qat_dc_use_accel(s_len)) {
+		src = abd_borrow_buf_copy(s_abd, s_len);
+		ret = qat_compress(QAT_COMPRESS, src, s_len, d_start,
 		    d_len, &dstlen);
 		if (ret == CPA_STATUS_SUCCESS) {
-			return ((size_t)dstlen);
+			ret_size = (size_t)dstlen;
+			goto out;
 		} else if (ret == CPA_STATUS_INCOMPRESSIBLE) {
-			if (d_len != s_len)
-				return (s_len);
+			if (d_len != s_len) {
+				ret_size = s_len;
+				goto out;
+			}
 
-			bcopy(s_start, d_start, s_len);
-			return (s_len);
+			bcopy(src, d_start, s_len);
+			ret_size = s_len;
+			goto out;
 		}
-		/* if hardware compression fails, do it again with software */
+		/*
+		 * If QAT hardware compression fails, do it again with software.
+		 */
 	}
 
-	if (compress_func(d_start, &dstlen, s_start, s_len, n) != Z_OK) {
-		if (d_len != s_len)
-			return (s_len);
+	src = src == NULL ? abd_borrow_buf_copy(s_abd, s_len) : src;
+	if (compress_func(d_start, &dstlen, src, s_len, n) != Z_OK) {
+		if (d_len != s_len) {
+			ret_size = s_len;
+			goto out;
+		}
 
-		bcopy(s_start, d_start, s_len);
-		return (s_len);
+		bcopy(src, d_start, s_len);
+		ret_size = s_len;
+		goto out;
 	}
 
-	return ((size_t)dstlen);
+	ret_size = ((size_t)dstlen);
+out:
+	abd_return_buf(s_abd, src, s_len);
+	return (ret_size);
 }
 
 /*ARGSUSED*/
@@ -91,12 +122,26 @@ gzip_decompress(void *s_start, void *d_start, size_t s_len, size_t d_len, int n)
 
 	ASSERT(d_len >= s_len);
 
-	/* check if hardware accelerator can be used */
-	if (qat_dc_use_accel(d_len)) {
+	/*
+	 * check if hardware accelerator can be used.
+	 */
+	if (noload_use_accel_decompress(s_len)) {
+		if (noload_decompress(s_start, d_start, s_len, d_len) !=
+		    NOLOAD_ERR)
+			return (0);
+		/*
+		 * If NoLoad hardware de-compress failed, do it again with
+		 * software.
+		 */
+
+	} else if (qat_dc_use_accel(d_len)) {
 		if (qat_compress(QAT_DECOMPRESS, s_start, s_len,
 		    d_start, d_len, &dstlen) == CPA_STATUS_SUCCESS)
 			return (0);
-		/* if hardware de-compress fail, do it again with software */
+		/*
+		 * If QAT hardware de-compress failed, do it again with
+		 * software.
+		 */
 	}
 
 	if (uncompress_func(d_start, &dstlen, s_start, s_len) != Z_OK)
