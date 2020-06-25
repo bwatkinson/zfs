@@ -122,6 +122,16 @@ zio_compress_zeroed_cb(void *data, size_t len, void *private)
 	return (0);
 }
 
+/*ARGSUSED*/
+static boolean_t
+zio_is_gzip_compress(enum zio_compress c)
+{
+	boolean_t is_gzip = B_FALSE;
+	if (c >= ZIO_COMPRESS_GZIP_1 && c <= ZIO_COMPRESS_GZIP_9)
+		is_gzip = B_TRUE;
+	return (is_gzip);
+}
+
 size_t
 zio_compress_data(enum zio_compress c, abd_t *src, void *dst, size_t s_len,
     uint8_t level)
@@ -161,10 +171,19 @@ zio_compress_data(enum zio_compress c, abd_t *src, void *dst, size_t s_len,
 		ASSERT3U(complevel, !=, ZIO_COMPLEVEL_INHERIT);
 	}
 
-	/* No compression algorithms can read from ABDs directly */
-	void *tmp = abd_borrow_buf_copy(src, s_len);
-	c_len = ci->ci_compress(tmp, dst, s_len, d_len, complevel);
-	abd_return_buf(src, tmp, s_len);
+	/*
+	 * If the compression algorithm is GZip we will pass the ABD's directly
+	 * in the event hardware compression offload is enabled. The function
+	 * gzip_compress is responsible for converting the ABD into a buffer as
+	 * no compression algorithms can read from ABDs directly.
+	 */
+	if (zio_is_gzip_compress(c)) {
+		c_len = ci->ci_compress(src, dst, s_len, d_len, complevel);
+	} else {
+		void *tmp = abd_borrow_buf_copy(src, s_len);
+		c_len = ci->ci_compress(tmp, dst, s_len, d_len, complevel);
+		abd_return_buf(src, tmp, s_len);
+	}
 
 	if (c_len > d_len)
 		return (s_len);

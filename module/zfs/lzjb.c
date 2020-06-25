@@ -63,7 +63,7 @@ lzjb_compress(void *s_start, void *d_start, size_t s_len, size_t d_len, int n)
 		if ((copymask <<= 1) == (1 << NBBY)) {
 			if (dst >= (uchar_t *)d_start + d_len - 1 - 2 * NBBY) {
 				kmem_free(lempel,
-				    LEMPEL_SIZE*sizeof (uint16_t));
+				    LEMPEL_SIZE * sizeof (uint16_t));
 				return (s_len);
 			}
 			copymask = 1;

@@ -61,6 +61,7 @@ zle_compress(void *s_start, void *d_start, size_t s_len, size_t d_len, int n)
 			*len = src - first - 1;
 		}
 	}
+
 	return (src == s_end ? dst - (uchar_t *)d_start : s_len);
 }
 
