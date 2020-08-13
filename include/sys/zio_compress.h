@@ -167,6 +167,7 @@ extern size_t lzjb_compress(void *src, void *dst, size_t s_len, size_t d_len,
     int level);
 extern int lzjb_decompress(void *src, void *dst, size_t s_len, size_t d_len,
     int level);
+/* the src parameter passed to gzip_compress must be an ABD */
 extern size_t gzip_compress(void *src, void *dst, size_t s_len, size_t d_len,
     int level);
 extern int gzip_decompress(void *src, void *dst, size_t s_len, size_t d_len,
