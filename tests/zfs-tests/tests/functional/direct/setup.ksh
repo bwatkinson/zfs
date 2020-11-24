@@ -21,7 +21,7 @@
 #
 
 #
-# Copyright (c) 2018 by Lawrence Livermore National Security, LLC.
+# Copyright (c) 2021 by Lawrence Livermore National Security, LLC.
 #
 
 . $STF_SUITE/include/libtest.shlib

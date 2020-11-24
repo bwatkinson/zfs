@@ -31,12 +31,16 @@
 
 static dataset_kstat_values_t empty_dataset_kstats = {
 	{ "dataset_name",	KSTAT_DATA_STRING },
-	{ "writes",	KSTAT_DATA_UINT64 },
-	{ "nwritten",	KSTAT_DATA_UINT64 },
-	{ "reads",	KSTAT_DATA_UINT64 },
-	{ "nread",	KSTAT_DATA_UINT64 },
-	{ "nunlinks",	KSTAT_DATA_UINT64 },
-	{ "nunlinked",	KSTAT_DATA_UINT64 },
+	{ "writes",		KSTAT_DATA_UINT64 },
+	{ "nwritten",		KSTAT_DATA_UINT64 },
+	{ "reads",		KSTAT_DATA_UINT64 },
+	{ "nread",		KSTAT_DATA_UINT64 },
+	{ "direct-writes",	KSTAT_DATA_UINT64 },
+	{ "direct-nwritten",	KSTAT_DATA_UINT64 },
+	{ "direct-reads",	KSTAT_DATA_UINT64 },
+	{ "direct-nread",	KSTAT_DATA_UINT64 },
+	{ "nunlinks",		KSTAT_DATA_UINT64 },
+	{ "nunlinked",		KSTAT_DATA_UINT64 },
 };
 
 static int
@@ -57,6 +61,14 @@ dataset_kstats_update(kstat_t *ksp, int rw)
 	    aggsum_value(&dk->dk_aggsums.das_reads);
 	dkv->dkv_nread.value.ui64 =
 	    aggsum_value(&dk->dk_aggsums.das_nread);
+	dkv->dkv_direct_writes.value.ui64 =
+	    aggsum_value(&dk->dk_aggsums.das_direct_writes);
+	dkv->dkv_direct_nwritten.value.ui64 =
+	    aggsum_value(&dk->dk_aggsums.das_direct_nwritten);
+	dkv->dkv_direct_reads.value.ui64 =
+	    aggsum_value(&dk->dk_aggsums.das_direct_reads);
+	dkv->dkv_direct_nread.value.ui64 =
+	    aggsum_value(&dk->dk_aggsums.das_direct_nread);
 	dkv->dkv_nunlinks.value.ui64 =
 	    aggsum_value(&dk->dk_aggsums.das_nunlinks);
 	dkv->dkv_nunlinked.value.ui64 =
@@ -144,6 +156,10 @@ dataset_kstats_create(dataset_kstats_t *dk, objset_t *objset)
 	aggsum_init(&dk->dk_aggsums.das_nwritten, 0);
 	aggsum_init(&dk->dk_aggsums.das_reads, 0);
 	aggsum_init(&dk->dk_aggsums.das_nread, 0);
+	aggsum_init(&dk->dk_aggsums.das_direct_writes, 0);
+	aggsum_init(&dk->dk_aggsums.das_direct_nwritten, 0);
+	aggsum_init(&dk->dk_aggsums.das_direct_reads, 0);
+	aggsum_init(&dk->dk_aggsums.das_direct_nread, 0);
 	aggsum_init(&dk->dk_aggsums.das_nunlinks, 0);
 	aggsum_init(&dk->dk_aggsums.das_nunlinked, 0);
 }
@@ -166,13 +182,16 @@ dataset_kstats_destroy(dataset_kstats_t *dk)
 	aggsum_fini(&dk->dk_aggsums.das_nwritten);
 	aggsum_fini(&dk->dk_aggsums.das_reads);
 	aggsum_fini(&dk->dk_aggsums.das_nread);
+	aggsum_fini(&dk->dk_aggsums.das_direct_writes);
+	aggsum_fini(&dk->dk_aggsums.das_direct_nwritten);
+	aggsum_fini(&dk->dk_aggsums.das_direct_reads);
+	aggsum_fini(&dk->dk_aggsums.das_direct_nread);
 	aggsum_fini(&dk->dk_aggsums.das_nunlinks);
 	aggsum_fini(&dk->dk_aggsums.das_nunlinked);
 }
 
 void
-dataset_kstats_update_write_kstats(dataset_kstats_t *dk,
-    int64_t nwritten)
+dataset_kstats_update_write_kstats(dataset_kstats_t *dk, int64_t nwritten)
 {
 	ASSERT3S(nwritten, >=, 0);
 
@@ -184,8 +203,7 @@ dataset_kstats_update_write_kstats(dataset_kstats_t *dk,
 }
 
 void
-dataset_kstats_update_read_kstats(dataset_kstats_t *dk,
-    int64_t nread)
+dataset_kstats_update_read_kstats(dataset_kstats_t *dk, int64_t nread)
 {
 	ASSERT3S(nread, >=, 0);
 
@@ -194,6 +212,31 @@ dataset_kstats_update_read_kstats(dataset_kstats_t *dk,
 
 	aggsum_add(&dk->dk_aggsums.das_reads, 1);
 	aggsum_add(&dk->dk_aggsums.das_nread, nread);
+}
+
+void
+dataset_kstats_update_direct_write_kstats(dataset_kstats_t *dk,
+    int64_t nwritten)
+{
+	ASSERT3S(nwritten, >=, 0);
+
+	if (dk->dk_kstats == NULL)
+		return;
+
+	aggsum_add(&dk->dk_aggsums.das_direct_writes, 1);
+	aggsum_add(&dk->dk_aggsums.das_direct_nwritten, nwritten);
+}
+
+void
+dataset_kstats_update_direct_read_kstats(dataset_kstats_t *dk, int64_t nread)
+{
+	ASSERT3S(nread, >=, 0);
+
+	if (dk->dk_kstats == NULL)
+		return;
+
+	aggsum_add(&dk->dk_aggsums.das_direct_reads, 1);
+	aggsum_add(&dk->dk_aggsums.das_direct_nread, nread);
 }
 
 void

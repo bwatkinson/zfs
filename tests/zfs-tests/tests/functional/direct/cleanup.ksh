@@ -21,11 +21,11 @@
 #
 
 #
-# Copyright (c) 2018 by Lawrence Livermore National Security, LLC.
+# Copyright (c) 2021 by Lawrence Livermore National Security, LLC.
 #
 
 . $STF_SUITE/include/libtest.shlib
+
 verify_runnable "global"
 
-default_raidz_setup "$DISKS"
-log_must zfs set compression=on $TESTPOOL/$TESTFS
+default_cleanup

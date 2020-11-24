@@ -1,0 +1,160 @@
+#
+# CDDL HEADER START
+#
+# This file and its contents are supplied under the terms of the
+# Common Development and Distribution License ("CDDL"), version 1.0.
+# You may only use this file in accordance with the terms of version
+# 1.0 of the CDDL.
+#
+# A full copy of the text of the CDDL should have accompanied this
+# source.  A copy of the CDDL is also available via the Internet at
+# http://www.illumos.org/license/CDDL.
+#
+# CDDL HEADER END
+#
+
+#
+# Copyright (c) 2021 by Lawrence Livermore National Security, LLC.
+#
+
+. $STF_SUITE/include/libtest.shlib
+. $STF_SUITE/tests/functional/direct/dio.cfg
+
+function dio_cleanup
+{
+	if poolexists $TESTPOOL1; then
+		destroy_pool $TESTPOOL1
+	fi
+
+	rm -f $DIO_VDEVS
+}
+
+function dio_and_verify # mode file-size block-size directory extra-args
+{
+	typeset mode=$1
+	typeset size=$2
+	typeset bs=$3
+	typeset mntpnt=$4
+	typeset extra_args=$5
+
+	# Invoke an fio workload via direct IO.
+	log_must fio --directory=$mntpnt --name=direct-$mode \
+	    --rw=$mode --size=$size --bs=$bs --direct=1 --numjobs=1 \
+	    --verify=sha1 --ioengine=sync --fallocate=none \
+	    --group_reporting --minimal $extra_args
+
+	# Verify the files written using buffered IO.
+	log_must fio --directory=$mntpnt --name=direct-verify \
+	    --rw=read --size=$size --bs=$bs --direct=0 --numjobs=1 \
+	    --verify_only --group_reporting --minimal
+
+	log_must rm -f "$mntpnt/direct-*"
+}
+
+function get_objset_id # fs
+{
+	typeset fs=$1
+
+	output=$(zdb -d $fs)
+	objset_id=$(echo $output |
+	    awk '{split($0,array,",")} END{print array[2]}' |
+	    awk '{split($0,array," ")} END{print array[2]}')
+	printf "0x%x" $objset_id
+}
+
+function get_objset_stat # pool objset stat
+{
+	typeset pool=$1
+	typeset objset=$2
+	typeset stat=$3
+
+	objset_file=/proc/spl/kstat/zfs/$pool/objset-$objset
+	val=$(grep -m1 "$stat" $objset_file | awk '{ print $3 }')
+	if [[ -z "$val" ]]; then
+		log_fail "Unable to read $stat counter"
+	fi
+
+	echo "$val"
+}
+
+function check_write # pool objset file bs count seek flag buf_wr dio_wr
+{
+	typeset pool=$1
+	typeset objset=$2
+	typeset file=$3
+	typeset bs=$4
+	typeset count=$5
+	typeset seek=$6
+	typeset flag=$7
+	typeset buf_wr_expect=$8
+	typeset dio_wr_expect=$9
+
+	if [[ -n "$flag" ]]; then
+		typeset flag_arg="oflag=$flag"
+	fi
+
+	log_note "Checking $count * $bs write(s) at offset $seek, $flag_arg"
+
+	prev_buf_wr=$(get_objset_stat $pool $objset writes)
+	prev_dio_wr=$(get_objset_stat $pool $objset direct-writes)
+
+	log_must dd if=/dev/urandom of=$file bs=$bs count=$count \
+	    seek=$seek conv=notrunc $flag_arg
+
+	curr_buf_wr=$(get_objset_stat $pool $objset writes)
+	buf_wr_actual=$((curr_buf_wr - prev_buf_wr))
+
+	curr_dio_wr=$(get_objset_stat $pool $objset direct-writes)
+	dio_wr_actual=$((curr_dio_wr - prev_dio_wr))
+
+	if [[ $buf_wr_actual -ne $buf_wr_expect ]]; then
+		cat /proc/spl/kstat/zfs/$pool/objset-$objset
+		log_fail "Buffered writes $buf_wr_actual of $buf_wr_expect"
+	fi
+
+	if [[ $dio_wr_actual -ne $dio_wr_expect ]]; then
+		cat /proc/spl/kstat/zfs/$pool/objset-$objset
+		log_fail "Direct writes $dio_wr_actual of $dio_wr_expect"
+	fi
+}
+
+function check_read # pool objset file bs count seek flag buf_rd dio_rd
+{
+	typeset pool=$1
+	typeset objset=$2
+	typeset file=$3
+	typeset bs=$4
+	typeset count=$5
+	typeset seek=$6
+	typeset flag=$7
+	typeset buf_rd_expect=$8
+	typeset dio_rd_expect=$9
+
+	if [[ -n "$flag" ]]; then
+		typeset flag_arg="iflag=$flag"
+	fi
+
+	log_note "Checking $count * $bs read(s) at offset $seek, $flag_arg"
+
+	prev_buf_rd=$(get_objset_stat $pool $objset reads)
+	prev_dio_rd=$(get_objset_stat $pool $objset direct-reads)
+
+	log_must dd if=$file of=/dev/null bs=$bs count=$count \
+	    skip=$seek $flag_arg
+
+	curr_buf_rd=$(get_objset_stat $pool $objset reads)
+	buf_rd_actual=$((curr_buf_rd - prev_buf_rd))
+
+	curr_dio_rd=$(get_objset_stat $pool $objset direct-reads)
+	dio_rd_actual=$((curr_dio_rd - prev_dio_rd))
+
+	if [[ $buf_rd_actual -ne $buf_rd_expect ]]; then
+		cat /proc/spl/kstat/zfs/$pool/objset-$objset
+		log_fail "Buffered reads $buf_rd_actual of $buf_rd_expect"
+	fi
+
+	if [[ $dio_rd_actual -ne $dio_rd_expect ]]; then
+		cat /proc/spl/kstat/zfs/$pool/objset-$objset
+		log_fail "Direct reads $dio_rd_actual of $dio_rd_expect"
+	fi
+}

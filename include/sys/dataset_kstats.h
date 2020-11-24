@@ -36,6 +36,10 @@ typedef struct dataset_aggsum_stats_t {
 	aggsum_t das_nwritten;
 	aggsum_t das_reads;
 	aggsum_t das_nread;
+	aggsum_t das_direct_writes;
+	aggsum_t das_direct_nwritten;
+	aggsum_t das_direct_reads;
+	aggsum_t das_direct_nread;
 	aggsum_t das_nunlinks;
 	aggsum_t das_nunlinked;
 } dataset_aggsum_stats_t;
@@ -46,6 +50,10 @@ typedef struct dataset_kstat_values {
 	kstat_named_t dkv_nwritten;
 	kstat_named_t dkv_reads;
 	kstat_named_t dkv_nread;
+	kstat_named_t dkv_direct_writes;
+	kstat_named_t dkv_direct_nwritten;
+	kstat_named_t dkv_direct_reads;
+	kstat_named_t dkv_direct_nread;
 	/*
 	 * nunlinks is initialized to the unlinked set size on mount and
 	 * is incremented whenever a new entry is added to the unlinked set
@@ -68,6 +76,9 @@ void dataset_kstats_destroy(dataset_kstats_t *);
 
 void dataset_kstats_update_write_kstats(dataset_kstats_t *, int64_t);
 void dataset_kstats_update_read_kstats(dataset_kstats_t *, int64_t);
+
+void dataset_kstats_update_direct_write_kstats(dataset_kstats_t *, int64_t);
+void dataset_kstats_update_direct_read_kstats(dataset_kstats_t *, int64_t);
 
 void dataset_kstats_update_nunlinks_kstat(dataset_kstats_t *, int64_t);
 void dataset_kstats_update_nunlinked_kstat(dataset_kstats_t *, int64_t);
