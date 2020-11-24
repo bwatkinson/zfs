@@ -63,6 +63,7 @@ KERNEL_C = \
 	ddt.c \
 	ddt_zap.c \
 	dmu.c \
+	dmu_direct.c \
 	dmu_diff.c \
 	dmu_object.c \
 	dmu_objset.c \

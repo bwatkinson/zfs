@@ -2,6 +2,7 @@
   <elf-needed>
     <dependency name='libzfs_core.so.3'/>
     <dependency name='libnvpair.so.3'/>
+    <dependency name='libtirpc.so.3'/>
     <dependency name='libuuid.so.1'/>
     <dependency name='librt.so.1'/>
     <dependency name='libblkid.so.1'/>
@@ -3171,6 +3172,61 @@
         <var-decl name='zpool_start_block' type-id='804dc465' visibility='default'/>
       </data-member>
     </class-decl>
+    <union-decl name='pthread_mutex_t' size-in-bits='320' naming-typedef-id='7a6844eb' visibility='default' id='70681f9b'>
+      <data-member access='public'>
+        <var-decl name='__data' type-id='4c734837' visibility='default'/>
+      </data-member>
+      <data-member access='public'>
+        <var-decl name='__size' type-id='36c46961' visibility='default'/>
+      </data-member>
+      <data-member access='public'>
+        <var-decl name='__align' type-id='bd54fe1a' visibility='default'/>
+      </data-member>
+    </union-decl>
+    <typedef-decl name='pthread_mutex_t' type-id='70681f9b' id='7a6844eb'/>
+    <typedef-decl name='int32_t' type-id='33f57a65' id='3ff5601b'/>
+    <typedef-decl name='uint8_t' type-id='c51d6389' id='b96825af'/>
+    <typedef-decl name='uint32_t' type-id='62f1140c' id='8f92235e'/>
+    <typedef-decl name='uint64_t' type-id='8910171f' id='9c313c2d'/>
+    <class-decl name='__pthread_internal_list' size-in-bits='128' is-struct='yes' visibility='default' id='0e01899c'>
+      <data-member access='public' layout-offset-in-bits='0'>
+        <var-decl name='__prev' type-id='4d98cd5a' visibility='default'/>
+      </data-member>
+      <data-member access='public' layout-offset-in-bits='64'>
+        <var-decl name='__next' type-id='4d98cd5a' visibility='default'/>
+      </data-member>
+    </class-decl>
+    <typedef-decl name='__pthread_list_t' type-id='0e01899c' id='518fb49c'/>
+    <class-decl name='__pthread_mutex_s' size-in-bits='320' is-struct='yes' visibility='default' id='4c734837'>
+      <data-member access='public' layout-offset-in-bits='0'>
+        <var-decl name='__lock' type-id='95e97e5e' visibility='default'/>
+      </data-member>
+      <data-member access='public' layout-offset-in-bits='32'>
+        <var-decl name='__count' type-id='f0981eeb' visibility='default'/>
+      </data-member>
+      <data-member access='public' layout-offset-in-bits='64'>
+        <var-decl name='__owner' type-id='95e97e5e' visibility='default'/>
+      </data-member>
+      <data-member access='public' layout-offset-in-bits='96'>
+        <var-decl name='__nusers' type-id='f0981eeb' visibility='default'/>
+      </data-member>
+      <data-member access='public' layout-offset-in-bits='128'>
+        <var-decl name='__kind' type-id='95e97e5e' visibility='default'/>
+      </data-member>
+      <data-member access='public' layout-offset-in-bits='160'>
+        <var-decl name='__spins' type-id='a2185560' visibility='default'/>
+      </data-member>
+      <data-member access='public' layout-offset-in-bits='176'>
+        <var-decl name='__elision' type-id='a2185560' visibility='default'/>
+      </data-member>
+      <data-member access='public' layout-offset-in-bits='192'>
+        <var-decl name='__list' type-id='518fb49c' visibility='default'/>
+      </data-member>
+    </class-decl>
+    <typedef-decl name='__uint8_t' type-id='002ac4a6' id='c51d6389'/>
+    <typedef-decl name='__int32_t' type-id='95e97e5e' id='33f57a65'/>
+    <typedef-decl name='__uint32_t' type-id='f0981eeb' id='62f1140c'/>
+    <typedef-decl name='__uint64_t' type-id='7359adad' id='8910171f'/>
     <typedef-decl name='__re_long_size_t' type-id='7359adad' id='ba516949'/>
     <typedef-decl name='reg_syntax_t' type-id='7359adad' id='1b72c3b3'/>
     <class-decl name='re_pattern_buffer' size-in-bits='512' is-struct='yes' visibility='default' id='19fc9a8c'>
@@ -3219,61 +3275,6 @@
     </class-decl>
     <typedef-decl name='regex_t' type-id='19fc9a8c' id='aca3bac8'/>
     <typedef-decl name='uintptr_t' type-id='7359adad' id='e475ab95'/>
-    <union-decl name='pthread_mutex_t' size-in-bits='320' naming-typedef-id='7a6844eb' visibility='default' id='70681f9b'>
-      <data-member access='public'>
-        <var-decl name='__data' type-id='4c734837' visibility='default'/>
-      </data-member>
-      <data-member access='public'>
-        <var-decl name='__size' type-id='36c46961' visibility='default'/>
-      </data-member>
-      <data-member access='public'>
-        <var-decl name='__align' type-id='bd54fe1a' visibility='default'/>
-      </data-member>
-    </union-decl>
-    <typedef-decl name='pthread_mutex_t' type-id='70681f9b' id='7a6844eb'/>
-    <typedef-decl name='int32_t' type-id='33f57a65' id='3ff5601b'/>
-    <typedef-decl name='uint8_t' type-id='c51d6389' id='b96825af'/>
-    <typedef-decl name='uint32_t' type-id='62f1140c' id='8f92235e'/>
-    <typedef-decl name='uint64_t' type-id='8910171f' id='9c313c2d'/>
-    <class-decl name='__pthread_mutex_s' size-in-bits='320' is-struct='yes' visibility='default' id='4c734837'>
-      <data-member access='public' layout-offset-in-bits='0'>
-        <var-decl name='__lock' type-id='95e97e5e' visibility='default'/>
-      </data-member>
-      <data-member access='public' layout-offset-in-bits='32'>
-        <var-decl name='__count' type-id='f0981eeb' visibility='default'/>
-      </data-member>
-      <data-member access='public' layout-offset-in-bits='64'>
-        <var-decl name='__owner' type-id='95e97e5e' visibility='default'/>
-      </data-member>
-      <data-member access='public' layout-offset-in-bits='96'>
-        <var-decl name='__nusers' type-id='f0981eeb' visibility='default'/>
-      </data-member>
-      <data-member access='public' layout-offset-in-bits='128'>
-        <var-decl name='__kind' type-id='95e97e5e' visibility='default'/>
-      </data-member>
-      <data-member access='public' layout-offset-in-bits='160'>
-        <var-decl name='__spins' type-id='a2185560' visibility='default'/>
-      </data-member>
-      <data-member access='public' layout-offset-in-bits='176'>
-        <var-decl name='__elision' type-id='a2185560' visibility='default'/>
-      </data-member>
-      <data-member access='public' layout-offset-in-bits='192'>
-        <var-decl name='__list' type-id='518fb49c' visibility='default'/>
-      </data-member>
-    </class-decl>
-    <class-decl name='__pthread_internal_list' size-in-bits='128' is-struct='yes' visibility='default' id='0e01899c'>
-      <data-member access='public' layout-offset-in-bits='0'>
-        <var-decl name='__prev' type-id='4d98cd5a' visibility='default'/>
-      </data-member>
-      <data-member access='public' layout-offset-in-bits='64'>
-        <var-decl name='__next' type-id='4d98cd5a' visibility='default'/>
-      </data-member>
-    </class-decl>
-    <typedef-decl name='__pthread_list_t' type-id='0e01899c' id='518fb49c'/>
-    <typedef-decl name='__uint8_t' type-id='002ac4a6' id='c51d6389'/>
-    <typedef-decl name='__int32_t' type-id='95e97e5e' id='33f57a65'/>
-    <typedef-decl name='__uint32_t' type-id='f0981eeb' id='62f1140c'/>
-    <typedef-decl name='__uint64_t' type-id='7359adad' id='8910171f'/>
     <typedef-decl name='size_t' type-id='7359adad' id='b59d7dce'/>
     <pointer-type-def type-id='0e01899c' size-in-bits='64' id='4d98cd5a'/>
     <pointer-type-def type-id='428b67b3' size-in-bits='64' id='bf311473'/>
@@ -3525,7 +3526,8 @@
       <enumerator name='ZFS_PROP_IVSET_GUID' value='92'/>
       <enumerator name='ZFS_PROP_REDACTED' value='93'/>
       <enumerator name='ZFS_PROP_REDACT_SNAPS' value='94'/>
-      <enumerator name='ZFS_NUM_PROPS' value='95'/>
+      <enumerator name='ZFS_PROP_DIRECT' value='95'/>
+      <enumerator name='ZFS_NUM_PROPS' value='96'/>
     </enum-decl>
     <typedef-decl name='zfs_prop_t' type-id='4b000d60' id='58603c44'/>
     <enum-decl name='zfs_userquota_prop_t' naming-typedef-id='279fde6a' id='5258d2f6'>
@@ -4178,6 +4180,10 @@
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='zfs_share_smb' mangled-name='zfs_share_smb' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='zfs_share_smb'>
+      <parameter type-id='9200a744' name='zhp'/>
+      <return type-id='95e97e5e'/>
+    </function-decl>
+    <function-decl name='zfs_shareall' mangled-name='zfs_shareall' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='zfs_shareall'>
       <parameter type-id='9200a744' name='zhp'/>
       <return type-id='95e97e5e'/>
     </function-decl>
@@ -5661,8 +5667,8 @@
     </function-decl>
   </abi-instr>
   <abi-instr address-size='64' path='zutil_device_path.c' language='LANG_C99'>
-    <typedef-decl name='ssize_t' type-id='41060289' id='79a0948f'/>
     <typedef-decl name='__ssize_t' type-id='bd54fe1a' id='41060289'/>
+    <typedef-decl name='ssize_t' type-id='41060289' id='79a0948f'/>
     <function-decl name='zfs_basename' mangled-name='zfs_basename' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='zfs_basename'>
       <parameter type-id='80f4b756' name='path'/>
       <return type-id='80f4b756'/>

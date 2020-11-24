@@ -81,6 +81,12 @@ typedef struct dbuf_stats {
 	kstat_named_t cache_levels[DN_MAX_LEVELS];
 	kstat_named_t cache_levels_bytes[DN_MAX_LEVELS];
 	/*
+	 * Statistics for Direct IO.
+	 */
+	kstat_named_t direct_sync_wait;
+	kstat_named_t direct_undirty_wait;
+	kstat_named_t direct_undirty;
+	/*
 	 * Statistics about the dbuf hash table.
 	 */
 	kstat_named_t hash_hits;
@@ -123,6 +129,9 @@ dbuf_stats_t dbuf_stats = {
 	{ "cache_total_evicts",			KSTAT_DATA_UINT64 },
 	{ { "cache_levels_N",			KSTAT_DATA_UINT64 } },
 	{ { "cache_levels_bytes_N",		KSTAT_DATA_UINT64 } },
+	{ "direct_sync_wait",			KSTAT_DATA_UINT64 },
+	{ "direct_undirty_wait",		KSTAT_DATA_UINT64 },
+	{ "direct_undirty",			KSTAT_DATA_UINT64 },
 	{ "hash_hits",				KSTAT_DATA_UINT64 },
 	{ "hash_misses",			KSTAT_DATA_UINT64 },
 	{ "hash_collisions",			KSTAT_DATA_UINT64 },
@@ -142,6 +151,9 @@ struct {
 	wmsum_t cache_total_evicts;
 	wmsum_t cache_levels[DN_MAX_LEVELS];
 	wmsum_t cache_levels_bytes[DN_MAX_LEVELS];
+	wmsum_t direct_sync_wait;
+	wmsum_t direct_undirty_wait;
+	wmsum_t direct_undirty;
 	wmsum_t hash_hits;
 	wmsum_t hash_misses;
 	wmsum_t hash_collisions;
@@ -166,7 +178,8 @@ struct {
 		continue;						\
 }
 
-static boolean_t dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx);
+static boolean_t dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx,
+    dbuf_dirty_record_t *dr);
 static void dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx);
 static void dbuf_sync_leaf_verify_bonus_dnode(dbuf_dirty_record_t *dr);
 static int dbuf_read_verify_dnode_crypt(dmu_buf_impl_t *db, uint32_t flags);
@@ -857,6 +870,12 @@ dbuf_kstat_update(kstat_t *ksp, int rw)
 		ds->cache_levels_bytes[i].value.ui64 =
 		    wmsum_value(&dbuf_sums.cache_levels_bytes[i]);
 	}
+	ds->direct_sync_wait.value.ui64 =
+	    wmsum_value(&dbuf_sums.direct_sync_wait);
+	ds->direct_undirty_wait.value.ui64 =
+	    wmsum_value(&dbuf_sums.direct_undirty_wait);
+	ds->direct_undirty.value.ui64 =
+	    wmsum_value(&dbuf_sums.direct_undirty);
 	ds->hash_hits.value.ui64 =
 	    wmsum_value(&dbuf_sums.hash_hits);
 	ds->hash_misses.value.ui64 =
@@ -945,6 +964,9 @@ retry:
 		wmsum_init(&dbuf_sums.cache_levels[i], 0);
 		wmsum_init(&dbuf_sums.cache_levels_bytes[i], 0);
 	}
+	wmsum_init(&dbuf_sums.direct_sync_wait, 0);
+	wmsum_init(&dbuf_sums.direct_undirty_wait, 0);
+	wmsum_init(&dbuf_sums.direct_undirty, 0);
 	wmsum_init(&dbuf_sums.hash_hits, 0);
 	wmsum_init(&dbuf_sums.hash_misses, 0);
 	wmsum_init(&dbuf_sums.hash_collisions, 0);
@@ -1022,6 +1044,9 @@ dbuf_fini(void)
 		wmsum_fini(&dbuf_sums.cache_levels[i]);
 		wmsum_fini(&dbuf_sums.cache_levels_bytes[i]);
 	}
+	wmsum_fini(&dbuf_sums.direct_sync_wait);
+	wmsum_fini(&dbuf_sums.direct_undirty_wait);
+	wmsum_fini(&dbuf_sums.direct_undirty);
 	wmsum_fini(&dbuf_sums.hash_hits);
 	wmsum_fini(&dbuf_sums.hash_misses);
 	wmsum_fini(&dbuf_sums.hash_collisions);
@@ -1192,8 +1217,9 @@ dbuf_clear_data(dmu_buf_impl_t *db)
 {
 	ASSERT(MUTEX_HELD(&db->db_mtx));
 	dbuf_evict_user(db);
-	ASSERT3P(db->db_buf, ==, NULL);
-	db->db.db_data = NULL;
+	/* Direct IO writes may have data */
+	if (db->db_buf == NULL)
+		db->db.db_data = NULL;
 	if (db->db_state != DB_NOFILL) {
 		db->db_state = DB_UNCACHED;
 		DTRACE_SET_STATE(db, "clear data");
@@ -1205,8 +1231,21 @@ dbuf_set_data(dmu_buf_impl_t *db, arc_buf_t *buf)
 {
 	ASSERT(MUTEX_HELD(&db->db_mtx));
 	ASSERT(buf != NULL);
+	dbuf_dirty_record_t *dr_dio = NULL;
 
 	db->db_buf = buf;
+	dr_dio = dbuf_get_dirty_direct(db);
+
+	/*
+	 * If there is a Direct IO, set its data too. Then its state
+	 * will be the same as if we did a ZIL dmu_sync().
+	 */
+	if (dr_dio != NULL && db->db_level == 0 &&
+	    dr_dio->dt.dl.dr_override_state == DR_OVERRIDDEN &&
+	    dr_dio->dt.dl.dr_data == NULL) {
+		dr_dio->dt.dl.dr_data = db->db_buf;
+	}
+
 	ASSERT(buf->b_data != NULL);
 	db->db.db_data = buf->b_data;
 }
@@ -1339,6 +1378,7 @@ dbuf_read_done(zio_t *zio, const zbookmark_phys_t *zb, const blkptr_t *bp,
 
 	mutex_enter(&db->db_mtx);
 	ASSERT3U(db->db_state, ==, DB_READ);
+
 	/*
 	 * All reads are synchronous, so we must have a hold on the dbuf
 	 */
@@ -1428,11 +1468,11 @@ dbuf_handle_indirect_hole(dmu_buf_impl_t *db, dnode_t *dn)
  * was taken, ENOENT if no action was taken.
  */
 static int
-dbuf_read_hole(dmu_buf_impl_t *db, dnode_t *dn)
+dbuf_read_hole(dmu_buf_impl_t *db, dnode_t *dn, blkptr_t *bp)
 {
 	ASSERT(MUTEX_HELD(&db->db_mtx));
 
-	int is_hole = db->db_blkptr == NULL || BP_IS_HOLE(db->db_blkptr);
+	int is_hole = bp == NULL || BP_IS_HOLE(bp);
 	/*
 	 * For level 0 blocks only, if the above check fails:
 	 * Recheck BP_IS_HOLE() after dnode_block_freed() in case dnode_sync()
@@ -1441,16 +1481,15 @@ dbuf_read_hole(dmu_buf_impl_t *db, dnode_t *dn)
 	 */
 	if (!is_hole && db->db_level == 0) {
 		is_hole = dnode_block_freed(dn, db->db_blkid) ||
-		    BP_IS_HOLE(db->db_blkptr);
+		    BP_IS_HOLE(bp);
 	}
 
 	if (is_hole) {
 		dbuf_set_data(db, dbuf_alloc_arcbuf(db));
 		memset(db->db.db_data, 0, db->db.db_size);
 
-		if (db->db_blkptr != NULL && db->db_level > 0 &&
-		    BP_IS_HOLE(db->db_blkptr) &&
-		    db->db_blkptr->blk_birth != 0) {
+		if (bp != NULL && db->db_level > 0 &&
+		    BP_IS_HOLE(bp) && bp->blk_birth != 0) {
 			dbuf_handle_indirect_hole(db, dn);
 		}
 		db->db_state = DB_CACHED;
@@ -1522,7 +1561,7 @@ dbuf_read_verify_dnode_crypt(dmu_buf_impl_t *db, uint32_t flags)
  */
 static int
 dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags,
-    db_lock_type_t dblt, void *tag)
+    db_lock_type_t dblt, blkptr_t *bp, void *tag)
 {
 	dnode_t *dn;
 	zbookmark_phys_t zb;
@@ -1544,7 +1583,7 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags,
 		goto early_unlock;
 	}
 
-	err = dbuf_read_hole(db, dn);
+	err = dbuf_read_hole(db, dn, bp);
 	if (err == 0)
 		goto early_unlock;
 
@@ -1553,7 +1592,7 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags,
 	 * will never happen under normal conditions, but can be useful for
 	 * debugging purposes.
 	 */
-	if (BP_IS_REDACTED(db->db_blkptr)) {
+	if (BP_IS_REDACTED(bp)) {
 		ASSERT(dsl_dataset_feature_is_active(
 		    db->db_objset->os_dsl_dataset,
 		    SPA_FEATURE_REDACTED_DATASETS));
@@ -1568,7 +1607,7 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags,
 	 * All bps of an encrypted os should have the encryption bit set.
 	 * If this is not true it indicates tampering and we report an error.
 	 */
-	if (db->db_objset->os_encrypted && !BP_USES_CRYPT(db->db_blkptr)) {
+	if (db->db_objset->os_encrypted && !BP_USES_CRYPT(bp)) {
 		spa_log_error(db->db_objset->os_spa, &zb);
 		zfs_panic_recover("unencrypted block in encrypted "
 		    "object set %llu", dmu_objset_id(db->db_objset));
@@ -1594,18 +1633,19 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags,
 	zio_flags = (flags & DB_RF_CANFAIL) ?
 	    ZIO_FLAG_CANFAIL : ZIO_FLAG_MUSTSUCCEED;
 
-	if ((flags & DB_RF_NO_DECRYPT) && BP_IS_PROTECTED(db->db_blkptr))
+	if ((flags & DB_RF_NO_DECRYPT) && BP_IS_PROTECTED(bp))
 		zio_flags |= ZIO_FLAG_RAW;
+
 	/*
-	 * The zio layer will copy the provided blkptr later, but we need to
-	 * do this now so that we can release the parent's rwlock. We have to
-	 * do that now so that if dbuf_read_done is called synchronously (on
-	 * an l1 cache hit) we don't acquire the db_mtx while holding the
-	 * parent's rwlock, which would be a lock ordering violation.
+	 * The ZIO layer will copy the provided blkptr later, but we need to
+	 * copy now so that we can release the parent's rwlock. We have to
+	 * release that so that if the dbuf_read_done is called synchronously
+	 * (on a l1 cache hit) we don't acquire the db_mtx while holding the
+	 * parent's rwlock, which would a lock ordering violation.
 	 */
-	blkptr_t bp = *db->db_blkptr;
+	blkptr_t copy = *bp;
 	dmu_buf_unlock_parent(db, dblt, tag);
-	(void) arc_read(zio, db->db_objset->os_spa, &bp,
+	(void) arc_read(zio, db->db_objset->os_spa, &copy,
 	    dbuf_read_done, db, ZIO_PRIORITY_SYNC_READ, zio_flags,
 	    &aflags, &zb);
 	return (err);
@@ -1757,15 +1797,34 @@ dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 	} else if (db->db_state == DB_UNCACHED) {
 		spa_t *spa = dn->dn_objset->os_spa;
 		boolean_t need_wait = B_FALSE;
+		blkptr_t *bp = NULL;
 
+		/*
+		 * We have to be careful to only grab the dbuf block pointer
+		 * after we have locked the parent.
+		 */
 		db_lock_type_t dblt = dmu_buf_lock_parent(db, RW_READER, FTAG);
 
+		/*
+		 * If a Direct IO write has occurred we will use the updated
+		 * block pointer.
+		 */
+		dbuf_dirty_record_t *dr_dio = dbuf_get_dirty_direct(db);
+		if (db->db_level == 0 && dr_dio &&
+		    dr_dio->dt.dl.dr_override_state == DR_OVERRIDDEN) {
+			bp = &dr_dio->dt.dl.dr_overridden_by;
+		} else {
+			bp = db->db_blkptr;
+		}
+
 		if (zio == NULL &&
-		    db->db_blkptr != NULL && !BP_IS_HOLE(db->db_blkptr)) {
+		    bp != NULL && !BP_IS_HOLE(bp)) {
 			zio = zio_root(spa, NULL, NULL, ZIO_FLAG_CANFAIL);
 			need_wait = B_TRUE;
 		}
-		err = dbuf_read_impl(db, zio, flags, dblt, FTAG);
+
+		err = dbuf_read_impl(db, zio, flags, dblt, bp, FTAG);
+
 		/*
 		 * dbuf_read_impl has dropped db_mtx and our parent's rwlock
 		 * for us
@@ -1823,7 +1882,6 @@ dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 			mutex_exit(&db->db_mtx);
 		}
 	}
-
 	return (err);
 }
 
@@ -1857,6 +1915,7 @@ dbuf_unoverride(dbuf_dirty_record_t *dr)
 	uint64_t txg = dr->dr_txg;
 
 	ASSERT(MUTEX_HELD(&db->db_mtx));
+
 	/*
 	 * This assert is valid because dmu_sync() expects to be called by
 	 * a zilog's get_data while holding a range lock.  This call only
@@ -1878,6 +1937,13 @@ dbuf_unoverride(dbuf_dirty_record_t *dr)
 	dr->dt.dl.dr_override_state = DR_NOT_OVERRIDDEN;
 	dr->dt.dl.dr_nopwrite = B_FALSE;
 	dr->dt.dl.dr_has_raw_params = B_FALSE;
+
+	/*
+	 * In the event that Direct IO was used, we do not
+	 * need to release the buffer from the ARC.
+	 */
+	if (dr->dt.dl.dr_data == NULL)
+		return;
 
 	/*
 	 * Release the already-written buffer, so we leave it in
@@ -1933,7 +1999,7 @@ dbuf_free_range(dnode_t *dn, uint64_t start_blkid, uint64_t end_blkid,
 
 		/* found a level 0 buffer in the range */
 		mutex_enter(&db->db_mtx);
-		if (dbuf_undirty(db, tx)) {
+		if (dbuf_undirty(db, tx, NULL)) {
 			/* mutex has been dropped and dbuf destroyed */
 			continue;
 		}
@@ -2017,6 +2083,8 @@ dbuf_new_size(dmu_buf_impl_t *db, int size, dmu_tx_t *tx)
 	 */
 	dmu_buf_will_dirty(&db->db, tx);
 
+	VERIFY3P(db->db_buf, !=, NULL);
+
 	/* create the data buffer for the new block */
 	buf = arc_alloc_buf(dn->dn_objset->os_spa, db, type, size);
 
@@ -2077,11 +2145,19 @@ dbuf_redirty(dbuf_dirty_record_t *dr)
 		 */
 		dbuf_unoverride(dr);
 		if (db->db.db_object != DMU_META_DNODE_OBJECT &&
-		    db->db_state != DB_NOFILL) {
-			/* Already released on initial dirty, so just thaw. */
+		    db->db_state != DB_NOFILL && db->db_buf != NULL) {
+			/*
+			 * Already released on initial dirty,
+			 * so just thaw.
+			 */
 			ASSERT(arc_released(db->db_buf));
 			arc_buf_thaw(db->db_buf);
 		}
+		/*
+		 * If initial dirty was via Direct IO, may not have a dr_data.
+		 */
+		if (dr->dt.dl.dr_data == NULL)
+			dr->dt.dl.dr_data = db->db_buf;
 	}
 }
 
@@ -2459,9 +2535,19 @@ dbuf_undirty_bonus(dbuf_dirty_record_t *dr)
  * transaction.  Return whether this evicted the dbuf.
  */
 static boolean_t
-dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
+dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx, dbuf_dirty_record_t *dr_p)
 {
-	uint64_t txg = tx->tx_txg;
+	uint64_t txg;
+	dbuf_dirty_record_t *dr;
+
+	if (dr_p != NULL) {
+		ASSERT3P(tx, ==, NULL);
+		txg = dr_p->dr_txg;
+		dr = dr_p;
+	} else {
+		txg = tx->tx_txg;
+		dr = dbuf_find_dirty_eq(db, txg);
+	}
 
 	ASSERT(txg != 0);
 
@@ -2481,7 +2567,6 @@ dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	/*
 	 * If this buffer is not dirty, we're done.
 	 */
-	dbuf_dirty_record_t *dr = dbuf_find_dirty_eq(db, txg);
 	if (dr == NULL)
 		return (B_FALSE);
 	ASSERT(dr->dr_dbuf == db);
@@ -2518,10 +2603,15 @@ dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	if (db->db_state != DB_NOFILL) {
 		dbuf_unoverride(dr);
 
-		ASSERT(db->db_buf != NULL);
-		ASSERT(dr->dt.dl.dr_data != NULL);
-		if (dr->dt.dl.dr_data != db->db_buf)
+		/*
+		 * In the Direct IO case, the buffer is still dirty, but it
+		 * may be UNCACHED, so we do not need to destroy an ARC buffer.
+		 */
+		if (dr->dt.dl.dr_data && dr->dt.dl.dr_data != db->db_buf) {
+			ASSERT(db->db_buf != NULL);
+			ASSERT(dr->dt.dl.dr_data != NULL);
 			arc_buf_destroy(dr->dt.dl.dr_data, db);
+		}
 	}
 
 	kmem_free(dr, sizeof (dbuf_dirty_record_t));
@@ -2530,7 +2620,16 @@ dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	db->db_dirtycnt -= 1;
 
 	if (zfs_refcount_remove(&db->db_holds, (void *)(uintptr_t)txg) == 0) {
-		ASSERT(db->db_state == DB_NOFILL || arc_released(db->db_buf));
+		/*
+		 * If we have been passed a dbuf_dirty_record_t we should be
+		 * holding the dbuf, so there is no way our db_holds should be
+		 * zero in this case.
+		 *
+		 * In the Direct IO case our db_buf will be NULL as we are not
+		 * caching in the ARC.
+		 */
+		ASSERT3P(dr_p, ==, NULL);
+		ASSERT(db->db_buf == NULL || arc_released(db->db_buf));
 		dbuf_destroy(db);
 		return (B_TRUE);
 	}
@@ -2597,13 +2696,113 @@ dmu_buf_is_dirty(dmu_buf_t *db_fake, dmu_tx_t *tx)
 	return (dr != NULL);
 }
 
+/*
+ * Direct IO writes may need to remove dirty records.
+ */
+dbuf_dirty_record_t *
+dmu_buf_undirty(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr)
+{
+	ASSERT3P(dr, !=, NULL);
+	ASSERT3P(dr->dr_dbuf, ==, db);
+	ASSERT(MUTEX_HELD(&db->db_mtx));
+
+	uint8_t db_dirtycnt = db->db_dirtycnt;
+	dbuf_dirty_record_t *dr_prev = list_prev(&db->db_dirty_records, dr);
+
+	/*
+	 * It is possible that the current dirty record is being synced out.
+	 * If that is case, we must wait till the dirty data has been
+	 * synced through the transaction. There are only a few places that
+	 * our db_dirtycnt is updated:
+	 *
+	 * dbuf_write_done()	 - decreases count
+	 * dbuf_undirty_bonus()	 - decreases count
+	 * dbuf_undirty()	 - decreases count
+	 * dnode_undirty_dbufs() - decreases count
+	 * dbuf_dirty()		 - increases count
+	 *
+	 * In the increase case of dbuf_dirty() we only allow block sized
+	 * Direct IO writes, so we do not have to worry about the db_dirtycnt
+	 * increasing. In the four decreasing cases we should only hit
+	 * dbuf_write_done() if we are syncing the data, which will signal
+	 * our db_changed with a decreased db_dirtycnt.
+	 */
+	if (dr->dr_txg == spa_syncing_txg(dmu_objset_spa(db->db_objset))) {
+		while (db_dirtycnt == db->db_dirtycnt) {
+			DBUF_STAT_BUMP(direct_undirty_wait);
+			cv_wait(&db->db_changed, &db->db_mtx);
+		}
+
+		return (dr_prev);
+	}
+
+	/*
+	 * If we are passing in a dbuf_dirty_record_t directly to
+	 * dbuf_undirty() we must hold the db, so it should never
+	 * be evicted after calling dbuf_undirty().
+	 */
+	VERIFY3B(dbuf_undirty(db, NULL, dr), ==, B_FALSE);
+
+	ASSERT3U(db->db_dirtycnt, >, 0);
+	DBUF_STAT_BUMP(direct_undirty);
+
+	return (dr_prev);
+}
+
+/*
+ * Direct IO reads can read directly from the ARC, but the data has
+ * to be untransformed in order to copy it over into user pages.
+ */
+int
+dmu_buf_untransform_direct(dmu_buf_impl_t *db, spa_t *spa)
+{
+	int err = 0;
+
+	DB_DNODE_ENTER(db);
+	ASSERT3S(db->db_state, ==, DB_CACHED);
+	ASSERT(MUTEX_HELD(&db->db_mtx));
+
+	/*
+	 * Ensure that this block's dnode has been decrypted if
+	 * the caller has requested decrypted data.
+	 */
+	err = dbuf_read_verify_dnode_crypt(db, 0);
+
+	/*
+	 * If the arc buf is compressed or encrypted and the caller
+	 * requested uncompressed data, we need to untransform it
+	 * before returning. We also call arc_untransform() on any
+	 * unauthenticated blocks, which will verify their MAC if
+	 * the key is now available.
+	 */
+	if (err == 0 && db->db_buf != NULL &&
+	    (arc_is_encrypted(db->db_buf) ||
+	    arc_is_unauthenticated(db->db_buf) ||
+	    arc_get_compression(db->db_buf) != ZIO_COMPRESS_OFF)) {
+		zbookmark_phys_t zb;
+
+		SET_BOOKMARK(&zb, dmu_objset_id(db->db_objset),
+		    db->db.db_object, db->db_level, db->db_blkid);
+		dbuf_fix_old_data(db, spa_syncing_txg(spa));
+		err = arc_untransform(db->db_buf, spa, &zb, B_FALSE);
+		dbuf_set_data(db, db->db_buf);
+	}
+	DB_DNODE_EXIT(db);
+	DBUF_STAT_BUMP(hash_hits);
+
+	return (err);
+}
+
 void
 dmu_buf_will_not_fill(dmu_buf_t *db_fake, dmu_tx_t *tx)
 {
 	dmu_buf_impl_t *db = (dmu_buf_impl_t *)db_fake;
 
-	db->db_state = DB_NOFILL;
+	mutex_enter(&db->db_mtx);
 	DTRACE_SET_STATE(db, "allocating NOFILL buffer");
+	db->db_state = DB_NOFILL;
+	mutex_exit(&db->db_mtx);
+
 	dmu_buf_will_fill(db_fake, tx);
 }
 
@@ -3874,7 +4073,6 @@ dbuf_rele_and_unlock(dmu_buf_impl_t *db, void *tag, boolean_t evicting)
 	} else {
 		mutex_exit(&db->db_mtx);
 	}
-
 }
 
 #pragma weak dmu_buf_refcount = dbuf_refcount
@@ -4344,13 +4542,32 @@ dbuf_sync_leaf(dbuf_dirty_record_t *dr, dmu_tx_t *tx)
 	dprintf_dbuf_bp(db, db->db_blkptr, "blkptr=%p", db->db_blkptr);
 
 	mutex_enter(&db->db_mtx);
+
 	/*
-	 * To be synced, we must be dirtied.  But we
-	 * might have been freed after the dirty.
+	 * It is possible a buffered read has come in after a direct IO
+	 * write and is currently transistioning the db_state from DB_READ
+	 * in dbuf_read_impl() to another state in dbuf_read_done().  We
+	 * have to wait in order for the dbuf state to change from DB_READ
+	 * before syncing the dirty record of the direct IO write.
+	 */
+	if (db->db_state == DB_READ) {
+		ASSERT3P(*datap, ==, NULL);
+		ASSERT3P(db->db_buf, ==, NULL);
+		ASSERT3P(db->db.db_data, ==, NULL);
+		ASSERT3U(dr->dt.dl.dr_override_state, ==, DR_OVERRIDDEN);
+		while (db->db_state == DB_READ) {
+			DBUF_STAT_BUMP(direct_sync_wait);
+			cv_wait(&db->db_changed, &db->db_mtx);
+		}
+	}
+
+	/*
+	 * To be synced, we must be dirtied.  But we might have been freed
+	 * after the dirty.
 	 */
 	if (db->db_state == DB_UNCACHED) {
 		/* This buffer has been freed since it was dirtied */
-		ASSERT(db->db.db_data == NULL);
+		ASSERT3P(db->db.db_data, ==, NULL);
 	} else if (db->db_state == DB_FILL) {
 		/* This buffer was freed and is now being re-filled */
 		ASSERT(db->db.db_data != dr->dt.dl.dr_data);
@@ -4404,13 +4621,25 @@ dbuf_sync_leaf(dbuf_dirty_record_t *dr, dmu_tx_t *tx)
 	dbuf_check_blkptr(dn, db);
 
 	/*
-	 * If this buffer is in the middle of an immediate write,
-	 * wait for the synchronous IO to complete.
+	 * If this buffer is in the middle of an immediate write, wait for the
+	 * synchronous IO to complete.
+	 *
+	 * The exception to this rule is if the buffer is a Direct IO write.
+	 * We do not want to wait on the O_DIRECT write to finish. We are
+	 * removing the dirty records for this dbuf in dmu_write_direct_done()
+	 * but will wait on any dirty record that is currently syncing to
+	 * finalize instead of removing it.
 	 */
+	dbuf_dirty_record_t *dr_dio = dbuf_get_dirty_direct(db);
 	while (dr->dt.dl.dr_override_state == DR_IN_DMU_SYNC) {
 		ASSERT(dn->dn_object != DMU_META_DNODE_OBJECT);
+
+		/* Direct IO write */
+		if (dr_dio->dt.dl.dr_data == NULL)
+			break;
+
 		cv_wait(&db->db_changed, &db->db_mtx);
-		ASSERT(dr->dt.dl.dr_override_state != DR_NOT_OVERRIDDEN);
+		ASSERT3U(dr->dt.dl.dr_override_state, !=, DR_NOT_OVERRIDDEN);
 	}
 
 	/*
@@ -4724,9 +4953,9 @@ dbuf_write_done(zio_t *zio, arc_buf_t *buf, void *vdb)
 	if (db->db_level == 0) {
 		ASSERT(db->db_blkid != DMU_BONUS_BLKID);
 		ASSERT(dr->dt.dl.dr_override_state == DR_NOT_OVERRIDDEN);
-		if (db->db_state != DB_NOFILL) {
-			if (dr->dt.dl.dr_data != db->db_buf)
-				arc_buf_destroy(dr->dt.dl.dr_data, db);
+		/* no dr_data if this is a NO_FILL or Direct IO */
+		if (dr->dt.dl.dr_data && dr->dt.dl.dr_data != db->db_buf) {
+			arc_buf_destroy(dr->dt.dl.dr_data, db);
 		}
 	} else {
 		ASSERT(list_head(&dr->dt.di.dr_children) == NULL);
@@ -4806,7 +5035,9 @@ dbuf_write_override_done(zio_t *zio)
 	if (!BP_EQUAL(zio->io_bp, obp)) {
 		if (!BP_IS_HOLE(obp))
 			dsl_free(spa_get_dsl(zio->io_spa), zio->io_txg, obp);
-		arc_release(dr->dt.dl.dr_data, db);
+
+		if (dr->dt.dl.dr_data && dr->dt.dl.dr_data != db->db_buf)
+			arc_release(dr->dt.dl.dr_data, db);
 	}
 	mutex_exit(&db->db_mtx);
 
@@ -4994,7 +5225,7 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 
 	if (db->db_blkid == DMU_SPILL_BLKID)
 		wp_flag = WP_SPILL;
-	wp_flag |= (db->db_state == DB_NOFILL) ? WP_NOFILL : 0;
+	wp_flag |= (db->db_state == DB_NOFILL && data == NULL) ? WP_NOFILL : 0;
 
 	dmu_write_policy(os, dn, db->db_level, wp_flag, &zp);
 
@@ -5010,10 +5241,17 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 	    dr->dt.dl.dr_override_state == DR_OVERRIDDEN) {
 		/*
 		 * The BP for this block has been provided by open context
-		 * (by dmu_sync() or dmu_buf_write_embedded()).
+		 * (by dmu_sync(), dmu_write_direct(),
+		 *  or dmu_buf_write_embedded()).
 		 */
-		abd_t *contents = (data != NULL) ?
-		    abd_get_from_buf(data->b_data, arc_buf_size(data)) : NULL;
+		blkptr_t *bp = &dr->dt.dl.dr_overridden_by;
+		abd_t *contents = NULL;
+		if (data) {
+			ASSERT(BP_IS_HOLE(bp) ||
+			    arc_buf_lsize(data) == BP_GET_LSIZE(bp));
+			contents = abd_get_from_buf(data->b_data,
+			    arc_buf_size(data));
+		}
 
 		dr->dr_zio = zio_write(pio, os->os_spa, txg, &dr->dr_bp_copy,
 		    contents, db->db.db_size, db->db.db_size, &zp,
@@ -5022,10 +5260,10 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 		    dr, ZIO_PRIORITY_ASYNC_WRITE, ZIO_FLAG_MUSTSUCCEED, &zb);
 		mutex_enter(&db->db_mtx);
 		dr->dt.dl.dr_override_state = DR_NOT_OVERRIDDEN;
-		zio_write_override(dr->dr_zio, &dr->dt.dl.dr_overridden_by,
-		    dr->dt.dl.dr_copies, dr->dt.dl.dr_nopwrite);
+		zio_write_override(dr->dr_zio, bp, dr->dt.dl.dr_copies,
+		    dr->dt.dl.dr_nopwrite);
 		mutex_exit(&db->db_mtx);
-	} else if (db->db_state == DB_NOFILL) {
+	} else if (db->db_state == DB_NOFILL && data == NULL) {
 		ASSERT(zp.zp_checksum == ZIO_CHECKSUM_OFF ||
 		    zp.zp_checksum == ZIO_CHECKSUM_NOPARITY);
 		dr->dr_zio = zio_write(pio, os->os_spa, txg,
