@@ -104,14 +104,6 @@ VFS_SMR_DECLARE;
 #define	NDFREE_PNBUF(ndp)	NDFREE((ndp), NDF_ONLY_PNBUF)
 #endif
 
-#if __FreeBSD_version >= 1300047
-#define	vm_page_wire_lock(pp)
-#define	vm_page_wire_unlock(pp)
-#else
-#define	vm_page_wire_lock(pp) vm_page_lock(pp)
-#define	vm_page_wire_unlock(pp) vm_page_unlock(pp)
-#endif
-
 #ifdef DEBUG_VFS_LOCKS
 #define	VNCHECKREF(vp)				  \
 	VNASSERT((vp)->v_holdcnt > 0 && (vp)->v_usecount > 0, vp,	\
@@ -449,19 +441,6 @@ page_hold(vnode_t *vp, int64_t start)
 	return (pp);
 }
 #endif
-
-static void
-page_unhold(vm_page_t pp)
-{
-
-	vm_page_wire_lock(pp);
-#if __FreeBSD_version >= 1300035
-	vm_page_unwire(pp, PQ_ACTIVE);
-#else
-	vm_page_unhold(pp);
-#endif
-	vm_page_wire_unlock(pp);
-}
 
 /*
  * When a file is memory mapped, we must keep the IO data synchronized
@@ -4265,7 +4244,7 @@ zfs_putpages(struct vnode *vp, vm_page_t *ma, size_t len, int flags,
 		 * but that would make the locking messier
 		 */
 		zfs_log_write(zfsvfs->z_log, tx, TX_WRITE, zp, off,
-		    len, commit, NULL, NULL);
+		    len, commit, B_FALSE, NULL, NULL);
 
 		zfs_vmobject_wlock(object);
 		for (i = 0; i < ncount; i++) {
@@ -4400,6 +4379,8 @@ ioflags(int ioflags)
 		flags |= O_APPEND;
 	if (ioflags & IO_NDELAY)
 		flags |= O_NONBLOCK;
+	if (ioflags & IO_DIRECT)
+		flags |= O_DIRECT;
 	if (ioflags & IO_SYNC)
 		flags |= O_SYNC;
 
@@ -4419,9 +4400,21 @@ static int
 zfs_freebsd_read(struct vop_read_args *ap)
 {
 	zfs_uio_t uio;
+	int error;
+	znode_t *zp = VTOZ(ap->a_vp);
+	int ioflag = ioflags(ap->a_ioflag);
+
 	zfs_uio_init(&uio, ap->a_uio);
-	return (zfs_read(VTOZ(ap->a_vp), &uio, ioflags(ap->a_ioflag),
-	    ap->a_cred));
+	error = zfs_setup_direct(zp, &uio, UIO_READ, &ioflag);
+
+	if (error == EINVAL)
+		return (error);
+
+	error = zfs_read(zp, &uio, ioflag, ap->a_cred);
+
+	zfs_uio_free_dio_pages(&uio, UIO_READ);
+
+	return (error);
 }
 
 #ifndef _SYS_SYSPROTO_H_
@@ -4437,9 +4430,21 @@ static int
 zfs_freebsd_write(struct vop_write_args *ap)
 {
 	zfs_uio_t uio;
+	int error;
+	znode_t *zp = VTOZ(ap->a_vp);
+	int ioflag = ioflags(ap->a_ioflag);
+
 	zfs_uio_init(&uio, ap->a_uio);
-	return (zfs_write(VTOZ(ap->a_vp), &uio, ioflags(ap->a_ioflag),
-	    ap->a_cred));
+	error = zfs_setup_direct(zp, &uio, UIO_WRITE, &ioflag);
+
+	if (error == EINVAL)
+		return (error);
+
+	error = zfs_write(zp, &uio, ioflag, ap->a_cred);
+
+	zfs_uio_free_dio_pages(&uio, UIO_WRITE);
+
+	return (error);
 }
 
 #if __FreeBSD_version >= 1300102
