@@ -21,6 +21,7 @@ SUBDIRS = \
 	deadman \
 	delegate \
 	devices \
+	direct \
 	events \
 	exec \
 	fallocate \
