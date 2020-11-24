@@ -295,7 +295,12 @@ mappedread(znode_t *zp, int nbytes, zfs_uio_t *uio)
 
 		pp = find_lock_page(mp, start >> PAGE_SHIFT);
 		if (pp) {
-			ASSERT(PageUptodate(pp));
+			while (PageWriteback(pp)) {
+				unlock_page(pp);
+				wait_on_page_bit(pp, PG_writeback);
+				lock_page(pp);
+			}
+
 			unlock_page(pp);
 
 			pb = kmap(pp);
@@ -986,7 +991,7 @@ top:
 
 	mutex_enter(&zp->z_lock);
 	may_delete_now = atomic_read(&ZTOI(zp)->i_count) == 1 &&
-	    !(zp->z_is_mapped);
+	    !zn_has_cached_data(zp, 0, LLONG_MAX);
 	mutex_exit(&zp->z_lock);
 
 	/*
@@ -1074,7 +1079,8 @@ top:
 		    &xattr_obj_unlinked, sizeof (xattr_obj_unlinked));
 		delete_now = may_delete_now && !toobig &&
 		    atomic_read(&ZTOI(zp)->i_count) == 1 &&
-		    !(zp->z_is_mapped) && xattr_obj == xattr_obj_unlinked &&
+		    !zn_has_cached_data(zp, 0, LLONG_MAX) &&
+		    xattr_obj == xattr_obj_unlinked &&
 		    zfs_external_acl(zp) == acl_obj;
 	}
 
@@ -3977,6 +3983,33 @@ zfs_fillpage(struct inode *ip, struct page *pl[], int nr_pages)
 		io_len = i_size - io_off;
 
 	/*
+	 * See lock ordering comment in zfs_putpage().
+	 */
+	zfs_locked_range_t *lr = zfs_rangelock_tryenter(&zp->z_rangelock,
+	    io_off, io_len, RL_READER);
+	if (lr == NULL) {
+		for (int i = 0; i < nr_pages; i++) {
+			get_page(pl[i]);
+			unlock_page(pl[i]);
+		}
+
+		lr = zfs_rangelock_enter(&zp->z_rangelock, io_off,
+		    io_len, RL_READER);
+
+		for (int i = 0; i < nr_pages; i++) {
+			lock_page(pl[i]);
+
+			while (PageWriteback(pl[i])) {
+				unlock_page(pl[i]);
+				wait_on_page_bit(pl[i], PG_writeback);
+				lock_page(pl[i]);
+			}
+
+			put_page(pl[i]);
+		}
+	}
+
+	/*
 	 * Iterate over list of pages and read each page individually.
 	 */
 	page_idx = 0;
@@ -3992,9 +4025,13 @@ zfs_fillpage(struct inode *ip, struct page *pl[], int nr_pages)
 			/* convert checksum errors into IO errors */
 			if (err == ECKSUM)
 				err = SET_ERROR(EIO);
+
+			zfs_rangelock_exit(lr);
 			return (err);
 		}
 	}
+
+	zfs_rangelock_exit(lr);
 
 	return (0);
 }
