@@ -42,6 +42,8 @@ typedef enum abd_flags {
 	ABD_FLAG_GANG		= 1 << 6, /* mult ABDs chained together */
 	ABD_FLAG_GANG_FREE	= 1 << 7, /* gang ABD is responsible for mem */
 	ABD_FLAG_ZEROS		= 1 << 8, /* ABD for zero-filled buffer */
+	ABD_FLAG_FROM_PAGES	= 1 << 9, /* does not own pages */
+	ABD_FLAG_PAGES_STABLE	= 1 << 10, /* whether pages are in writeback */
 } abd_flags_t;
 
 typedef enum abd_stats_op {
@@ -110,6 +112,10 @@ void abd_update_scatter_stats(abd_t *, abd_stats_op_t);
 void abd_update_linear_stats(abd_t *, abd_stats_op_t);
 void abd_verify_scatter(abd_t *);
 void abd_free_linear_page(abd_t *);
+#if defined(_KERNEL)
+abd_t *abd_get_offset_from_pages(abd_t *, size_t);
+void abd_free_from_pages(abd_t *);
+#endif
 /* OS specific abd_iter functions */
 void abd_iter_init(struct abd_iter  *, abd_t *);
 boolean_t abd_iter_at_end(struct abd_iter *);
@@ -126,9 +132,9 @@ void abd_iter_unmap(struct abd_iter *);
 #define	ABDSTAT_BUMP(stat)	ABDSTAT_INCR(stat, 1)
 #define	ABDSTAT_BUMPDOWN(stat)	ABDSTAT_INCR(stat, -1)
 
-#define	ABD_SCATTER(abd)	(abd->abd_u.abd_scatter)
-#define	ABD_LINEAR_BUF(abd)	(abd->abd_u.abd_linear.abd_buf)
-#define	ABD_GANG(abd)		(abd->abd_u.abd_gang)
+#define	ABD_SCATTER(abd)	((abd)->abd_u.abd_scatter)
+#define	ABD_LINEAR_BUF(abd)	((abd)->abd_u.abd_linear.abd_buf)
+#define	ABD_GANG(abd)		((abd)->abd_u.abd_gang)
 
 #if defined(_KERNEL)
 #if defined(__FreeBSD__)

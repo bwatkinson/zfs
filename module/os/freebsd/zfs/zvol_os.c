@@ -752,6 +752,7 @@ zvol_cdev_read(struct cdev *dev, struct uio *uio, int ioflag)
 	uint64_t volsize;
 	zfs_locked_range_t *lr;
 	int error = 0;
+	boolean_t o_direct = B_FALSE;
 
 	zv = dev->si_drv2;
 
@@ -764,6 +765,10 @@ zvol_cdev_read(struct cdev *dev, struct uio *uio, int ioflag)
 	    (uio->uio_loffset < 0 || uio->uio_loffset > volsize))
 		return (SET_ERROR(EIO));
 
+	if (zv->zv_objset->os_direct == ZFS_DIRECT_ALWAYS) {
+		o_direct = B_TRUE;
+	}
+
 	lr = zfs_rangelock_enter(&zv->zv_rangelock, uio->uio_loffset,
 	    uio->uio_resid, RL_READER);
 	while (uio->uio_resid > 0 && uio->uio_loffset < volsize) {
@@ -773,7 +778,7 @@ zvol_cdev_read(struct cdev *dev, struct uio *uio, int ioflag)
 		if (bytes > volsize - uio->uio_loffset)
 			bytes = volsize - uio->uio_loffset;
 
-		error =  dmu_read_uio_dnode(zv->zv_dn, uio, bytes);
+		error =  dmu_read_uio_dnode(zv->zv_dn, uio, bytes, o_direct);
 		if (error) {
 			/* convert checksum errors into IO errors */
 			if (error == ECKSUM)
@@ -794,6 +799,7 @@ zvol_cdev_write(struct cdev *dev, struct uio *uio, int ioflag)
 	zfs_locked_range_t *lr;
 	int error = 0;
 	boolean_t sync;
+	boolean_t o_direct = B_FALSE;
 
 	zv = dev->si_drv2;
 
@@ -808,6 +814,10 @@ zvol_cdev_write(struct cdev *dev, struct uio *uio, int ioflag)
 
 	rw_enter(&zv->zv_suspend_lock, ZVOL_RW_READER);
 	zvol_ensure_zilog(zv);
+
+	if (zv->zv_objset->os_direct == ZFS_DIRECT_ALWAYS) {
+		o_direct = B_TRUE;
+	}
 
 	lr = zfs_rangelock_enter(&zv->zv_rangelock, uio->uio_loffset,
 	    uio->uio_resid, RL_WRITER);
@@ -825,7 +835,9 @@ zvol_cdev_write(struct cdev *dev, struct uio *uio, int ioflag)
 			dmu_tx_abort(tx);
 			break;
 		}
-		error = dmu_write_uio_dnode(zv->zv_dn, uio, bytes, tx);
+
+		error = dmu_write_uio_dnode(zv->zv_dn, uio, bytes, tx,
+		    o_direct);
 		if (error == 0)
 			zvol_log_write(zv, tx, off, bytes, sync);
 		dmu_tx_commit(tx);

@@ -191,6 +191,7 @@ zfs_read(struct znode *zp, uio_t *uio, int ioflag, cred_t *cr)
 {
 	int error = 0;
 	boolean_t frsync = B_FALSE;
+	boolean_t o_direct = B_FALSE;
 
 	zfsvfs_t *zfsvfs = ZTOZSB(zp);
 	ZFS_ENTER(zfsvfs);
@@ -257,6 +258,15 @@ zfs_read(struct znode *zp, uio_t *uio, int ioflag, cred_t *cr)
 	ssize_t n = MIN(uio->uio_resid, zp->z_size - uio->uio_loffset);
 	ssize_t start_resid = n;
 
+	dmu_buf_impl_t *tmp_db =
+	    (dmu_buf_impl_t *)sa_get_db(zp->z_sa_hdl);
+	if (ioflag & O_DIRECT ||
+	    DB_DNODE(tmp_db)->dn_objset->os_direct == ZFS_DIRECT_ALWAYS) {
+		if (!DMU_OS_DIRECT_IS_DISABLED(DB_DNODE(tmp_db)->dn_objset)) {
+			o_direct = B_TRUE;
+		}
+	}
+
 	while (n > 0) {
 		ssize_t nbytes = MIN(n, zfs_vnops_read_chunk_size -
 		    P2PHASE(uio->uio_loffset, zfs_vnops_read_chunk_size));
@@ -265,11 +275,11 @@ zfs_read(struct znode *zp, uio_t *uio, int ioflag, cred_t *cr)
 			error = mappedread_sf(zp, nbytes, uio);
 		else
 #endif
-		if (zn_has_cached_data(zp) && !(ioflag & O_DIRECT)) {
+		if (zn_has_cached_data(zp) && !(o_direct)) {
 			error = mappedread(zp, nbytes, uio);
 		} else {
 			error = dmu_read_uio_dbuf(sa_get_db(zp->z_sa_hdl),
-			    uio, nbytes);
+			    uio, nbytes, o_direct);
 		}
 
 		if (error) {
@@ -318,6 +328,7 @@ zfs_write(znode_t *zp, uio_t *uio, int ioflag, cred_t *cr)
 {
 	int error = 0;
 	ssize_t start_resid = uio->uio_resid;
+	boolean_t o_direct = B_FALSE;
 
 	/*
 	 * Fasttrack empty write
@@ -434,6 +445,26 @@ zfs_write(znode_t *zp, uio_t *uio, int ioflag, cred_t *cr)
 	const uint64_t projid = zp->z_projid;
 
 	/*
+	 * In the event we are increasing the file block size
+	 * (lr_length == UINT64_MAX), we will direct the write to the ARC.
+	 * Because zfs_grow_blocksize() will read from the ARC in order to
+	 * grow the dbuf, we avoid doing Direct IO here as that would cause
+	 * data written to disk to be overwritten by data in the ARC during
+	 * the sync phase. Besides writing data twice to disk, we also
+	 * want to avoid consistency concerns between data in the the ARC and
+	 * on disk while growing the file's block size.
+	 */
+	dmu_buf_impl_t *tmp_db =
+	    (dmu_buf_impl_t *)sa_get_db(zp->z_sa_hdl);
+	if (ioflag & O_DIRECT ||
+	    DB_DNODE(tmp_db)->dn_objset->os_direct == ZFS_DIRECT_ALWAYS) {
+		if (lr->lr_length != UINT64_MAX &&
+		    !DMU_OS_DIRECT_IS_DISABLED(DB_DNODE(tmp_db)->dn_objset)) {
+			o_direct = B_TRUE;
+		}
+	}
+
+	/*
 	 * Write the file in reasonable size chunks.  Each chunk is written
 	 * in a separate transaction; this keeps the intent log records small
 	 * and allows us to do more fine-grained space accounting.
@@ -453,7 +484,7 @@ zfs_write(znode_t *zp, uio_t *uio, int ioflag, cred_t *cr)
 		arc_buf_t *abuf = NULL;
 		if (n >= max_blksz && woff >= zp->z_size &&
 		    P2PHASE(woff, max_blksz) == 0 &&
-		    zp->z_blksz == max_blksz) {
+		    zp->z_blksz == max_blksz && !(o_direct)) {
 			/*
 			 * This write covers a full block.  "Borrow" a buffer
 			 * from the dmu so that we can fill it before we enter
@@ -523,15 +554,14 @@ zfs_write(znode_t *zp, uio_t *uio, int ioflag, cred_t *cr)
 		 * XXX - should we really limit each write to z_max_blksz?
 		 * Perhaps we should use SPA_MAXBLOCKSIZE chunks?
 		 */
-		const ssize_t nbytes =
-		    MIN(n, max_blksz - P2PHASE(woff, max_blksz));
+		ssize_t nbytes = MIN(n, max_blksz - P2PHASE(woff, max_blksz));
 
 		ssize_t tx_bytes;
 		if (abuf == NULL) {
 			tx_bytes = uio->uio_resid;
 			uio_fault_disable(uio, B_TRUE);
 			error = dmu_write_uio_dbuf(sa_get_db(zp->z_sa_hdl),
-			    uio, nbytes, tx);
+			    uio, nbytes, tx, o_direct);
 			uio_fault_disable(uio, B_FALSE);
 #ifdef __linux__
 			if (error == EFAULT) {
@@ -561,7 +591,7 @@ zfs_write(znode_t *zp, uio_t *uio, int ioflag, cred_t *cr)
 			ASSERT3S(n, >=, max_blksz);
 			ASSERT0(P2PHASE(woff, max_blksz));
 			/*
-			 * We can simplify nbytes to MIN(n, max_blksz) since
+			 * We can simplify nbytes to MIN(n, maxblksz) since
 			 * P2PHASE(woff, max_blksz) is 0, and knowing
 			 * n >= max_blksz lets us simplify further:
 			 */
@@ -585,7 +615,7 @@ zfs_write(znode_t *zp, uio_t *uio, int ioflag, cred_t *cr)
 			tx_bytes = nbytes;
 		}
 		if (tx_bytes && zn_has_cached_data(zp) &&
-		    !(ioflag & O_DIRECT)) {
+		    !(o_direct)) {
 			update_pages(zp, woff, tx_bytes, zfsvfs->z_os);
 		}
 

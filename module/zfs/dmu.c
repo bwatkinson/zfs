@@ -56,6 +56,7 @@
 #ifdef _KERNEL
 #include <sys/vmsystm.h>
 #include <sys/zfs_znode.h>
+#include <sys/page.h>
 #endif
 
 /*
@@ -82,6 +83,13 @@ int zfs_dmu_offset_next_sync = 0;
  * Larger objects should be prefetched a bit at a time.
  */
 int dmu_prefetch_max = 8 * SPA_MAXBLOCKSIZE;
+
+/*
+ * Used to make sure an IO request is page/block aligned
+ */
+#define	IO_ALIGNED(o, s, a) \
+	(((o) % (a) == 0) && ((s) % (a) == 0))
+#define	IO_PAGE_ALIGNED(o, s)	IO_ALIGNED(o, s, PAGESIZE)
 
 const dmu_object_type_info_t dmu_ot[DMU_OT_NUMTYPES] = {
 	{DMU_BSWAP_UINT8,  TRUE,  FALSE, FALSE, "unallocated"		},
@@ -153,6 +161,34 @@ const dmu_object_byteswap_info_t dmu_ot_byteswap[DMU_BSWAP_NUMFUNCS] = {
 	{	zfs_acl_byteswap,	"acl"		}
 };
 
+/*
+ * Checking to see if a Direct IO write operation has updated the
+ * db_blkptr. We must pull the updated block pointer to get the
+ * current version of the block if a Direct IO write has occurred.
+ *
+ * The db_mtx must be held before calling this.
+ */
+static blkptr_t *
+dmu_buf_get_bp(dmu_buf_impl_t *db)
+{
+	ASSERT(MUTEX_HELD(&db->db_mtx));
+
+	if (db->db_level != 0) {
+		return (db->db_blkptr);
+	}
+
+	blkptr_t *bp = db->db_blkptr;
+
+	dbuf_dirty_record_t *dr_head = list_head(&db->db_dirty_records);
+	if (dr_head && dr_head->dt.dl.dr_override_state == DR_OVERRIDDEN) {
+		/* we have a Direct IO write, use it's bp */
+		ASSERT(db->db_state != DB_NOFILL);
+		bp = &dr_head->dt.dl.dr_overridden_by;
+	}
+
+	return (bp);
+}
+
 static int
 dmu_buf_hold_noread_by_dnode(dnode_t *dn, uint64_t offset,
     void *tag, dmu_buf_t **dbp)
@@ -173,6 +209,7 @@ dmu_buf_hold_noread_by_dnode(dnode_t *dn, uint64_t offset,
 	*dbp = &db->db;
 	return (0);
 }
+
 int
 dmu_buf_hold_noread(objset_t *os, uint64_t object, uint64_t offset,
     void *tag, dmu_buf_t **dbp)
@@ -713,7 +750,7 @@ dmu_prefetch(objset_t *os, uint64_t object, int64_t level, uint64_t offset,
 
 /*
  * Get the next "chunk" of file data to free.  We traverse the file from
- * the end so that the file gets shorter over time (if we crashes in the
+ * the end so that the file gets shorter over time (if we crash in the
  * middle, this will leave us in a better state).  We find allocated file
  * data by simply searching the allocated level 1 indirects.
  *
@@ -969,6 +1006,188 @@ dmu_free_range(objset_t *os, uint64_t object, uint64_t offset,
 	return (0);
 }
 
+static void
+make_abd_for_dbuf(dmu_buf_impl_t *db, abd_t *data,
+    uint64_t offset, uint64_t size, abd_t **buf, abd_t **mbuf)
+{
+	size_t buf_size = db->db.db_size;
+	abd_t *pre_buf = NULL, *post_buf = NULL;
+	size_t buf_off = 0;
+	abd_t *in_buf = *buf;
+
+	ASSERT(MUTEX_HELD(&db->db_mtx));
+
+	IMPLY(db->db_state == DB_CACHED, db->db.db_data != NULL);
+	if (offset > db->db.db_offset) {
+		size_t pre_size = offset - db->db.db_offset;
+		if (db->db_state == DB_CACHED)
+			pre_buf = abd_get_from_buf(db->db.db_data, pre_size);
+		else if (in_buf)
+			pre_buf = abd_get_offset_size(in_buf, 0, pre_size);
+		else
+			pre_buf = abd_alloc_for_io(pre_size, B_TRUE);
+		buf_size -= pre_size;
+		buf_off = 0;
+	} else {
+		buf_off = db->db.db_offset - offset;
+		size -= buf_off;
+	}
+
+	if (size < buf_size) {
+		size_t post_size = buf_size - size;
+		if (db->db_state == DB_CACHED)
+			post_buf = abd_get_from_buf(
+			    (char *)db->db.db_data + db->db.db_size - post_size,
+			    post_size);
+		else if (in_buf)
+			post_buf = abd_get_offset_size(in_buf,
+			    db->db.db_size - post_size, post_size);
+		else
+			post_buf = abd_alloc_for_io(post_size, B_TRUE);
+		buf_size -= post_size;
+	}
+
+	ASSERT3U(buf_size, >, 0);
+	*buf = abd_get_offset_size(data, buf_off, buf_size);
+
+	if (pre_buf || post_buf) {
+		*mbuf = abd_alloc_gang_abd();
+		if (pre_buf)
+			abd_gang_add(*mbuf, pre_buf, B_TRUE);
+		abd_gang_add(*mbuf, *buf, B_TRUE);
+		if (post_buf)
+			abd_gang_add(*mbuf, post_buf, B_TRUE);
+	} else {
+		*mbuf = *buf;
+	}
+}
+
+static void
+dmu_read_abd_done(zio_t *zio)
+{
+	if (abd_is_gang(zio->io_abd))
+		abd_free(zio->io_abd);
+	else
+		abd_put(zio->io_abd);
+}
+
+static int
+dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
+    abd_t *data, uint32_t flags)
+{
+	spa_t *spa = dn->dn_objset->os_spa;
+	dmu_buf_t **dbp;
+	int numbufs, err;
+	zio_t *rio;
+
+	ASSERT(flags & DMU_DIRECTIO);
+
+	/*
+	 * Direct IO must be page aligned
+	 */
+	ASSERT(IO_PAGE_ALIGNED(offset, size));
+
+	err = dmu_buf_hold_array_by_dnode(dn, offset,
+	    size, B_FALSE, FTAG, &numbufs, &dbp, 0);
+	if (err)
+		return (err);
+
+	rio = zio_root(spa, NULL, NULL, ZIO_FLAG_CANFAIL);
+
+	for (int i = 0; i < numbufs; i++) {
+		dmu_buf_impl_t *db = (dmu_buf_impl_t *)dbp[i];
+		abd_t *buf = NULL, *mbuf;
+		zio_t *zio;
+
+		mutex_enter(&db->db_mtx);
+		blkptr_t *bp = dmu_buf_get_bp(db);
+
+		/* no need to read if hole or data is cached */
+		if (bp == NULL || BP_IS_HOLE(bp) || db->db_state == DB_CACHED) {
+			size_t aoff = offset < db->db.db_offset ?
+			    db->db.db_offset - offset : 0;
+			size_t boff = offset > db->db.db_offset ?
+			    offset - db->db.db_offset : 0;
+			size_t len = MIN(size - aoff, db->db.db_size - boff);
+			if (db->db_state == DB_CACHED)
+				abd_copy_from_buf_off(data,
+				    (char *)db->db.db_data + boff, aoff, len);
+			else
+				abd_zero_off(data, aoff, len);
+			mutex_exit(&db->db_mtx);
+			continue;
+		}
+
+		make_abd_for_dbuf(db, data, offset, size, &buf, &mbuf);
+		mutex_exit(&db->db_mtx);
+
+		zio = zio_read(rio, spa, bp, mbuf, db->db.db_size,
+		    dmu_read_abd_done, NULL,
+		    ZIO_PRIORITY_SYNC_READ, 0, NULL);
+
+		if (i+1 == numbufs)
+			err = zio_wait(zio);
+		else
+			zio_nowait(zio);
+	}
+
+	if (err)
+		(void) zio_wait(rio);
+	else
+		err = zio_wait(rio);
+
+	dmu_buf_rele_array(dbp, numbufs, FTAG);
+
+	return (err);
+}
+
+/*
+ * Checks whether the requested Direct IO operation is valid. This function
+ * returns either:
+ * 1		- valid Direct IO requeset
+ * 0		- invalid Direct IO request, but can be bypassed
+ * EINVAL	- invalid IO request due to alignment
+ */
+int
+dmu_check_direct_valid(dnode_t *dn, uint64_t offset, uint64_t size,
+    boolean_t write)
+{
+	objset_t *obj;
+	ASSERT3P(dn, !=, NULL);
+	int ret = 1;
+
+	obj = dn->dn_objset;
+
+	if (DMU_OS_DIRECT_IS_DISABLED(obj)) {
+		/*
+		 * In the case of disabled direct we simply just pass
+		 * the IO op off to the ARC.
+		 */
+		ret = 0;
+	} else if (DMU_OS_DIRECT_IS_ENABLED(obj)) {
+		/*
+		 * If the direct property is set to default or always the IO
+		 * request at a minimum must be PAGE_SIZE aligned.
+		 */
+		if (!IO_PAGE_ALIGNED(offset, size))
+			return (EINVAL);
+		/*
+		 * If direct is default or always then we must further check
+		 * alignment requirements if it is a write operation. We only
+		 * allow Direct IO to place for block sized aligned writes
+		 * otherwise the request is just passed off to the ARC. We do
+		 * this to avoid a read, write, and modify operation, which is
+		 * necessary to create a valid checksum.
+		 */
+		if (write) {
+			if (!IO_ALIGNED(offset, size, dn->dn_datablksz))
+				ret = 0;
+		}
+	}
+
+	return (ret);
+}
+
 static int
 dmu_read_impl(dnode_t *dn, uint64_t offset, uint64_t size,
     void *buf, uint32_t flags)
@@ -986,6 +1205,22 @@ dmu_read_impl(dnode_t *dn, uint64_t offset, uint64_t size,
 		    MIN(size, dn->dn_datablksz - offset);
 		bzero((char *)buf + newsz, size - newsz);
 		size = newsz;
+	}
+
+	if (size == 0)
+		return (0);
+
+	if (flags & DMU_DIRECTIO) {
+		err = dmu_check_direct_valid(dn, offset, size, B_FALSE);
+
+		if (err == EINVAL) {
+			return (SET_ERROR(err));
+		} else if (err) {
+			abd_t *data = abd_get_from_buf(buf, size);
+			err = dmu_read_abd(dn, offset, size, data, flags);
+			abd_put(data);
+			return (err);
+		}
 	}
 
 	while (size > 0) {
@@ -1057,11 +1292,17 @@ static void
 dmu_sync_ready(zio_t *zio, arc_buf_t *buf, void *varg)
 {
 	dmu_sync_arg_t *dsa = varg;
-	dmu_buf_t *db = dsa->dsa_zgd->zgd_db;
-	blkptr_t *bp = zio->io_bp;
 
 	if (zio->io_error == 0) {
+		dbuf_dirty_record_t *dr = dsa->dsa_dr;
+		blkptr_t *bp = zio->io_bp;
+
 		if (BP_IS_HOLE(bp)) {
+			dmu_buf_t *db = NULL;
+			if (dr)
+				db = &(dr->dr_dbuf->db);
+			else
+				db = dsa->dsa_zgd->zgd_db;
 			/*
 			 * A block of zeros may compress to a hole, but the
 			 * block size still needs to be known for replay.
@@ -1093,7 +1334,7 @@ dmu_sync_done(zio_t *zio, arc_buf_t *buf, void *varg)
 	 * Record the vdev(s) backing this blkptr so they can be flushed after
 	 * the writes for the lwb have completed.
 	 */
-	if (zio->io_error == 0) {
+	if (zgd && zio->io_error == 0) {
 		zil_lwb_add_block(zgd->zgd_lwb, zgd->zgd_bp);
 	}
 
@@ -1132,10 +1373,12 @@ dmu_sync_done(zio_t *zio, arc_buf_t *buf, void *varg)
 	} else {
 		dr->dt.dl.dr_override_state = DR_NOT_OVERRIDDEN;
 	}
+
 	cv_broadcast(&db->db_changed);
 	mutex_exit(&db->db_mtx);
 
-	dsa->dsa_done(dsa->dsa_zgd, zio->io_error);
+	if (dsa->dsa_done)
+		dsa->dsa_done(dsa->dsa_zgd, zio->io_error);
 
 	kmem_free(dsa, sizeof (*dsa));
 }
@@ -1399,6 +1642,224 @@ dmu_sync(zio_t *pio, uint64_t txg, dmu_sync_cb_t *done, zgd_t *zgd)
 }
 
 static void
+dmu_write_direct_ready(zio_t *zio)
+{
+	dmu_sync_ready(zio, NULL, zio->io_private);
+}
+
+static void
+dmu_write_direct_done(zio_t *zio)
+{
+	dmu_sync_arg_t *dsa = zio->io_private;
+	dbuf_dirty_record_t *dr = dsa->dsa_dr;
+	dmu_buf_impl_t *db = dr->dr_dbuf;
+
+	if (abd_pages_are_stable(zio->io_abd))
+		abd_release_stable_pages(zio->io_abd);
+	abd_put(zio->io_abd);
+
+	mutex_enter(&db->db_mtx);
+	if (db->db_buf) {
+		arc_buf_t *buf = db->db_buf;
+		/*
+		 * The current contents of the dbuf are now stale.
+		 */
+		ASSERT(db->db_buf == dr->dt.dl.dr_data);
+		db->db_buf = NULL;
+		db->db.db_data = NULL;
+		dr->dt.dl.dr_data = NULL;
+		arc_buf_destroy(buf, db);
+	}
+	ASSERT(db->db.db_data == NULL);
+	db->db_state = DB_UNCACHED;
+	mutex_exit(&db->db_mtx);
+
+	dmu_sync_done(zio, NULL, zio->io_private);
+	kmem_free(zio->io_bp, sizeof (blkptr_t));
+}
+
+static boolean_t
+dmu_need_to_make_pages_stable(zio_prop_t zp)
+{
+	boolean_t make_stable = B_FALSE;
+	if (zp.zp_compress != ZIO_COMPRESS_OFF ||
+	    zp.zp_checksum != ZIO_CHECKSUM_OFF ||
+	    zp.zp_encrypt == B_TRUE)
+		make_stable = B_TRUE;
+	return (make_stable);
+}
+
+static int
+dmu_write_direct(zio_t *pio, dmu_buf_impl_t *db, abd_t *data, dmu_tx_t *tx,
+    boolean_t lustre_buf)
+{
+	objset_t *os = db->db_objset;
+	dsl_dataset_t *ds = os->os_dsl_dataset;
+	dbuf_dirty_record_t *dr_head, *dr_next;
+	dmu_sync_arg_t *dsa;
+	zbookmark_phys_t zb;
+	zio_prop_t zp;
+	dnode_t *dn;
+	uint64_t txg = dmu_tx_get_txg(tx);
+	blkptr_t *bp;
+	zio_t *zio;
+	int err = 0;
+
+	ASSERT(tx != NULL);
+
+	SET_BOOKMARK(&zb, ds->ds_object,
+	    db->db.db_object, db->db_level, db->db_blkid);
+
+	/*
+	 * No support for this
+	 */
+	if (txg > spa_freeze_txg(os->os_spa))
+		return (SET_ERROR(ENOTSUP));
+
+	DB_DNODE_ENTER(db);
+	dn = DB_DNODE(db);
+	dmu_write_policy(os, dn, db->db_level, WP_DMU_SYNC, &zp);
+	if (lustre_buf) {
+		/*
+		 * If the buffer we are writing is coming from Lustre we
+		 * do not have to worry about amking the pages stable as Lustre
+		 * has already made a stable copy of the data.
+		 */
+		zp.zp_lustre_buf = B_TRUE;
+	} else if (dmu_need_to_make_pages_stable(zp)) {
+		/*
+		 * If we are doing any of the following operations:
+		 * Compression, Checksum, Encryption, or Parity
+		 *
+		 * We have to make sure the pages are stable to prevent
+		 * the data from changing while any of those operations
+		 * are happening. If we did not do this, we could wind
+		 * up with user created checksum errors. At this point
+		 * we can not determine if parity is necessary but that
+		 * will be checked in the ZIO pipeline.
+		 */
+		zp.zp_lustre_buf = B_FALSE;
+		abd_make_pages_stable(data);
+	}
+
+	DB_DNODE_EXIT(db);
+
+	/*
+	 * Dirty this dbuf with DB_NOFILL since we will not have any data
+	 * associated with the dbuf.
+	 */
+	dmu_buf_will_not_fill(&db->db, tx);
+
+	/* XXX - probably don't need this, since we are in an open tx */
+	mutex_enter(&db->db_mtx);
+
+	ASSERT(txg > spa_last_synced_txg(os->os_spa));
+	ASSERT(txg > spa_syncing_txg(os->os_spa));
+
+	dr_head = list_head(&db->db_dirty_records);
+	dr_next = list_next(&db->db_dirty_records, dr_head);
+	VERIFY(dr_head->dr_txg == txg);
+
+	bp = kmem_alloc(sizeof (blkptr_t), KM_SLEEP);
+	if (db->db_blkptr != NULL) {
+		/*
+		 * fill in bp with current blkptr so that
+		 * the nopwrite code can check if we're writing the same
+		 * data that's already on disk.
+		 */
+		*bp = *db->db_blkptr;
+	} else {
+		bzero(bp, sizeof (blkptr_t));
+	}
+
+	/*
+	 * Disable nopwrite if the current BP could change before
+	 * this TXG syncs.
+	 */
+	if (dr_next != NULL)
+		zp.zp_nopwrite = B_FALSE;
+
+	ASSERT(dr_head->dt.dl.dr_override_state == DR_NOT_OVERRIDDEN);
+	dr_head->dt.dl.dr_override_state = DR_IN_DMU_SYNC;
+	mutex_exit(&db->db_mtx);
+
+	/*
+	 * We will not be writing this block in syncing context, so
+	 * update the dirty space accounting.
+	 * XXX - this should be handled as part of will_not_fill()
+	 */
+	dsl_pool_undirty_space(dmu_objset_pool(os), dr_head->dr_accounted, txg);
+
+	dsa = kmem_alloc(sizeof (dmu_sync_arg_t), KM_SLEEP);
+	dsa->dsa_dr = dr_head;
+	dsa->dsa_done = NULL;
+	dsa->dsa_zgd = NULL;
+	dsa->dsa_tx = NULL;
+
+	zio = zio_write(pio, os->os_spa, txg, bp, data,
+	    db->db.db_size, db->db.db_size, &zp,
+	    dmu_write_direct_ready, NULL, NULL, dmu_write_direct_done, dsa,
+	    ZIO_PRIORITY_SYNC_WRITE, ZIO_FLAG_CANFAIL, &zb);
+
+	if (pio == NULL)
+		err = zio_wait(zio);
+	else
+		zio_nowait(zio);
+
+	return (err);
+}
+
+static int
+dmu_write_abd(dnode_t *dn, uint64_t offset, uint64_t size,
+    abd_t *data, uint32_t flags, dmu_tx_t *tx, boolean_t lustre_buf)
+{
+	spa_t *spa = dn->dn_objset->os_spa;
+	dmu_buf_t **dbp;
+	int numbufs, err;
+	zio_t *rio;
+
+	ASSERT(flags & DMU_DIRECTIO);
+	/*
+	 * Direct IO must be page aligned
+	 */
+	ASSERT(IO_PAGE_ALIGNED(offset, size));
+
+	err = dmu_buf_hold_array_by_dnode(dn, offset,
+	    size, B_FALSE, FTAG, &numbufs, &dbp, 0);
+	if (err)
+		return (err);
+
+	rio = zio_root(spa, NULL, NULL, ZIO_FLAG_CANFAIL);
+
+	for (int i = 0; err == 0 && i < numbufs; i++) {
+		dmu_buf_impl_t *db = (dmu_buf_impl_t *)dbp[i];
+
+		abd_t *abd = abd_get_offset_size(data,
+		    db->db.db_offset - offset, dn->dn_datablksz);
+
+		if (i+1 == numbufs) {
+			/*
+			 * Passing NULL as the zio_t * here so the pio
+			 * is NULL in dmu_write_direct. This allows us
+			 * to make use of the calling thread when issuing
+			 * zio_write instead of handing off to a taskq.
+			 */
+			err = dmu_write_direct(NULL, db, abd, tx, lustre_buf);
+		} else {
+			err = dmu_write_direct(rio, db, abd, tx, lustre_buf);
+		}
+	}
+	if (err)
+		(void) zio_wait(rio);
+	else
+		err = zio_wait(rio);
+
+	dmu_buf_rele_array(dbp, numbufs, FTAG);
+
+	return (err);
+}
+
+static void
 dmu_write_impl(dmu_buf_t **dbp, int numbufs, uint64_t offset, uint64_t size,
     const void *buf, dmu_tx_t *tx)
 {
@@ -1449,6 +1910,38 @@ dmu_write(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 }
 
 /*
+ * Note: This is just a Lustre hook to allow it for Direct IO writes
+ * using the dnode.
+ */
+void
+dmu_write_direct_by_dnode(dnode_t *dn, uint64_t offset, uint64_t size,
+    const void *buf, dmu_tx_t *tx)
+{
+	dmu_buf_t **dbp;
+	int numbufs;
+
+	if (size == 0)
+		return;
+
+	int err = dmu_check_direct_valid(dn, offset, size, B_TRUE);
+
+	if (err == EINVAL) {
+		return;
+	} else if (err) {
+		abd_t *data = abd_get_from_buf((void *)buf, size);
+		VERIFY0(dmu_write_abd(dn, offset, size,
+		    data, DMU_DIRECTIO, tx, B_TRUE));
+		abd_put(data);
+		return;
+	}
+
+	VERIFY0(dmu_buf_hold_array_by_dnode(dn, offset, size,
+	    FALSE, FTAG, &numbufs, &dbp, DMU_READ_PREFETCH));
+	dmu_write_impl(dbp, numbufs, offset, size, buf, tx);
+	dmu_buf_rele_array(dbp, numbufs, FTAG);
+}
+
+/*
  * Note: Lustre is an external consumer of this interface.
  */
 void
@@ -1460,6 +1953,20 @@ dmu_write_by_dnode(dnode_t *dn, uint64_t offset, uint64_t size,
 
 	if (size == 0)
 		return;
+
+	if (dn->dn_objset->os_direct == ZFS_DIRECT_ALWAYS) {
+		int err = dmu_check_direct_valid(dn, offset, size, B_TRUE);
+
+		if (err == EINVAL) {
+			return;
+		} else if (err) {
+			abd_t *data = abd_get_from_buf((void *)buf, size);
+			VERIFY0(dmu_write_abd(dn, offset, size, data,
+			    DMU_DIRECTIO, tx, B_TRUE));
+			abd_put(data);
+			return;
+		}
+	}
 
 	VERIFY0(dmu_buf_hold_array_by_dnode(dn, offset, size,
 	    FALSE, FTAG, &numbufs, &dbp, DMU_READ_PREFETCH));
@@ -1477,7 +1984,7 @@ dmu_prealloc(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	if (size == 0)
 		return;
 
-	VERIFY(0 == dmu_buf_hold_array(os, object, offset, size,
+	VERIFY0(dmu_buf_hold_array(os, object, offset, size,
 	    FALSE, FTAG, &numbufs, &dbp));
 
 	for (i = 0; i < numbufs; i++) {
@@ -1521,165 +2028,68 @@ dmu_redact(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	dmu_buf_rele_array(dbp, numbufs, FTAG);
 }
 
-/*
- * DMU support for xuio
- */
-kstat_t *xuio_ksp = NULL;
-
-typedef struct xuio_stats {
-	/* loaned yet not returned arc_buf */
-	kstat_named_t xuiostat_onloan_rbuf;
-	kstat_named_t xuiostat_onloan_wbuf;
-	/* whether a copy is made when loaning out a read buffer */
-	kstat_named_t xuiostat_rbuf_copied;
-	kstat_named_t xuiostat_rbuf_nocopy;
-	/* whether a copy is made when assigning a write buffer */
-	kstat_named_t xuiostat_wbuf_copied;
-	kstat_named_t xuiostat_wbuf_nocopy;
-} xuio_stats_t;
-
-static xuio_stats_t xuio_stats = {
-	{ "onloan_read_buf",	KSTAT_DATA_UINT64 },
-	{ "onloan_write_buf",	KSTAT_DATA_UINT64 },
-	{ "read_buf_copied",	KSTAT_DATA_UINT64 },
-	{ "read_buf_nocopy",	KSTAT_DATA_UINT64 },
-	{ "write_buf_copied",	KSTAT_DATA_UINT64 },
-	{ "write_buf_nocopy",	KSTAT_DATA_UINT64 }
-};
-
-#define	XUIOSTAT_INCR(stat, val)        \
-	atomic_add_64(&xuio_stats.stat.value.ui64, (val))
-#define	XUIOSTAT_BUMP(stat)	XUIOSTAT_INCR(stat, 1)
-
-#ifdef HAVE_UIO_ZEROCOPY
-int
-dmu_xuio_init(xuio_t *xuio, int nblk)
-{
-	dmu_xuio_t *priv;
-	uio_t *uio = &xuio->xu_uio;
-
-	uio->uio_iovcnt = nblk;
-	uio->uio_iov = kmem_zalloc(nblk * sizeof (iovec_t), KM_SLEEP);
-
-	priv = kmem_zalloc(sizeof (dmu_xuio_t), KM_SLEEP);
-	priv->cnt = nblk;
-	priv->bufs = kmem_zalloc(nblk * sizeof (arc_buf_t *), KM_SLEEP);
-	priv->iovp = (iovec_t *)uio->uio_iov;
-	XUIO_XUZC_PRIV(xuio) = priv;
-
-	if (XUIO_XUZC_RW(xuio) == UIO_READ)
-		XUIOSTAT_INCR(xuiostat_onloan_rbuf, nblk);
-	else
-		XUIOSTAT_INCR(xuiostat_onloan_wbuf, nblk);
-
-	return (0);
-}
-
-void
-dmu_xuio_fini(xuio_t *xuio)
-{
-	dmu_xuio_t *priv = XUIO_XUZC_PRIV(xuio);
-	int nblk = priv->cnt;
-
-	kmem_free(priv->iovp, nblk * sizeof (iovec_t));
-	kmem_free(priv->bufs, nblk * sizeof (arc_buf_t *));
-	kmem_free(priv, sizeof (dmu_xuio_t));
-
-	if (XUIO_XUZC_RW(xuio) == UIO_READ)
-		XUIOSTAT_INCR(xuiostat_onloan_rbuf, -nblk);
-	else
-		XUIOSTAT_INCR(xuiostat_onloan_wbuf, -nblk);
-}
-
-/*
- * Initialize iov[priv->next] and priv->bufs[priv->next] with { off, n, abuf }
- * and increase priv->next by 1.
- */
-int
-dmu_xuio_add(xuio_t *xuio, arc_buf_t *abuf, offset_t off, size_t n)
-{
-	struct iovec *iov;
-	uio_t *uio = &xuio->xu_uio;
-	dmu_xuio_t *priv = XUIO_XUZC_PRIV(xuio);
-	int i = priv->next++;
-
-	ASSERT(i < priv->cnt);
-	ASSERT(off + n <= arc_buf_lsize(abuf));
-	iov = (iovec_t *)uio->uio_iov + i;
-	iov->iov_base = (char *)abuf->b_data + off;
-	iov->iov_len = n;
-	priv->bufs[i] = abuf;
-	return (0);
-}
-
-int
-dmu_xuio_cnt(xuio_t *xuio)
-{
-	dmu_xuio_t *priv = XUIO_XUZC_PRIV(xuio);
-	return (priv->cnt);
-}
-
-arc_buf_t *
-dmu_xuio_arcbuf(xuio_t *xuio, int i)
-{
-	dmu_xuio_t *priv = XUIO_XUZC_PRIV(xuio);
-
-	ASSERT(i < priv->cnt);
-	return (priv->bufs[i]);
-}
-
-void
-dmu_xuio_clear(xuio_t *xuio, int i)
-{
-	dmu_xuio_t *priv = XUIO_XUZC_PRIV(xuio);
-
-	ASSERT(i < priv->cnt);
-	priv->bufs[i] = NULL;
-}
-#endif /* HAVE_UIO_ZEROCOPY */
-
-static void
-xuio_stat_init(void)
-{
-	xuio_ksp = kstat_create("zfs", 0, "xuio_stats", "misc",
-	    KSTAT_TYPE_NAMED, sizeof (xuio_stats) / sizeof (kstat_named_t),
-	    KSTAT_FLAG_VIRTUAL);
-	if (xuio_ksp != NULL) {
-		xuio_ksp->ks_data = &xuio_stats;
-		kstat_install(xuio_ksp);
-	}
-}
-
-static void
-xuio_stat_fini(void)
-{
-	if (xuio_ksp != NULL) {
-		kstat_delete(xuio_ksp);
-		xuio_ksp = NULL;
-	}
-}
-
-void
-xuio_stat_wbuf_copied(void)
-{
-	XUIOSTAT_BUMP(xuiostat_wbuf_copied);
-}
-
-void
-xuio_stat_wbuf_nocopy(void)
-{
-	XUIOSTAT_BUMP(xuiostat_wbuf_nocopy);
-}
-
 #ifdef _KERNEL
+static int
+dmu_rw_uio_direct(dnode_t *dn, uio_t *uio, uint64_t size,
+    dmu_tx_t *tx, boolean_t read)
+{
+	uint_t numpages;
+	abd_t *data;
+	int err;
+
+	/*
+	 * All Direct IO requests must be PAGE_SIZE aligned
+	 */
+	ASSERT(IO_PAGE_ALIGNED(uio->uio_loffset, size));
+
+	numpages = size / PAGE_SIZE;
+	zfs_page_p *pages =
+	    kmem_alloc(numpages * sizeof (zfs_page_p), KM_SLEEP);
+
+	err = zfs_uio_get_user_pages(uio, pages, numpages,
+	    read ? UIO_READ : UIO_WRITE);
+	if (err == ENOTSUP)
+		return (err);
+	else
+		ASSERT3U(err, ==, numpages);
+
+	data = abd_alloc_from_pages(pages, numpages);
+
+	if (read) {
+		err = dmu_read_abd(dn, uio->uio_loffset, size,
+		    data, DMU_DIRECTIO);
+	} else { /* write */
+		err = dmu_write_abd(dn, uio->uio_loffset, size,
+		    data, DMU_DIRECTIO, tx, B_FALSE);
+	}
+
+	abd_free(data);
+
+	zfs_put_user_pages(pages, numpages, read);
+
+	kmem_free(pages, numpages * sizeof (zfs_page_p));
+	if (err == 0)
+		uioskip(uio, size);
+	return (err);
+}
+
 int
-dmu_read_uio_dnode(dnode_t *dn, uio_t *uio, uint64_t size)
+dmu_read_uio_dnode(dnode_t *dn, uio_t *uio, uint64_t size, boolean_t o_direct)
 {
 	dmu_buf_t **dbp;
 	int numbufs, i, err;
-#ifdef HAVE_UIO_ZEROCOPY
-	xuio_t *xuio = NULL;
-#endif
+
+	if (o_direct) {
+		err = dmu_check_direct_valid(dn, uio->uio_loffset, size,
+		    B_FALSE);
+
+		if (err == EINVAL) {
+			return (SET_ERROR(err));
+		} else if (err) {
+			return (dmu_rw_uio_direct(dn, uio,  size, NULL,
+			    B_TRUE));
+		}
+	}
 
 	/*
 	 * NB: we could do this block-at-a-time, but it's nice
@@ -1700,29 +2110,12 @@ dmu_read_uio_dnode(dnode_t *dn, uio_t *uio, uint64_t size)
 		bufoff = uio->uio_loffset - db->db_offset;
 		tocpy = MIN(db->db_size - bufoff, size);
 
-#ifdef HAVE_UIO_ZEROCOPY
-		if (xuio) {
-			dmu_buf_impl_t *dbi = (dmu_buf_impl_t *)db;
-			arc_buf_t *dbuf_abuf = dbi->db_buf;
-			arc_buf_t *abuf = dbuf_loan_arcbuf(dbi);
-			err = dmu_xuio_add(xuio, abuf, bufoff, tocpy);
-			if (!err) {
-				uio->uio_resid -= tocpy;
-				uio->uio_loffset += tocpy;
-			}
-
-			if (abuf == dbuf_abuf)
-				XUIOSTAT_BUMP(xuiostat_rbuf_nocopy);
-			else
-				XUIOSTAT_BUMP(xuiostat_rbuf_copied);
-		} else
-#endif
 #ifdef __FreeBSD__
-			err = vn_io_fault_uiomove((char *)db->db_data + bufoff,
-			    tocpy, uio);
+		err = vn_io_fault_uiomove((char *)db->db_data + bufoff,
+		    tocpy, uio);
 #else
-			err = uiomove((char *)db->db_data + bufoff, tocpy,
-			    UIO_READ, uio);
+		err = uiomove((char *)db->db_data + bufoff, tocpy,
+		    UIO_READ, uio);
 #endif
 		if (err)
 			break;
@@ -1744,7 +2137,8 @@ dmu_read_uio_dnode(dnode_t *dn, uio_t *uio, uint64_t size)
  * because we don't have to find the dnode_t for the object.
  */
 int
-dmu_read_uio_dbuf(dmu_buf_t *zdb, uio_t *uio, uint64_t size)
+dmu_read_uio_dbuf(dmu_buf_t *zdb, uio_t *uio, uint64_t size,
+    boolean_t o_direct)
 {
 	dmu_buf_impl_t *db = (dmu_buf_impl_t *)zdb;
 	dnode_t *dn;
@@ -1755,7 +2149,7 @@ dmu_read_uio_dbuf(dmu_buf_t *zdb, uio_t *uio, uint64_t size)
 
 	DB_DNODE_ENTER(db);
 	dn = DB_DNODE(db);
-	err = dmu_read_uio_dnode(dn, uio, size);
+	err = dmu_read_uio_dnode(dn, uio, size, o_direct);
 	DB_DNODE_EXIT(db);
 
 	return (err);
@@ -1779,7 +2173,7 @@ dmu_read_uio(objset_t *os, uint64_t object, uio_t *uio, uint64_t size)
 	if (err)
 		return (err);
 
-	err = dmu_read_uio_dnode(dn, uio, size);
+	err = dmu_read_uio_dnode(dn, uio, size, B_FALSE);
 
 	dnode_rele(dn, FTAG);
 
@@ -1787,19 +2181,30 @@ dmu_read_uio(objset_t *os, uint64_t object, uio_t *uio, uint64_t size)
 }
 
 int
-dmu_write_uio_dnode(dnode_t *dn, uio_t *uio, uint64_t size, dmu_tx_t *tx)
+dmu_write_uio_dnode(dnode_t *dn, uio_t *uio, uint64_t size, dmu_tx_t *tx,
+    boolean_t o_direct)
 {
 	dmu_buf_t **dbp;
 	int numbufs;
 	int err = 0;
-	int i;
+
+	if (o_direct) {
+		err = dmu_check_direct_valid(dn, uio->uio_loffset, size,
+		    B_TRUE);
+
+		if (err == EINVAL) {
+			return (SET_ERROR(err));
+		} else if (err) {
+			return (dmu_rw_uio_direct(dn, uio, size, tx, B_FALSE));
+		}
+	}
 
 	err = dmu_buf_hold_array_by_dnode(dn, uio->uio_loffset, size,
 	    FALSE, FTAG, &numbufs, &dbp, DMU_READ_PREFETCH);
 	if (err)
 		return (err);
 
-	for (i = 0; i < numbufs; i++) {
+	for (int i = 0; i < numbufs; i++) {
 		uint64_t tocpy;
 		int64_t bufoff;
 		dmu_buf_t *db = dbp[i];
@@ -1854,7 +2259,7 @@ dmu_write_uio_dnode(dnode_t *dn, uio_t *uio, uint64_t size, dmu_tx_t *tx)
  */
 int
 dmu_write_uio_dbuf(dmu_buf_t *zdb, uio_t *uio, uint64_t size,
-    dmu_tx_t *tx)
+    dmu_tx_t *tx, boolean_t o_direct)
 {
 	dmu_buf_impl_t *db = (dmu_buf_impl_t *)zdb;
 	dnode_t *dn;
@@ -1865,7 +2270,7 @@ dmu_write_uio_dbuf(dmu_buf_t *zdb, uio_t *uio, uint64_t size,
 
 	DB_DNODE_ENTER(db);
 	dn = DB_DNODE(db);
-	err = dmu_write_uio_dnode(dn, uio, size, tx);
+	err = dmu_write_uio_dnode(dn, uio, size, tx, o_direct);
 	DB_DNODE_EXIT(db);
 
 	return (err);
@@ -1890,7 +2295,7 @@ dmu_write_uio(objset_t *os, uint64_t object, uio_t *uio, uint64_t size,
 	if (err)
 		return (err);
 
-	err = dmu_write_uio_dnode(dn, uio, size, tx);
+	err = dmu_write_uio_dnode(dn, uio, size, tx, B_FALSE);
 
 	dnode_rele(dn, FTAG);
 
@@ -1955,7 +2360,7 @@ dmu_assign_arcbuf_by_dnode(dnode_t *dn, uint64_t offset, arc_buf_t *buf,
 
 		dbuf_rele(db, FTAG);
 		dmu_write(os, object, offset, blksz, buf->b_data, tx);
-		dmu_return_arcbuf(buf		XUIOSTAT_BUMP(xuiostat_wbuf_copied);
+		dmu_return_arcbuf(buf);
 	}
 
 	return (0);
@@ -2201,6 +2606,7 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 	zp->zp_nopwrite = nopwrite;
 	zp->zp_encrypt = encrypt;
 	zp->zp_byteorder = ZFS_HOST_BYTEORDER;
+	zp->zp_lustre_buf = B_FALSE;
 	bzero(zp->zp_salt, ZIO_DATA_SALT_LEN);
 	bzero(zp->zp_iv, ZIO_DATA_IV_LEN);
 	bzero(zp->zp_mac, ZIO_DATA_MAC_LEN);
@@ -2449,6 +2855,7 @@ EXPORT_SYMBOL(dmu_free_long_object);
 EXPORT_SYMBOL(dmu_read);
 EXPORT_SYMBOL(dmu_read_by_dnode);
 EXPORT_SYMBOL(dmu_write);
+EXPORT_SYMBOL(dmu_write_direct_by_dnode);
 EXPORT_SYMBOL(dmu_write_by_dnode);
 EXPORT_SYMBOL(dmu_prealloc);
 EXPORT_SYMBOL(dmu_object_info);

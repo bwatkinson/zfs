@@ -99,6 +99,7 @@ static void
 zvol_write(void *arg)
 {
 	int error = 0;
+	boolean_t o_direct = B_FALSE;
 
 	zv_request_t *zvr = arg;
 	struct bio *bio = zvr->bio;
@@ -130,6 +131,10 @@ zvol_write(void *arg)
 	boolean_t sync =
 	    bio_is_fua(bio) || zv->zv_objset->os_sync == ZFS_SYNC_ALWAYS;
 
+	if (zv->zv_objset->os_direct == ZFS_DIRECT_ALWAYS) {
+		o_direct = B_TRUE;
+	}
+
 	zfs_locked_range_t *lr = zfs_rangelock_enter(&zv->zv_rangelock,
 	    uio.uio_loffset, uio.uio_resid, RL_WRITER);
 
@@ -150,7 +155,9 @@ zvol_write(void *arg)
 			dmu_tx_abort(tx);
 			break;
 		}
-		error = dmu_write_uio_dnode(zv->zv_dn, &uio, bytes, tx);
+
+		error = dmu_write_uio_dnode(zv->zv_dn, &uio, bytes, tx,
+		    o_direct);
 		if (error == 0) {
 			zvol_log_write(zv, tx, off, bytes, sync);
 		}
@@ -250,6 +257,7 @@ static void
 zvol_read(void *arg)
 {
 	int error = 0;
+	boolean_t o_direct = B_FALSE;
 
 	zv_request_t *zvr = arg;
 	struct bio *bio = zvr->bio;
@@ -265,6 +273,11 @@ zvol_read(void *arg)
 	blk_generic_start_io_acct(zv->zv_zso->zvo_queue, READ, bio_sectors(bio),
 	    &zv->zv_zso->zvo_disk->part0);
 
+	if (zv->zv_objset->os_direct == ZFS_DIRECT_ALWAYS) {
+		o_direct = B_TRUE;
+	}
+
+
 	zfs_locked_range_t *lr = zfs_rangelock_enter(&zv->zv_rangelock,
 	    uio.uio_loffset, uio.uio_resid, RL_READER);
 
@@ -276,7 +289,7 @@ zvol_read(void *arg)
 		if (bytes > volsize - uio.uio_loffset)
 			bytes = volsize - uio.uio_loffset;
 
-		error = dmu_read_uio_dnode(zv->zv_dn, &uio, bytes);
+		error = dmu_read_uio_dnode(zv->zv_dn, &uio, bytes, o_direct);
 		if (error) {
 			/* convert checksum errors into IO errors */
 			if (error == ECKSUM)

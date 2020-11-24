@@ -169,11 +169,15 @@ int zfs_abd_scatter_min_size = 512 * 3;
 abd_t *abd_zero_scatter = NULL;
 
 struct page;
+#ifndef _KERNEL
+typedef struct page *zfs_page_p;
+#endif
+
 /*
  * abd_zero_page we will be an allocated zero'd PAGESIZE buffer, which is
  * assigned to set each of the pages of abd_zero_scatter.
  */
-static struct page *abd_zero_page = NULL;
+static zfs_page_p abd_zero_page = NULL;
 
 static kmem_cache_t *abd_cache = NULL;
 static kstat_t *abd_ksp;
@@ -217,7 +221,7 @@ abd_free_struct(abd_t *abd)
 #define	ABD_FILE_CACHE_PAGE	0x2F5ABDF11ECAC4E
 
 static inline void
-abd_mark_zfs_page(struct page *page)
+abd_mark_zfs_page(zfs_page_p page)
 {
 	get_page(page);
 	SetPagePrivate(page);
@@ -225,7 +229,7 @@ abd_mark_zfs_page(struct page *page)
 }
 
 static inline void
-abd_unmark_zfs_page(struct page *page)
+abd_unmark_zfs_page(zfs_page_p page)
 {
 	set_page_private(page, 0UL);
 	ClearPagePrivate(page);
@@ -255,7 +259,7 @@ abd_alloc_chunks(abd_t *abd, size_t size)
 	struct list_head pages;
 	struct sg_table table;
 	struct scatterlist *sg;
-	struct page *page, *tmp_page = NULL;
+	zfs_page_p page, tmp_page = NULL;
 	gfp_t gfp = __GFP_NOWARN | GFP_NOIO;
 	gfp_t gfp_comp = (gfp | __GFP_NORETRY | __GFP_COMP) & ~__GFP_RECLAIM;
 	int max_order = MIN(zfs_abd_scatter_max_order, MAX_ORDER - 1);
@@ -374,7 +378,7 @@ abd_alloc_chunks(abd_t *abd, size_t size)
 {
 	struct scatterlist *sg = NULL;
 	struct sg_table table;
-	struct page *page;
+	zfs_page_p page;
 	gfp_t gfp = __GFP_NOWARN | GFP_NOIO;
 	int nr_pages = abd_chunkcnt_for_bytes(size);
 	int i = 0;
@@ -424,7 +428,7 @@ void
 abd_free_chunks(abd_t *abd)
 {
 	struct scatterlist *sg = NULL;
-	struct page *page;
+	zfs_page_p page;
 	int nr_pages = ABD_SCATTER(abd).abd_nents;
 	int order, i = 0;
 
@@ -501,10 +505,10 @@ abd_alloc_zero_scatter(void)
 #define	local_irq_save(flags)		do { (void)(flags); } while (0)
 #define	local_irq_restore(flags)	do { (void)(flags); } while (0)
 #define	nth_page(pg, i) \
-	((struct page *)((void *)(pg) + (i) * PAGESIZE))
+	((zfs_page_p)((void *)(pg) + (i) * PAGESIZE))
 
 struct scatterlist {
-	struct page *page;
+	zfs_page_p page;
 	int length;
 	int end;
 };
@@ -532,7 +536,7 @@ abd_free_sg_table(abd_t *abd)
 	for ((i) = 0, (sg) = (sgl); (i) < (nr); (i)++, (sg) = sg_next(sg))
 
 static inline void
-sg_set_page(struct scatterlist *sg, struct page *page, unsigned int len,
+sg_set_page(struct scatterlist *sg, zfs_page_p page, unsigned int len,
     unsigned int offset)
 {
 	/* currently we don't use offset */
@@ -541,7 +545,7 @@ sg_set_page(struct scatterlist *sg, struct page *page, unsigned int len,
 	sg->length = len;
 }
 
-static inline struct page *
+static inline zfs_page_p
 sg_page(struct scatterlist *sg)
 {
 	return (sg->page);
@@ -568,7 +572,7 @@ abd_alloc_chunks(abd_t *abd, size_t size)
 	sg_init_table(ABD_SCATTER(abd).abd_sgl, nr_pages);
 
 	abd_for_each_sg(abd, sg, nr_pages, i) {
-		struct page *p = umem_alloc_aligned(PAGESIZE, 64, KM_SLEEP);
+		zfs_page_p p = umem_alloc_aligned(PAGESIZE, 64, KM_SLEEP);
 		sg_set_page(sg, p, PAGESIZE, 0);
 	}
 	ABD_SCATTER(abd).abd_nents = nr_pages;
@@ -582,7 +586,7 @@ abd_free_chunks(abd_t *abd)
 
 	abd_for_each_sg(abd, sg, n, i) {
 		for (int j = 0; j < sg->length; j += PAGESIZE) {
-			struct page *p = nth_page(sg_page(sg), j >> PAGE_SHIFT);
+			zfs_page_p p = nth_page(sg_page(sg), j >> PAGE_SHIFT);
 			umem_free(p, PAGESIZE);
 		}
 	}
@@ -751,6 +755,128 @@ abd_free_linear_page(abd_t *abd)
 	abd_update_scatter_stats(abd, ABDSTAT_DECR);
 	abd_free_struct(abd);
 }
+
+#ifdef _KERNEL
+/*
+ * Allocate a scatter ABD structure from user pages. This must be freed
+ * with abd_free().
+ */
+abd_t *
+abd_alloc_from_pages(zfs_page_p *pages, uint_t n_pages)
+{
+	abd_t *abd = abd_alloc_struct(0);
+	struct sg_table table;
+	gfp_t gfp = __GFP_NOWARN | GFP_NOIO;
+	size_t size = n_pages * PAGE_SIZE;
+	int err;
+
+	VERIFY3U(size, <=, SPA_MAXBLOCKSIZE);
+
+	/*
+	 * Even if this buf is filesystem metadata, we only track that if we
+	 * own the underlying data buffer, which is not true in this case.
+	 * Therefore, we don't ever use ABD_FLAG_META here.
+	 */
+	abd->abd_flags = 0;
+	abd->abd_flags = ABD_FLAG_FROM_PAGES | ABD_FLAG_OWNER;
+	abd->abd_size = size;
+	abd->abd_parent = NULL;
+	zfs_refcount_create(&abd->abd_children);
+
+	while ((err = sg_alloc_table_from_pages(&table, pages, n_pages, 0,
+	    size, gfp))) {
+		ABDSTAT_BUMP(abdstat_scatter_sg_table_retry);
+		schedule_timeout_interruptible(1);
+		ASSERT3U(err, ==, 0);
+	}
+
+	ABD_SCATTER(abd).abd_offset = 0;
+	ABD_SCATTER(abd).abd_sgl = table.sgl;
+	ABD_SCATTER(abd).abd_nents = table.nents;
+
+	/*
+	 * XXX - if nents == 1 (happens often), should we convert
+	 * to LINEAR_PAGE?
+	 */
+	if (table.nents > 1) {
+		ABDSTAT_BUMP(abdstat_scatter_page_multi_chunk);
+		abd->abd_flags |= ABD_FLAG_MULTI_CHUNK;
+	}
+
+	abd_verify(abd);
+	return (abd);
+}
+
+void
+abd_make_pages_stable(abd_t *abd)
+{
+	struct scatterlist *sg = NULL;
+	int i = 0;
+
+	ASSERT(abd_is_from_pages(abd));
+	abd_verify(abd);
+
+	abd_for_each_sg(abd, sg, ABD_SCATTER(abd).abd_nents, i) {
+		zfs_set_page_to_stable(sg_page(sg));
+	}
+	abd->abd_flags |= ABD_FLAG_PAGES_STABLE;
+}
+
+void
+abd_release_stable_pages(abd_t *abd)
+{
+	struct scatterlist *sg = NULL;
+	int i = 0;
+
+	ASSERT(abd_is_from_pages(abd));
+	abd_verify(abd);
+
+	abd_for_each_sg(abd, sg, ABD_SCATTER(abd).abd_nents, i) {
+		zfs_release_stable_page(sg_page(sg));
+	}
+	abd->abd_flags &= ~ABD_FLAG_PAGES_STABLE;
+}
+
+abd_t *
+abd_get_offset_from_pages(abd_t *sabd, size_t off)
+{
+	ASSERT(abd_is_from_pages(sabd));
+	abd_t *abd = abd_get_offset_scatter(sabd, off);
+	abd->abd_flags |= ABD_FLAG_FROM_PAGES;
+	return (abd);
+}
+
+void
+abd_free_from_pages(abd_t *abd)
+{
+	if (abd->abd_flags & ABD_FLAG_MULTI_ZONE)
+		ABDSTAT_BUMPDOWN(abdstat_scatter_page_multi_zone);
+
+	/* pages are not owned, just free the table */
+	abd_free_sg_table(abd);
+
+	zfs_refcount_destroy(&abd->abd_children);
+	ABDSTAT_BUMPDOWN(abdstat_scatter_cnt);
+
+	abd_free_struct(abd);
+}
+#else /* _KERNEL */
+
+/*
+ * If we are not in the kernel we just simply return as there is no
+ * reason to set the pages to stable or release them.
+ */
+void
+abd_make_pages_stable(abd_t *abd)
+{
+}
+
+void
+abd_release_stable_pages(abd_t *abd)
+{
+}
+
+#endif /* _KERNEL */
 
 /*
  * If we're going to use this ABD for doing I/O using the block layer, the
@@ -953,7 +1079,7 @@ static unsigned int
 bio_map(struct bio *bio, void *buf_ptr, unsigned int bio_size)
 {
 	unsigned int offset, size, i;
-	struct page *page;
+	zfs_page_p page;
 
 	offset = offset_in_page(buf_ptr);
 	for (i = 0; i < bio->bi_max_vecs; i++) {
@@ -1036,7 +1162,7 @@ abd_bio_map_off(struct bio *bio, abd_t *abd,
 	abd_iter_advance(&aiter, off);
 
 	for (i = 0; i < bio->bi_max_vecs; i++) {
-		struct page *pg;
+		zfs_page_p pg;
 		size_t len, sgoff, pgoff;
 		struct scatterlist *sg;
 

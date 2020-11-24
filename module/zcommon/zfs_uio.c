@@ -53,6 +53,7 @@
 #include <sys/strings.h>
 #include <linux/kmap_compat.h>
 #include <linux/uaccess.h>
+#include <sys/errno.h>
 
 /*
  * Move "n" bytes at byte address "p"; "rw" indicates the direction
@@ -284,4 +285,5 @@ uioskip(uio_t *uiop, size_t n)
 	uiop->uio_resid -= n;
 }
 EXPORT_SYMBOL(uioskip);
+
 #endif /* _KERNEL */

@@ -97,14 +97,6 @@
 
 VFS_SMR_DECLARE;
 
-#if __FreeBSD_version >= 1300047
-#define	vm_page_wire_lock(pp)
-#define	vm_page_wire_unlock(pp)
-#else
-#define	vm_page_wire_lock(pp) vm_page_lock(pp)
-#define	vm_page_wire_unlock(pp) vm_page_unlock(pp)
-#endif
-
 #ifdef DEBUG_VFS_LOCKS
 #define	VNCHECKREF(vp)				  \
 	VNASSERT((vp)->v_holdcnt > 0 && (vp)->v_usecount > 0, vp,	\
@@ -444,19 +436,6 @@ page_hold(vnode_t *vp, int64_t start)
 }
 #endif
 
-static void
-page_unhold(vm_page_t pp)
-{
-
-	vm_page_wire_lock(pp);
-#if __FreeBSD_version >= 1300035
-	vm_page_unwire(pp, PQ_ACTIVE);
-#else
-	vm_page_unhold(pp);
-#endif
-	vm_page_wire_unlock(pp);
-}
-
 /*
  * When a file is memory mapped, we must keep the IO data synchronized
  * between the DMU cache and the memory mapped pages.  What this means:
@@ -636,7 +615,7 @@ mappedread(znode_t *zp, int nbytes, uio_t *uio)
 		} else {
 			zfs_vmobject_wunlock_12(obj);
 			error = dmu_read_uio_dbuf(sa_get_db(zp->z_sa_hdl),
-			    uio, bytes);
+			    uio, bytes, B_FALSE);
 			zfs_vmobject_wlock_12(obj);
 		}
 		len -= bytes;
@@ -4400,6 +4379,8 @@ ioflags(int ioflags)
 		flags |= FAPPEND;
 	if (ioflags & IO_NDELAY)
 		flags |= FNONBLOCK;
+	if (ioflags & IO_DIRECT)
+		flags |= O_DIRECT;
 	if (ioflags & IO_SYNC)
 		flags |= (FSYNC | FDSYNC | FRSYNC);
 

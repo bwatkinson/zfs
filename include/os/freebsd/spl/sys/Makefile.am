@@ -17,6 +17,7 @@ KERNEL_H = \
 	extdirent.h \
 	file.h \
 	freebsd_rwlock.h \
+	page.h \
 	inttypes.h \
 	isa_defs.h \
 	kmem_cache.h \

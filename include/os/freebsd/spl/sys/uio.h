@@ -35,8 +35,6 @@
 #include <sys/_uio.h>
 #include <sys/debug.h>
 
-
-
 #define	uio_loffset	uio_offset
 
 typedef	struct uio	uio_t;

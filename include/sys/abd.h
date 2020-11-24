@@ -38,6 +38,10 @@ extern "C" {
 struct abd; /* forward declaration */
 typedef struct abd abd_t;
 
+#if defined(_KERNEL)
+#include <sys/page.h> /* getting typedef for zfs_page_p */
+#endif
+
 typedef int abd_iter_func_t(void *buf, size_t len, void *priv);
 typedef int abd_iter_func2_t(void *bufa, void *bufb, size_t len, void *priv);
 
@@ -52,6 +56,9 @@ abd_t *abd_alloc_linear(size_t, boolean_t);
 abd_t *abd_alloc_gang_abd(void);
 abd_t *abd_alloc_for_io(size_t, boolean_t);
 abd_t *abd_alloc_sametype(abd_t *, size_t);
+#if defined(_KERNEL)
+abd_t *abd_alloc_from_pages(zfs_page_p *, uint_t);
+#endif
 void abd_gang_add(abd_t *, abd_t *, boolean_t);
 void abd_free(abd_t *);
 void abd_put(abd_t *);
@@ -72,6 +79,7 @@ void abd_return_buf(abd_t *, void *, size_t);
 void abd_return_buf_copy(abd_t *, void *, size_t);
 void abd_take_ownership_of_buf(abd_t *, boolean_t);
 void abd_release_ownership_of_buf(abd_t *);
+boolean_t abd_has_ownership(abd_t *);
 
 /*
  * ABD operations
@@ -88,6 +96,8 @@ int abd_cmp_buf_off(abd_t *, const void *, size_t, size_t);
 void abd_zero_off(abd_t *, size_t, size_t);
 void abd_verify(abd_t *);
 uint_t abd_get_size(abd_t *);
+void abd_make_pages_stable(abd_t *);
+void abd_release_stable_pages(abd_t *);
 
 void abd_raidz_gen_iterate(abd_t **cabds, abd_t *dabd,
 	ssize_t csize, ssize_t dsize, const unsigned parity,
@@ -138,6 +148,9 @@ abd_zero(abd_t *abd, size_t size)
 boolean_t abd_is_linear(abd_t *);
 boolean_t abd_is_gang(abd_t *);
 boolean_t abd_is_linear_page(abd_t *);
+boolean_t abd_is_from_pages(abd_t *abd);
+boolean_t abd_pages_are_stable(abd_t *abd);
+boolean_t abd_is_zeros(abd_t *abd);
 
 /*
  * Module lifecycle

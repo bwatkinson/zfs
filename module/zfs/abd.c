@@ -125,6 +125,24 @@ abd_is_gang(abd_t *abd)
 	    B_FALSE);
 }
 
+boolean_t
+abd_is_from_pages(abd_t *abd)
+{
+	return ((abd->abd_flags & ABD_FLAG_FROM_PAGES) != 0);
+}
+
+boolean_t
+abd_is_zeros(abd_t *abd)
+{
+	return ((abd->abd_flags & ABD_FLAG_ZEROS) != 0);
+}
+
+boolean_t
+abd_pages_are_stable(abd_t *abd)
+{
+	return ((abd->abd_flags & ABD_FLAG_PAGES_STABLE) != 0);
+}
+
 void
 abd_verify(abd_t *abd)
 {
@@ -133,7 +151,8 @@ abd_verify(abd_t *abd)
 	ASSERT3U(abd->abd_flags, ==, abd->abd_flags & (ABD_FLAG_LINEAR |
 	    ABD_FLAG_OWNER | ABD_FLAG_META | ABD_FLAG_MULTI_ZONE |
 	    ABD_FLAG_MULTI_CHUNK | ABD_FLAG_LINEAR_PAGE | ABD_FLAG_GANG |
-	    ABD_FLAG_GANG_FREE | ABD_FLAG_ZEROS));
+	    ABD_FLAG_GANG_FREE | ABD_FLAG_ZEROS | ABD_FLAG_FROM_PAGES |
+	    ABD_FLAG_PAGES_STABLE));
 	IMPLY(abd->abd_parent != NULL, !(abd->abd_flags & ABD_FLAG_OWNER));
 	IMPLY(abd->abd_flags & ABD_FLAG_META, abd->abd_flags & ABD_FLAG_OWNER);
 	if (abd_is_linear(abd)) {
@@ -174,7 +193,7 @@ abd_alloc(size_t size, boolean_t is_metadata)
 
 	abd_t *abd = abd_alloc_struct(size);
 	abd->abd_flags = ABD_FLAG_OWNER;
-	abd->abd_u.abd_scatter.abd_offset = 0;
+	ABD_SCATTER(abd).abd_offset = 0;
 	abd_alloc_chunks(abd, size);
 
 	if (is_metadata) {
@@ -324,7 +343,7 @@ abd_free_gang_abd(abd_t *abd)
 
 /*
  * Free an ABD. Only use this on ABDs allocated with abd_alloc(),
- * abd_alloc_linear(), or abd_alloc_gang_abd().
+ * abd_alloc_linear(), abd_alloc_from_pages(), or abd_alloc_gang_abd().
  */
 void
 abd_free(abd_t *abd)
@@ -339,6 +358,10 @@ abd_free(abd_t *abd)
 		abd_free_linear(abd);
 	else if (abd_is_gang(abd))
 		abd_free_gang_abd(abd);
+#if defined(_KERNEL)
+	else if (abd_is_from_pages(abd))
+		abd_free_from_pages(abd);
+#endif
 	else
 		abd_free_scatter(abd);
 }
@@ -350,6 +373,7 @@ abd_free(abd_t *abd)
 abd_t *
 abd_alloc_sametype(abd_t *sabd, size_t size)
 {
+	ASSERT(!abd_is_from_pages(sabd));
 	boolean_t is_metadata = (sabd->abd_flags & ABD_FLAG_META) != 0;
 	if (abd_is_linear(sabd) &&
 	    !abd_is_linear_page(sabd)) {
@@ -358,7 +382,6 @@ abd_alloc_sametype(abd_t *sabd, size_t size)
 		return (abd_alloc(size, is_metadata));
 	}
 }
-
 
 /*
  * Create gang ABD that will be the head of a list of ABD's. This is used
@@ -536,7 +559,6 @@ abd_get_offset_impl(abd_t *sabd, size_t off, size_t size)
 		 * this case. Therefore, we don't ever use ABD_FLAG_META here.
 		 */
 		abd->abd_flags = ABD_FLAG_LINEAR;
-
 		ABD_LINEAR_BUF(abd) = (char *)ABD_LINEAR_BUF(sabd) + off;
 	} else if (abd_is_gang(sabd)) {
 		size_t left = size;
@@ -553,6 +575,10 @@ abd_get_offset_impl(abd_t *sabd, size_t off, size_t size)
 			off = 0;
 		}
 		ASSERT3U(left, ==, 0);
+#if defined(_KERNEL)
+	} else if (abd_is_from_pages(sabd)) {
+		abd = abd_get_offset_from_pages(sabd, off);
+#endif
 	} else {
 		abd = abd_get_offset_scatter(sabd, off);
 	}
@@ -732,6 +758,13 @@ abd_take_ownership_of_buf(abd_t *abd, boolean_t is_metadata)
 	}
 
 	abd_update_linear_stats(abd, ABDSTAT_INCR);
+}
+
+boolean_t
+abd_has_ownership(abd_t *abd)
+{
+	abd_verify(abd);
+	return (abd->abd_flags & ABD_FLAG_OWNER);
 }
 
 /*

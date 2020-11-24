@@ -567,6 +567,7 @@ int dmu_buf_hold_by_dnode(dnode_t *dn, uint64_t offset,
 int dmu_buf_hold_array_by_dnode(dnode_t *dn, uint64_t offset,
     uint64_t length, boolean_t read, void *tag, int *numbufsp,
     dmu_buf_t ***dbpp, uint32_t flags);
+
 /*
  * Add a reference to a dmu buffer that has already been held via
  * dmu_buf_hold() in the current context.
@@ -826,7 +827,8 @@ int dmu_free_range(objset_t *os, uint64_t object, uint64_t offset,
 int dmu_free_long_range(objset_t *os, uint64_t object, uint64_t offset,
     uint64_t size);
 int dmu_free_long_object(objset_t *os, uint64_t object);
-
+int dmu_check_direct_valid(dnode_t *dn, uint64_t offset, uint64_t size,
+    boolean_t write);
 /*
  * Convenience functions.
  *
@@ -836,26 +838,31 @@ int dmu_free_long_object(objset_t *os, uint64_t object);
 #define	DMU_READ_PREFETCH	0 /* prefetch */
 #define	DMU_READ_NO_PREFETCH	1 /* don't prefetch */
 #define	DMU_READ_NO_DECRYPT	2 /* don't decrypt */
+#define	DMU_DIRECTIO		4 /* use direct IO */
 int dmu_read(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	void *buf, uint32_t flags);
 int dmu_read_by_dnode(dnode_t *dn, uint64_t offset, uint64_t size, void *buf,
     uint32_t flags);
 void dmu_write(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	const void *buf, dmu_tx_t *tx);
+void dmu_write_direct_by_dnode(dnode_t *dn, uint64_t offset, uint64_t size,
+    const void *buf, dmu_tx_t *tx);
 void dmu_write_by_dnode(dnode_t *dn, uint64_t offset, uint64_t size,
     const void *buf, dmu_tx_t *tx);
 void dmu_prealloc(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	dmu_tx_t *tx);
 #ifdef _KERNEL
 int dmu_read_uio(objset_t *os, uint64_t object, struct uio *uio, uint64_t size);
-int dmu_read_uio_dbuf(dmu_buf_t *zdb, struct uio *uio, uint64_t size);
-int dmu_read_uio_dnode(dnode_t *dn, struct uio *uio, uint64_t size);
+int dmu_read_uio_dbuf(dmu_buf_t *zdb, struct uio *uio, uint64_t size,
+	boolean_t o_direct);
+int dmu_read_uio_dnode(dnode_t *dn, struct uio *uio, uint64_t size,
+	boolean_t o_direct);
 int dmu_write_uio(objset_t *os, uint64_t object, struct uio *uio, uint64_t size,
 	dmu_tx_t *tx);
 int dmu_write_uio_dbuf(dmu_buf_t *zdb, struct uio *uio, uint64_t size,
-	dmu_tx_t *tx);
+	dmu_tx_t *tx, boolean_t o_direct);
 int dmu_write_uio_dnode(dnode_t *dn, struct uio *uio, uint64_t size,
-	dmu_tx_t *tx);
+	dmu_tx_t *tx, boolean_t o_direct);
 #endif
 struct arc_buf *dmu_request_arcbuf(dmu_buf_t *handle, int size);
 void dmu_return_arcbuf(struct arc_buf *buf);

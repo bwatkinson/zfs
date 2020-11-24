@@ -114,6 +114,7 @@ SRCS+=	acl_common.c \
 	spl_acl.c \
 	spl_cmn_err.c \
 	spl_dtrace.c \
+	spl_page.c \
 	spl_kmem.c \
 	spl_kstat.c \
 	spl_misc.c \

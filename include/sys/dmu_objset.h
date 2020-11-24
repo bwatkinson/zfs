@@ -126,6 +126,7 @@ struct objset {
 	zfs_cache_type_t os_primary_cache;
 	zfs_cache_type_t os_secondary_cache;
 	zfs_sync_type_t os_sync;
+	zfs_direct_t os_direct;
 	zfs_redundant_metadata_type_t os_redundant_metadata;
 	uint64_t os_recordsize;
 	/*
@@ -203,6 +204,16 @@ struct objset {
 #define	DMU_OS_IS_L2CACHEABLE(os)				\
 	((os)->os_secondary_cache == ZFS_CACHE_ALL ||		\
 	(os)->os_secondary_cache == ZFS_CACHE_METADATA)
+
+/*
+ * Quick Direct IO check macros
+ */
+#define	DMU_OS_DIRECT_IS_ENABLED(os) \
+	((os)->os_direct == ZFS_DIRECT_DEFAULT) || \
+	((os)->os_direct == ZFS_DIRECT_ALWAYS)
+
+#define	DMU_OS_DIRECT_IS_DISABLED(os) \
+	((os)->os_direct == ZFS_DIRECT_DISABLED)
 
 /* called from zpl */
 int dmu_objset_hold(const char *name, void *tag, objset_t **osp);

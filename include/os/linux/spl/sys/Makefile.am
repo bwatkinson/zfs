@@ -15,6 +15,7 @@ KERNEL_H = \
 	errno.h \
 	fcntl.h \
 	file.h \
+	page.h \
 	inttypes.h \
 	isa_defs.h \
 	kmem_cache.h \

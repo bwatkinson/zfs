@@ -1,7 +1,4 @@
 /*
- * Copyright (c) 2007 Pawel Jakub Dawidek <pjd@FreeBSD.org>
- * All rights reserved.
- *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -26,48 +23,31 @@
  * $FreeBSD$
  */
 
-#ifndef _OPENSOLARIS_SYS_MUTEX_H_
-#define	_OPENSOLARIS_SYS_MUTEX_H_
-
-typedef struct sx	kmutex_t;
+#ifndef _SPL_PAGE_H_
+#define	_SPL_PAGE_H_
 
 #include <sys/param.h>
-#include <sys/lock.h>
-#include_next <sys/sdt.h>
-#include_next <sys/mutex.h>
-#include <sys/proc.h>
-#include <sys/sx.h>
+#include <sys/uio.h>
 
-typedef enum {
-	MUTEX_DEFAULT = 0	/* kernel default mutex */
-} kmutex_type_t;
-
-#define	MUTEX_HELD(x)		(mutex_owned(x))
-#define	MUTEX_NOT_HELD(x)	(!mutex_owned(x) || panicstr)
-
-#ifndef OPENSOLARIS_WITNESS
-#define	MUTEX_FLAGS	(SX_DUPOK | SX_NEW | SX_NOWITNESS)
-#else
-#define	MUTEX_FLAGS	(SX_DUPOK | SX_NEW)
+#ifdef	__cplusplus
+extern "C" {
 #endif
 
-#define	mutex_init(lock, desc, type, arg)	do {			\
-	const char *_name;						\
-	ASSERT((type) == MUTEX_DEFAULT);				\
-	for (_name = #lock; *_name != '\0'; _name++) {			\
-		if (*_name >= 'a' && *_name <= 'z')			\
-			break;						\
-	}								\
-	if (*_name == '\0')						\
-		_name = #lock;						\
-	sx_init_flags((lock), _name, MUTEX_FLAGS);			\
-} while (0)
-#define	mutex_destroy(lock)	sx_destroy(lock)
-#define	mutex_enter(lock)	sx_xlock(lock)
-#define	mutex_enter_nested(lock, type)	sx_xlock(lock)
-#define	mutex_tryenter(lock)	sx_try_xlock(lock)
-#define	mutex_exit(lock)	sx_xunlock(lock)
-#define	mutex_owned(lock)	sx_xlocked(lock)
-#define	mutex_owner(lock)	sx_xholder(lock)
+typedef vm_page_t zfs_page_p;
 
-#endif	/* _OPENSOLARIS_SYS_MUTEX_H_ */
+long zfs_hold_pages(unsigned long start, unsigned long nr_pages, int read,
+    zfs_page_p *pages);
+long zfs_get_user_pages(unsigned long start, unsigned long nr_pages, int read,
+    zfs_page_p *pages);
+void zfs_put_user_pages(zfs_page_p *pages, unsigned long nr_pages,
+    boolean_t read);
+void zfs_set_page_to_stable(zfs_page_p page);
+void zfs_release_stable_page(zfs_page_p page);
+int zfs_uio_get_user_pages(uio_t *uio, zfs_page_p *pages, unsigned maxpages,
+    enum uio_rw rw);
+
+#ifdef	__cplusplus
+}
+#endif
+
+#endif /* _SPL_PAGE_H_ */

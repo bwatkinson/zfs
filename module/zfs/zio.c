@@ -2859,6 +2859,7 @@ zio_write_gang_block(zio_t *pio)
 		zp.zp_nopwrite = B_FALSE;
 		zp.zp_encrypt = gio->io_prop.zp_encrypt;
 		zp.zp_byteorder = gio->io_prop.zp_byteorder;
+		zp.zp_lustre_buf = gio->io_prop.zp_lustre_buf;
 		bzero(zp.zp_salt, ZIO_DATA_SALT_LEN);
 		bzero(zp.zp_iv, ZIO_DATA_IV_LEN);
 		bzero(zp.zp_mac, ZIO_DATA_MAC_LEN);
@@ -3773,6 +3774,26 @@ zio_vdev_io_start(zio_t *zio)
 		ASSERT(zio->io_type == ZIO_TYPE_WRITE);
 		zio_vdev_io_bypass(zio);
 		return (zio);
+	}
+
+	/*
+	 * If we are doing Direct IO writes and we are issuing to a Raidz or
+	 * dRAID VDEV we must make sure that pages are stable if they are not
+	 * already been made stable at the DMU layer. We do this to ensure the
+	 * user can not modify the pages contents while parity is being
+	 * generated.
+	 *
+	 * However, if the buffer we are writing is coming from Lustre we do
+	 * not have to worry about making the pages stable as Lustre has already
+	 * made a stable copy of the data.
+	 */
+	if (zio->io_prop.zp_lustre_buf == B_FALSE &&
+	    zio->io_type == ZIO_TYPE_WRITE &&
+	    (vd->vdev_ops == &vdev_raidz_ops ||
+	    vd->vdev_ops == &vdev_draid_ops) &&
+	    abd_is_from_pages(zio->io_abd) &&
+	    !abd_pages_are_stable(zio->io_abd)) {
+		abd_make_pages_stable(zio->io_abd);
 	}
 
 	/*

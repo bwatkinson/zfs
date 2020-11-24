@@ -153,7 +153,16 @@ vdev_raidz_row_free(raidz_row_t *rr)
 	}
 	for (c = rr->rr_firstdatacol; c < rr->rr_cols; c++) {
 		if (rr->rr_col[c].rc_size != 0) {
-			if (abd_is_gang(rr->rr_col[c].rc_abd))
+			/*
+			 * It is possible we have a gang ABD that we got
+			 * using abd_get_offset_size() in
+			 * vdev_raidz_map_alloc(). In the event the gang
+			 * ABD was created for O_DIRECT reads we will
+			 * not have ownership. In this case we just
+			 * call abd_put().
+			 */
+			if (abd_is_gang(rr->rr_col[c].rc_abd) &&
+			    abd_has_ownership(rr->rr_col[c].rc_abd))
 				abd_free(rr->rr_col[c].rc_abd);
 			else
 				abd_put(rr->rr_col[c].rc_abd);
@@ -263,8 +272,9 @@ vdev_raidz_cksum_finish(zio_cksum_report_t *zcr, const abd_t *good_data)
 			vdev_raidz_generate_parity_row(rm, rr);
 
 			/* restore everything back to its original state */
-			for (x = 0; x < rr->rr_firstdatacol; x++)
+			for (x = 0; x < rr->rr_firstdatacol; x++) {
 				rr->rr_col[x].rc_abd = bad_parity[x];
+			}
 
 			offset = 0;
 			for (x = rr->rr_firstdatacol; x < rr->rr_cols; x++) {
