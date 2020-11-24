@@ -30,6 +30,8 @@
 extern "C" {
 #endif
 
+struct sf_buf;
+
 struct abd_scatter {
 	uint_t		abd_offset;
 	void		*abd_chunks[1]; /* actually variable-length */
@@ -37,6 +39,7 @@ struct abd_scatter {
 
 struct abd_linear {
 	void		*abd_buf;
+	struct sf_buf 	*sf; /* for LINEAR_PAGE FreeBSD */
 };
 
 #ifdef __cplusplus
