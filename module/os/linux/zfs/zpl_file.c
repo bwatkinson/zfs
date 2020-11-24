@@ -567,14 +567,12 @@ static int
 zpl_mmap(struct file *filp, struct vm_area_struct *vma)
 {
 	struct inode *ip = filp->f_mapping->host;
-	znode_t *zp = ITOZ(ip);
-	int error;
-	fstrans_cookie_t cookie;
 
-	cookie = spl_fstrans_mark();
-	error = -zfs_map(ip, vma->vm_pgoff, (caddr_t *)vma->vm_start,
+	fstrans_cookie_t cookie = spl_fstrans_mark();
+	int error = -zfs_map(ip, vma->vm_pgoff, (caddr_t *)vma->vm_start,
 	    (size_t)(vma->vm_end - vma->vm_start), vma->vm_flags);
 	spl_fstrans_unmark(cookie);
+
 	if (error)
 		return (error);
 
@@ -582,9 +580,12 @@ zpl_mmap(struct file *filp, struct vm_area_struct *vma)
 	if (error)
 		return (error);
 
+#if !defined(HAVE_FILEMAP_RANGE_HAS_PAGE)
+	znode_t *zp = ITOZ(ip);
 	mutex_enter(&zp->z_lock);
 	zp->z_is_mapped = B_TRUE;
 	mutex_exit(&zp->z_lock);
+#endif
 
 	return (error);
 }
