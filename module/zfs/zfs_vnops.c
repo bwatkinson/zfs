@@ -265,7 +265,7 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 			error = mappedread_sf(zp, nbytes, uio);
 		else
 #endif
-		if (zn_has_cached_data(zp) && !(ioflag & O_DIRECT)) {
+		if (zn_has_cached_data(zp) && !(uio->uio_extflg & UIO_DIRECT)) {
 			error = mappedread(zp, nbytes, uio);
 		} else {
 			error = dmu_read_uio_dbuf(sa_get_db(zp->z_sa_hdl),
@@ -318,6 +318,7 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 {
 	int error = 0;
 	ssize_t start_resid = zfs_uio_resid(uio);
+	boolean_t o_direct_defer = B_FALSE;
 
 	/*
 	 * Fasttrack empty write
@@ -434,6 +435,33 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 	const uint64_t projid = zp->z_projid;
 
 	/*
+	 * In the event we are increasing the file block size
+	 * (lr_length == UINT64_MAX), we will direct the write to the ARC.
+	 * Because zfs_grow_blocksize() will read from the ARC in order to
+	 * grow the dbuf, we avoid doing Direct IO here as that would cause
+	 * data written to disk to be overwritten by data in the ARC during
+	 * the sync phase. Besides writing data twice to disk, we also
+	 * want to avoid consistency concerns between data in the the ARC and
+	 * on disk while growing the file's blocksize.
+	 *
+	 * We will only temporarily remove Direct IO and put it back after
+	 * we have grown the blocksize. We do this in the event a request
+	 * is larger than max_blksz, so further requests to
+	 * dmu_write_uio_dbuf() will still issue the requests using Direct
+	 * IO.
+	 *
+	 * As an example:
+	 * The first block to file is being written as a 4k request with
+	 * a recorsize of 1K. The first 1K issued in the loop below will go
+	 * through the ARC; however, the following 3 1K requests will
+	 * use Direct IO.
+	 */
+	if (uio->uio_extflg & UIO_DIRECT && lr->lr_length == UINT64_MAX) {
+		uio->uio_extflg &= ~UIO_DIRECT;
+		o_direct_defer = B_TRUE;
+	}
+
+	/*
 	 * Write the file in reasonable size chunks.  Each chunk is written
 	 * in a separate transaction; this keeps the intent log records small
 	 * and allows us to do more fine-grained space accounting.
@@ -453,7 +481,8 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		arc_buf_t *abuf = NULL;
 		if (n >= max_blksz && woff >= zp->z_size &&
 		    P2PHASE(woff, max_blksz) == 0 &&
-		    zp->z_blksz == max_blksz) {
+		    zp->z_blksz == max_blksz &&
+		    !(uio->uio_extflg & UIO_DIRECT)) {
 			/*
 			 * This write covers a full block.  "Borrow" a buffer
 			 * from the dmu so that we can fill it before we enter
@@ -523,8 +552,7 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		 * XXX - should we really limit each write to z_max_blksz?
 		 * Perhaps we should use SPA_MAXBLOCKSIZE chunks?
 		 */
-		const ssize_t nbytes =
-		    MIN(n, max_blksz - P2PHASE(woff, max_blksz));
+		ssize_t nbytes = MIN(n, max_blksz - P2PHASE(woff, max_blksz));
 
 		ssize_t tx_bytes;
 		if (abuf == NULL) {
@@ -532,6 +560,10 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 			zfs_uio_fault_disable(uio, B_TRUE);
 			error = dmu_write_uio_dbuf(sa_get_db(zp->z_sa_hdl),
 			    uio, nbytes, tx);
+			if (o_direct_defer) {
+				uio->uio_extflg |= UIO_DIRECT;
+				o_direct_defer = B_FALSE;
+			}
 			zfs_uio_fault_disable(uio, B_FALSE);
 #ifdef __linux__
 			if (error == EFAULT) {
@@ -562,7 +594,7 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 			ASSERT3S(n, >=, max_blksz);
 			ASSERT0(P2PHASE(woff, max_blksz));
 			/*
-			 * We can simplify nbytes to MIN(n, max_blksz) since
+			 * We can simplify nbytes to MIN(n, maxblksz) since
 			 * P2PHASE(woff, max_blksz) is 0, and knowing
 			 * n >= max_blksz lets us simplify further:
 			 */
@@ -586,7 +618,7 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 			tx_bytes = nbytes;
 		}
 		if (tx_bytes && zn_has_cached_data(zp) &&
-		    !(ioflag & O_DIRECT)) {
+		    !(uio->uio_extflg & UIO_DIRECT)) {
 			update_pages(zp, woff, tx_bytes, zfsvfs->z_os);
 		}
 
