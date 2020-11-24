@@ -1097,9 +1097,17 @@ zio_write(zio_t *pio, spa_t *spa, uint64_t txg, blkptr_t *bp,
     zio_done_func_t *ready, zio_done_func_t *children_ready,
     zio_done_func_t *physdone, zio_done_func_t *done,
     void *private, zio_priority_t priority, enum zio_flag flags,
-    const zbookmark_phys_t *zb)
+    const zbookmark_phys_t *zb, boolean_t o_direct)
 {
 	zio_t *zio;
+	enum zio_stage pipeline;
+
+	if (o_direct) {
+		pipeline = ZIO_DIRECT_WRITE_PIPELINE;
+	} else {
+		pipeline = (flags & ZIO_FLAG_DDT_CHILD) ?
+		    ZIO_DDT_CHILD_WRITE_PIPELINE : ZIO_WRITE_PIPELINE;
+	}
 
 	ASSERT(zp->zp_checksum >= ZIO_CHECKSUM_OFF &&
 	    zp->zp_checksum < ZIO_CHECKSUM_FUNCTIONS &&
@@ -1112,8 +1120,7 @@ zio_write(zio_t *pio, spa_t *spa, uint64_t txg, blkptr_t *bp,
 
 	zio = zio_create(pio, spa, txg, bp, data, lsize, psize, done, private,
 	    ZIO_TYPE_WRITE, priority, flags, NULL, 0, zb,
-	    ZIO_STAGE_OPEN, (flags & ZIO_FLAG_DDT_CHILD) ?
-	    ZIO_DDT_CHILD_WRITE_PIPELINE : ZIO_WRITE_PIPELINE);
+	    ZIO_STAGE_OPEN, pipeline);
 
 	zio->io_ready = ready;
 	zio->io_children_ready = children_ready;
@@ -1436,7 +1443,11 @@ zio_vdev_child_io(zio_t *pio, blkptr_t *bp, vdev_t *vd, uint64_t offset,
 		ASSERT(pio->io_metaslab_class != NULL);
 		ASSERT(pio->io_metaslab_class->mc_alloc_throttle_enabled);
 		ASSERT(type == ZIO_TYPE_WRITE);
-		ASSERT(priority == ZIO_PRIORITY_ASYNC_WRITE);
+		if (pio->io_prop.zp_directio_write == B_TRUE) {
+			ASSERT(priority == ZIO_PRIORITY_SYNC_WRITE);
+		} else {
+			ASSERT(priority == ZIO_PRIORITY_ASYNC_WRITE);
+		}
 		ASSERT(!(flags & ZIO_FLAG_IO_REPAIR));
 		ASSERT(!(pio->io_flags & ZIO_FLAG_IO_REWRITE) ||
 		    pio->io_child_type == ZIO_CHILD_GANG);
@@ -1453,6 +1464,8 @@ zio_vdev_child_io(zio_t *pio, blkptr_t *bp, vdev_t *vd, uint64_t offset,
 	zio->io_physdone = pio->io_physdone;
 	if (vd->vdev_ops->vdev_op_leaf && zio->io_logical != NULL)
 		zio->io_logical->io_phys_children++;
+
+	zio->io_prop.zp_directio_write = pio->io_prop.zp_directio_write;
 
 	return (zio);
 }
@@ -2779,10 +2792,15 @@ zio_write_gang_block(zio_t *pio)
 
 	int flags = METASLAB_HINTBP_FAVOR | METASLAB_GANG_HEADER;
 	if (pio->io_flags & ZIO_FLAG_IO_ALLOCATING) {
-		ASSERT(pio->io_priority == ZIO_PRIORITY_ASYNC_WRITE);
-		ASSERT(has_data);
+		if (pio->io_prop.zp_directio_write) {
+			ASSERT(pio->io_priority == ZIO_PRIORITY_SYNC_WRITE);
+			flags |= METASLAB_DIO_WRITE_ALLOC;
+		} else {
+			ASSERT(pio->io_priority == ZIO_PRIORITY_ASYNC_WRITE);
+			ASSERT(has_data);
+			flags |= METASLAB_ASYNC_ALLOC;
+		}
 
-		flags |= METASLAB_ASYNC_ALLOC;
 		VERIFY(zfs_refcount_held(&mc->mc_alloc_slots[pio->io_allocator],
 		    pio));
 
@@ -2860,6 +2878,7 @@ zio_write_gang_block(zio_t *pio)
 		zp.zp_encrypt = gio->io_prop.zp_encrypt;
 		zp.zp_byteorder = gio->io_prop.zp_byteorder;
 		zp.zp_lustre_buf = gio->io_prop.zp_lustre_buf;
+		zp.zp_directio_write = gio->io_prop.zp_directio_write;
 		bzero(zp.zp_salt, ZIO_DATA_SALT_LEN);
 		bzero(zp.zp_iv, ZIO_DATA_IV_LEN);
 		bzero(zp.zp_mac, ZIO_DATA_MAC_LEN);
@@ -2869,10 +2888,15 @@ zio_write_gang_block(zio_t *pio)
 		    resid) : NULL, lsize, lsize, &zp,
 		    zio_write_gang_member_ready, NULL, NULL,
 		    zio_write_gang_done, &gn->gn_child[g], pio->io_priority,
-		    ZIO_GANG_CHILD_FLAGS(pio), &pio->io_bookmark);
+		    ZIO_GANG_CHILD_FLAGS(pio), &pio->io_bookmark, B_FALSE);
 
 		if (pio->io_flags & ZIO_FLAG_IO_ALLOCATING) {
-			ASSERT(pio->io_priority == ZIO_PRIORITY_ASYNC_WRITE);
+			if (pio->io_prop.zp_directio_write)
+				ASSERT(pio->io_priority ==
+				    ZIO_PRIORITY_SYNC_WRITE);
+			else
+				ASSERT(pio->io_priority ==
+				    ZIO_PRIORITY_ASYNC_WRITE);
 			ASSERT(has_data);
 
 			/*
@@ -3300,7 +3324,7 @@ zio_ddt_write(zio_t *zio)
 		    zio->io_orig_size, zio->io_orig_size, zp,
 		    zio_ddt_child_write_ready, NULL, NULL,
 		    zio_ddt_child_write_done, dde, zio->io_priority,
-		    ZIO_DDT_CHILD_FLAGS(zio), &zio->io_bookmark);
+		    ZIO_DDT_CHILD_FLAGS(zio), &zio->io_bookmark, B_FALSE);
 
 		zio_push_transform(cio, zio->io_abd, zio->io_size, 0, NULL);
 		dde->dde_lead_zio[p] = cio;
@@ -3385,10 +3409,11 @@ zio_dva_throttle(zio_t *zio)
 	mc = spa_preferred_class(spa, zio->io_size, zio->io_prop.zp_type,
 	    zio->io_prop.zp_level, zio->io_prop.zp_zpl_smallblk);
 
-	if (zio->io_priority == ZIO_PRIORITY_SYNC_WRITE ||
+	if ((zio->io_priority == ZIO_PRIORITY_SYNC_WRITE &&
+	    !(zio->io_prop.zp_directio_write))||
 	    !mc->mc_alloc_throttle_enabled ||
 	    zio->io_child_type == ZIO_CHILD_GANG ||
-	    zio->io_flags & ZIO_FLAG_NODATA) {
+	    zio->io_flags & ZIO_FLAG_NODATA)  {
 		return (zio);
 	}
 
@@ -3457,8 +3482,12 @@ zio_dva_allocate(zio_t *zio)
 		flags |= METASLAB_DONT_THROTTLE;
 	if (zio->io_flags & ZIO_FLAG_GANG_CHILD)
 		flags |= METASLAB_GANG_CHILD;
-	if (zio->io_priority == ZIO_PRIORITY_ASYNC_WRITE)
+	if (zio->io_prop.zp_directio_write) {
+		ASSERT3U(zio->io_priority, ==, ZIO_PRIORITY_SYNC_WRITE);
+		flags |= METASLAB_DIO_WRITE_ALLOC;
+	} else if (zio->io_priority == ZIO_PRIORITY_ASYNC_WRITE) {
 		flags |= METASLAB_ASYNC_ALLOC;
+	}
 
 	/*
 	 * if not already chosen, locate an appropriate allocation class
@@ -4336,7 +4365,12 @@ zio_ready(zio_t *zio)
 
 		if (zio->io_flags & ZIO_FLAG_IO_ALLOCATING) {
 			ASSERT(IO_IS_ALLOCATING(zio));
-			ASSERT(zio->io_priority == ZIO_PRIORITY_ASYNC_WRITE);
+			if (zio->io_prop.zp_directio_write)
+				ASSERT(zio->io_priority ==
+				    ZIO_PRIORITY_SYNC_WRITE);
+			else
+				ASSERT(zio->io_priority ==
+				    ZIO_PRIORITY_ASYNC_WRITE);
 			ASSERT(zio->io_metaslab_class != NULL);
 
 			/*
@@ -4392,11 +4426,15 @@ zio_dva_throttle_done(zio_t *zio)
 	zio_t *lio __maybe_unused = zio->io_logical;
 	zio_t *pio = zio_unique_parent(zio);
 	vdev_t *vd = zio->io_vd;
-	int flags = METASLAB_ASYNC_ALLOC;
+	int flags = zio->io_prop.zp_directio_write ? METASLAB_DIO_WRITE_ALLOC :
+	    METASLAB_ASYNC_ALLOC;
 
 	ASSERT3P(zio->io_bp, !=, NULL);
 	ASSERT3U(zio->io_type, ==, ZIO_TYPE_WRITE);
-	ASSERT3U(zio->io_priority, ==, ZIO_PRIORITY_ASYNC_WRITE);
+	if (zio->io_prop.zp_directio_write)
+		ASSERT3U(zio->io_priority, ==, ZIO_PRIORITY_SYNC_WRITE);
+	else
+		ASSERT3U(zio->io_priority, ==, ZIO_PRIORITY_ASYNC_WRITE);
 	ASSERT3U(zio->io_child_type, ==, ZIO_CHILD_VDEV);
 	ASSERT(vd != NULL);
 	ASSERT3P(vd, ==, vd->vdev_top);
@@ -4484,7 +4522,10 @@ zio_done(zio_t *zio)
 	 */
 	if (zio->io_flags & ZIO_FLAG_IO_ALLOCATING) {
 		ASSERT(zio->io_type == ZIO_TYPE_WRITE);
-		ASSERT(zio->io_priority == ZIO_PRIORITY_ASYNC_WRITE);
+		if (zio->io_prop.zp_directio_write)
+			ASSERT(zio->io_priority == ZIO_PRIORITY_SYNC_WRITE);
+		else
+			ASSERT(zio->io_priority == ZIO_PRIORITY_ASYNC_WRITE);
 		ASSERT(zio->io_bp != NULL);
 
 		metaslab_group_alloc_verify(zio->io_spa, zio->io_bp, zio,

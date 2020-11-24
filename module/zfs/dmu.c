@@ -1470,7 +1470,7 @@ dmu_sync_late_arrival(zio_t *pio, objset_t *os, dmu_sync_cb_t *done, zgd_t *zgd,
 	    abd_get_from_buf(zgd->zgd_db->db_data, zgd->zgd_db->db_size),
 	    zgd->zgd_db->db_size, zgd->zgd_db->db_size, zp,
 	    dmu_sync_late_arrival_ready, NULL, NULL, dmu_sync_late_arrival_done,
-	    dsa, ZIO_PRIORITY_SYNC_WRITE, ZIO_FLAG_CANFAIL, zb));
+	    dsa, ZIO_PRIORITY_SYNC_WRITE, ZIO_FLAG_CANFAIL, zb, B_FALSE));
 
 	return (0);
 }
@@ -1644,6 +1644,11 @@ dmu_sync(zio_t *pio, uint64_t txg, dmu_sync_cb_t *done, zgd_t *zgd)
 static void
 dmu_write_direct_ready(zio_t *zio)
 {
+	/*
+	 * Since we will be writing the data directly outside of
+	 * spa_sync(), we need to go ahead and lock out config changes.
+	 */
+	spa_config_enter(zio->io_spa, SCL_CONFIG, zio, RW_READER);
 	dmu_sync_ready(zio, NULL, zio->io_private);
 }
 
@@ -1676,6 +1681,7 @@ dmu_write_direct_done(zio_t *zio)
 
 	dmu_sync_done(zio, NULL, zio->io_private);
 	kmem_free(zio->io_bp, sizeof (blkptr_t));
+	spa_config_exit(zio->io_spa, SCL_CONFIG, zio);
 }
 
 static boolean_t
@@ -1690,7 +1696,7 @@ dmu_need_to_make_pages_stable(zio_prop_t zp)
 }
 
 static int
-dmu_write_direct(zio_t *pio, dmu_buf_impl_t *db, abd_t *data, dmu_tx_t *tx,
+dmu_write_direct(dmu_buf_impl_t *db, abd_t *data, dmu_tx_t *tx,
     boolean_t lustre_buf)
 {
 	objset_t *os = db->db_objset;
@@ -1718,7 +1724,9 @@ dmu_write_direct(zio_t *pio, dmu_buf_impl_t *db, abd_t *data, dmu_tx_t *tx,
 
 	DB_DNODE_ENTER(db);
 	dn = DB_DNODE(db);
-	dmu_write_policy(os, dn, db->db_level, WP_DMU_SYNC, &zp);
+	dmu_write_policy(os, dn, db->db_level, WP_DMU_SYNC | WP_DIRECT_WR,
+	    &zp);
+
 	if (lustre_buf) {
 		/*
 		 * If the buffer we are writing is coming from Lustre we
@@ -1796,15 +1804,12 @@ dmu_write_direct(zio_t *pio, dmu_buf_impl_t *db, abd_t *data, dmu_tx_t *tx,
 	dsa->dsa_zgd = NULL;
 	dsa->dsa_tx = NULL;
 
-	zio = zio_write(pio, os->os_spa, txg, bp, data,
+	zio = zio_write(NULL, os->os_spa, txg, bp, data,
 	    db->db.db_size, db->db.db_size, &zp,
 	    dmu_write_direct_ready, NULL, NULL, dmu_write_direct_done, dsa,
-	    ZIO_PRIORITY_SYNC_WRITE, ZIO_FLAG_CANFAIL, &zb);
+	    ZIO_PRIORITY_SYNC_WRITE, ZIO_FLAG_CANFAIL, &zb, B_TRUE);
 
-	if (pio == NULL)
-		err = zio_wait(zio);
-	else
-		zio_nowait(zio);
+	err = zio_wait(zio);
 
 	return (err);
 }
@@ -1813,10 +1818,8 @@ static int
 dmu_write_abd(dnode_t *dn, uint64_t offset, uint64_t size,
     abd_t *data, uint32_t flags, dmu_tx_t *tx, boolean_t lustre_buf)
 {
-	spa_t *spa = dn->dn_objset->os_spa;
 	dmu_buf_t **dbp;
 	int numbufs, err;
-	zio_t *rio;
 
 	ASSERT(flags & DMU_DIRECTIO);
 	/*
@@ -1829,30 +1832,14 @@ dmu_write_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 	if (err)
 		return (err);
 
-	rio = zio_root(spa, NULL, NULL, ZIO_FLAG_CANFAIL);
-
 	for (int i = 0; err == 0 && i < numbufs; i++) {
 		dmu_buf_impl_t *db = (dmu_buf_impl_t *)dbp[i];
 
 		abd_t *abd = abd_get_offset_size(data,
 		    db->db.db_offset - offset, dn->dn_datablksz);
 
-		if (i+1 == numbufs) {
-			/*
-			 * Passing NULL as the zio_t * here so the pio
-			 * is NULL in dmu_write_direct. This allows us
-			 * to make use of the calling thread when issuing
-			 * zio_write instead of handing off to a taskq.
-			 */
-			err = dmu_write_direct(NULL, db, abd, tx, lustre_buf);
-		} else {
-			err = dmu_write_direct(rio, db, abd, tx, lustre_buf);
-		}
+		err = dmu_write_direct(db, abd, tx, lustre_buf);
 	}
-	if (err)
-		(void) zio_wait(rio);
-	else
-		err = zio_wait(rio);
 
 	dmu_buf_rele_array(dbp, numbufs, FTAG);
 
@@ -2594,6 +2581,11 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 			compress = ZIO_COMPRESS_EMPTY;
 		}
 	}
+
+	if (wp & WP_DIRECT_WR)
+		zp->zp_directio_write = B_TRUE;
+	else
+		zp->zp_directio_write = B_FALSE;
 
 	zp->zp_compress = compress;
 	zp->zp_complevel = complevel;

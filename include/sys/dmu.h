@@ -511,6 +511,7 @@ void dmu_redact(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 #define	WP_NOFILL	0x1
 #define	WP_DMU_SYNC	0x2
 #define	WP_SPILL	0x4
+#define	WP_DIRECT_WR	0x8
 
 void dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp,
     struct zio_prop *zp);

@@ -7141,7 +7141,7 @@ arc_write(zio_t *pio, spa_t *spa, uint64_t txg,
 	    HDR_GET_LSIZE(hdr), arc_buf_size(buf), &localprop, arc_write_ready,
 	    (children_ready != NULL) ? arc_write_children_ready : NULL,
 	    arc_write_physdone, arc_write_done, callback,
-	    priority, zio_flags, zb);
+	    priority, zio_flags, zb, B_FALSE);
 
 	return (zio);
 }

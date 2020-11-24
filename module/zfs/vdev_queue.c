@@ -948,6 +948,9 @@ vdev_queue_io(zio_t *zio)
 	} else if (zio->io_type == ZIO_TYPE_WRITE) {
 		ASSERT(zio->io_priority != ZIO_PRIORITY_TRIM);
 
+		if (zio->io_prop.zp_directio_write)
+			ASSERT3U(zio->io_priority, ==, ZIO_PRIORITY_SYNC_WRITE);
+
 		if (zio->io_priority != ZIO_PRIORITY_SYNC_WRITE &&
 		    zio->io_priority != ZIO_PRIORITY_ASYNC_WRITE &&
 		    zio->io_priority != ZIO_PRIORITY_REMOVAL &&

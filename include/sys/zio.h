@@ -351,6 +351,7 @@ typedef struct zio_prop {
 	boolean_t		zp_encrypt;
 	boolean_t		zp_byteorder;
 	boolean_t		zp_lustre_buf;
+	boolean_t		zp_directio_write;
 	uint8_t			zp_salt[ZIO_DATA_SALT_LEN];
 	uint8_t			zp_iv[ZIO_DATA_IV_LEN];
 	uint8_t			zp_mac[ZIO_DATA_MAC_LEN];
@@ -554,7 +555,7 @@ extern zio_t *zio_write(zio_t *pio, spa_t *spa, uint64_t txg, blkptr_t *bp,
     zio_done_func_t *ready, zio_done_func_t *children_ready,
     zio_done_func_t *physdone, zio_done_func_t *done,
     void *priv, zio_priority_t priority, enum zio_flag flags,
-    const zbookmark_phys_t *zb);
+    const zbookmark_phys_t *zb, boolean_t o_direct);
 
 extern zio_t *zio_rewrite(zio_t *pio, spa_t *spa, uint64_t txg, blkptr_t *bp,
     struct abd *data, uint64_t size, zio_done_func_t *done, void *priv,

@@ -4744,7 +4744,8 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 		    contents, db->db.db_size, db->db.db_size, &zp,
 		    dbuf_write_override_ready, NULL, NULL,
 		    dbuf_write_override_done,
-		    dr, ZIO_PRIORITY_ASYNC_WRITE, ZIO_FLAG_MUSTSUCCEED, &zb);
+		    dr, ZIO_PRIORITY_ASYNC_WRITE, ZIO_FLAG_MUSTSUCCEED, &zb,
+		    B_FALSE);
 		mutex_enter(&db->db_mtx);
 		dr->dt.dl.dr_override_state = DR_NOT_OVERRIDDEN;
 		zio_write_override(dr->dr_zio, bp, dr->dt.dl.dr_copies,
@@ -4758,7 +4759,7 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 		    dbuf_write_nofill_ready, NULL, NULL,
 		    dbuf_write_nofill_done, db,
 		    ZIO_PRIORITY_ASYNC_WRITE,
-		    ZIO_FLAG_MUSTSUCCEED | ZIO_FLAG_NODATA, &zb);
+		    ZIO_FLAG_MUSTSUCCEED | ZIO_FLAG_NODATA, &zb, B_FALSE);
 	} else {
 		ASSERT(arc_released(data));
 

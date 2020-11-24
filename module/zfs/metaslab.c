@@ -4502,6 +4502,7 @@ metaslab_group_alloc_increment(spa_t *spa, uint64_t vdev, void *tag, int flags,
     int allocator)
 {
 	if (!(flags & METASLAB_ASYNC_ALLOC) ||
+	    !(flags & METASLAB_DIO_WRITE_ALLOC) ||
 	    (flags & METASLAB_DONT_THROTTLE))
 		return;
 
@@ -4535,6 +4536,7 @@ metaslab_group_alloc_decrement(spa_t *spa, uint64_t vdev, void *tag, int flags,
     int allocator, boolean_t io_complete)
 {
 	if (!(flags & METASLAB_ASYNC_ALLOC) ||
+	    !(flags & METASLAB_DIO_WRITE_ALLOC) ||
 	    (flags & METASLAB_DONT_THROTTLE))
 		return;
 
