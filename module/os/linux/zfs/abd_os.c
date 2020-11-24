@@ -192,6 +192,7 @@ static int zfs_abd_scatter_min_size = 512 * 3;
 abd_t *abd_zero_scatter = NULL;
 
 struct page;
+
 /*
  * _KERNEL   - Will point to ZERO_PAGE if it is available or it will be
  *             an allocated zero'd PAGESIZE buffer.
@@ -462,14 +463,21 @@ abd_free_chunks(abd_t *abd)
 	if (abd->abd_flags & ABD_FLAG_MULTI_CHUNK)
 		ABDSTAT_BUMPDOWN(abdstat_scatter_page_multi_chunk);
 
-	abd_for_each_sg(abd, sg, nr_pages, i) {
-		page = sg_page(sg);
-		abd_unmark_zfs_page(page);
-		order = compound_order(page);
-		__free_pages(page, order);
-		ASSERT3U(sg->length, <=, PAGE_SIZE << order);
-		ABDSTAT_BUMPDOWN(abdstat_scatter_orders[order]);
+	/*
+	 * Scatter ABDs may be constructed by abd_alloc_from_pages() from
+	 * an array of pages. In which case they should not be freed.
+	 */
+	if (!abd_is_from_pages(abd)) {
+		abd_for_each_sg(abd, sg, nr_pages, i) {
+			page = sg_page(sg);
+			abd_unmark_zfs_page(page);
+			order = compound_order(page);
+			__free_pages(page, order);
+			ASSERT3U(sg->length, <=, PAGE_SIZE << order);
+			ABDSTAT_BUMPDOWN(abdstat_scatter_orders[order]);
+		}
 	}
+
 	abd_free_sg_table(abd);
 }
 
@@ -528,6 +536,8 @@ abd_alloc_zero_scatter(void)
 
 #define	zfs_kmap_atomic(chunk)		((void *)chunk)
 #define	zfs_kunmap_atomic(addr)		do { (void)(addr); } while (0)
+#define	zfs_kmap(chunk)			((void *)chunk)
+#define	zfs_kunmap(chunk)		((void *)chunk)
 #define	local_irq_save(flags)		do { (void)(flags); } while (0)
 #define	local_irq_restore(flags)	do { (void)(flags); } while (0)
 #define	nth_page(pg, i) \
@@ -688,17 +698,19 @@ abd_update_linear_stats(abd_t *abd, abd_stats_op_t op)
 void
 abd_verify_scatter(abd_t *abd)
 {
-	size_t n;
-	int i = 0;
-	struct scatterlist *sg = NULL;
-
 	ASSERT3U(ABD_SCATTER(abd).abd_nents, >, 0);
 	ASSERT3U(ABD_SCATTER(abd).abd_offset, <,
 	    ABD_SCATTER(abd).abd_sgl->length);
-	n = ABD_SCATTER(abd).abd_nents;
+
+#ifdef ZFS_DEBUG
+	struct scatterlist *sg = NULL;
+	size_t n = ABD_SCATTER(abd).abd_nents;
+	int i = 0;
+
 	abd_for_each_sg(abd, sg, n, i) {
 		ASSERT3P(sg_page(sg), !=, NULL);
 	}
+#endif
 }
 
 static void
@@ -828,6 +840,11 @@ abd_free_linear_page(abd_t *abd)
 {
 	/* Transform it back into a scatter ABD for freeing */
 	struct scatterlist *sg = abd->abd_u.abd_linear.abd_sgl;
+
+	/* When backed by user page unmap it */
+	if (abd_is_from_pages(abd))
+		zfs_kunmap(sg_page(sg));
+
 	abd->abd_flags &= ~ABD_FLAG_LINEAR;
 	abd->abd_flags &= ~ABD_FLAG_LINEAR_PAGE;
 	ABD_SCATTER(abd).abd_nents = 1;
@@ -837,6 +854,72 @@ abd_free_linear_page(abd_t *abd)
 
 	abd_update_scatter_stats(abd, ABDSTAT_DECR);
 }
+
+#ifdef _KERNEL
+/*
+ * Allocate a scatter ABD structure from user pages. The pages must be
+ * pinned with get_user_pages, or similiar, but need not be mapped via
+ * the kmap interfaces.
+ */
+abd_t *
+abd_alloc_from_pages(struct page **pages, unsigned long offset, uint64_t size)
+{
+	uint_t npages = DIV_ROUND_UP(size, PAGE_SIZE);
+	struct sg_table table;
+
+	VERIFY3U(size, <=, SPA_MAXBLOCKSIZE);
+	ASSERT3U(offset, <, PAGE_SIZE);
+	ASSERT3P(pages, !=, NULL);
+
+	/*
+	 * Even if this buf is filesystem metadata, we only track that if we
+	 * own the underlying data buffer, which is not true in this case.
+	 * Therefore, we don't ever use ABD_FLAG_META here.
+	 */
+	abd_t *abd = abd_alloc_struct(0);
+	abd->abd_flags |= ABD_FLAG_FROM_PAGES | ABD_FLAG_OWNER;
+	abd->abd_size = size;
+
+	while (sg_alloc_table_from_pages(&table, pages, npages, offset,
+	    size, __GFP_NOWARN | GFP_NOIO) != 0) {
+		ABDSTAT_BUMP(abdstat_scatter_sg_table_retry);
+		schedule_timeout_interruptible(1);
+	}
+
+	if (size < PAGE_SIZE) {
+		/*
+		 * Since there is only one entry, this ABD can be represented
+		 * as a linear buffer. All single-page (4K) ABD's constructed
+		 * from a user page can be represented this way as long as the
+		 * page is mapped to a virtual address. This allows us to
+		 * apply an offset in to the mapped page.
+		 *
+		 * Note that kmap() must be used, not kmap_atomic(), because
+		 * the mapping needs to bet set up on all CPUs. Using kmap()
+		 * also enables the user of highmem pages when required.
+		 */
+		ASSERT3U(offset + size, <=, PAGE_SIZE);
+		abd->abd_flags |= ABD_FLAG_LINEAR | ABD_FLAG_LINEAR_PAGE;
+		abd->abd_u.abd_linear.abd_sgl = table.sgl;
+		zfs_kmap(sg_page(table.sgl));
+		ABD_LINEAR_BUF(abd) = sg_virt(table.sgl);
+	} else {
+		ABDSTAT_BUMP(abdstat_scatter_page_multi_chunk);
+		abd->abd_flags |= ABD_FLAG_MULTI_CHUNK;
+
+		ABD_SCATTER(abd).abd_offset = offset;
+		ABD_SCATTER(abd).abd_sgl = table.sgl;
+		ABD_SCATTER(abd).abd_nents = table.nents;
+
+		ASSERT0(ABD_SCATTER(abd).abd_offset);
+	}
+
+	abd_update_scatter_stats(abd, ABDSTAT_INCR);
+
+	return (abd);
+}
+
+#endif /* _KERNEL */
 
 /*
  * If we're going to use this ABD for doing I/O using the block layer, the
@@ -886,6 +969,9 @@ abd_get_offset_scatter(abd_t *abd, abd_t *sabd, size_t off,
 	ABD_SCATTER(abd).abd_sgl = sg;
 	ABD_SCATTER(abd).abd_offset = new_offset;
 	ABD_SCATTER(abd).abd_nents = ABD_SCATTER(sabd).abd_nents - i;
+
+	if (abd_is_from_pages(sabd))
+		abd->abd_flags |= ABD_FLAG_FROM_PAGES;
 
 	return (abd);
 }
