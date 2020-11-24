@@ -119,6 +119,12 @@ static int zfs_sync_pass_dont_compress = 8; /* don't compress s. i. t. p. */
 static int zfs_sync_pass_rewrite = 2; /* rewrite new bps s. i. t. p. */
 
 /*
+ * Enables if a checksum verify should be performed before a Direct IO write
+ * is committed to disk (the dbuf dirtry record BP is updated).
+ */
+static int zio_direct_write_verify = B_FALSE;
+
+/*
  * An allocating zio is one that either currently has the DVA allocate
  * stage set or will have it later in its lifetime.
  */
@@ -704,6 +710,8 @@ zio_notify_parent(zio_t *pio, zio_t *zio, enum zio_wait_type wait,
 	if (zio->io_error && !(zio->io_flags & ZIO_FLAG_DONT_PROPAGATE))
 		*errorp = zio_worst_error(*errorp, zio->io_error);
 	pio->io_reexecute |= zio->io_reexecute;
+	pio->io_prop.zp_direct_write_verify_error =
+	    zio->io_prop.zp_direct_write_verify_error;
 	ASSERT3U(*countp, >, 0);
 
 	(*countp)--;
@@ -1115,20 +1123,14 @@ zio_write(zio_t *pio, spa_t *spa, uint64_t txg, blkptr_t *bp,
     const zbookmark_phys_t *zb)
 {
 	zio_t *zio;
+	enum zio_stage pipeline = zp->zp_direct_write == B_TRUE ?
+	    ZIO_DIRECT_WRITE_PIPELINE : (flags & ZIO_FLAG_DDT_CHILD) ?
+	    ZIO_DDT_CHILD_WRITE_PIPELINE : ZIO_WRITE_PIPELINE;
 
-	ASSERT(zp->zp_checksum >= ZIO_CHECKSUM_OFF &&
-	    zp->zp_checksum < ZIO_CHECKSUM_FUNCTIONS &&
-	    zp->zp_compress >= ZIO_COMPRESS_OFF &&
-	    zp->zp_compress < ZIO_COMPRESS_FUNCTIONS &&
-	    DMU_OT_IS_VALID(zp->zp_type) &&
-	    zp->zp_level < 32 &&
-	    zp->zp_copies > 0 &&
-	    zp->zp_copies <= spa_max_replication(spa));
 
 	zio = zio_create(pio, spa, txg, bp, data, lsize, psize, done, private,
 	    ZIO_TYPE_WRITE, priority, flags, NULL, 0, zb,
-	    ZIO_STAGE_OPEN, (flags & ZIO_FLAG_DDT_CHILD) ?
-	    ZIO_DDT_CHILD_WRITE_PIPELINE : ZIO_WRITE_PIPELINE);
+	    ZIO_STAGE_OPEN, pipeline);
 
 	zio->io_ready = ready;
 	zio->io_children_ready = children_ready;
@@ -1424,6 +1426,11 @@ zio_vdev_child_io(zio_t *pio, blkptr_t *bp, vdev_t *vd, uint64_t offset,
 		 */
 		pipeline |= ZIO_STAGE_CHECKSUM_VERIFY;
 		pio->io_pipeline &= ~ZIO_STAGE_CHECKSUM_VERIFY;
+	} else if (type == ZIO_TYPE_WRITE &&
+	    pio->io_prop.zp_direct_write == B_TRUE &&
+	    zio_direct_write_verify == B_TRUE) {
+		ASSERT3P(bp, !=, NULL);
+		pipeline |= ZIO_STAGE_DIO_CHECKSUM_VERIFY;
 	}
 
 	if (vd->vdev_ops->vdev_op_leaf) {
@@ -2901,6 +2908,7 @@ zio_write_gang_block(zio_t *pio, metaslab_class_t *mc)
 		zp.zp_nopwrite = B_FALSE;
 		zp.zp_encrypt = gio->io_prop.zp_encrypt;
 		zp.zp_byteorder = gio->io_prop.zp_byteorder;
+		zp.zp_direct_write = B_FALSE;
 		memset(zp.zp_salt, 0, ZIO_DATA_SALT_LEN);
 		memset(zp.zp_iv, 0, ZIO_DATA_IV_LEN);
 		memset(zp.zp_mac, 0, ZIO_DATA_MAC_LEN);
@@ -4316,6 +4324,38 @@ zio_checksum_verify(zio_t *zio)
 	return (zio);
 }
 
+static zio_t *
+zio_dio_checksum_verify(zio_t *zio)
+{
+	int error;
+	zio_t *pio = zio_unique_parent(zio);
+
+	ASSERT3P(zio->io_vd, !=, NULL);
+	ASSERT3P(zio->io_bp, !=, NULL);
+	ASSERT3U(zio->io_child_type, ==, ZIO_CHILD_VDEV);
+	ASSERT3U(zio->io_type, ==, ZIO_TYPE_WRITE);
+	IMPLY(pio != NULL, pio->io_prop.zp_direct_write == B_TRUE);
+	ASSERT3U(pio->io_child_type, ==, ZIO_CHILD_LOGICAL);
+
+	if ((error = zio_checksum_error(zio, NULL)) != 0) {
+		zio->io_error = error;
+		if (error == ECKSUM) {
+			mutex_enter(&zio->io_vd->vdev_stat_lock);
+			zio->io_vd->vdev_stat.vs_dio_verify_errors++;
+			mutex_exit(&zio->io_vd->vdev_stat_lock);
+			zio->io_error = SET_ERROR(EINVAL);
+			zio->io_prop.zp_direct_write_verify_error = B_TRUE;
+
+			(void) zfs_ereport_post(FM_EREPORT_ZFS_DIO_VERIFY,
+			    zio->io_spa, zio->io_vd, &zio->io_bookmark,
+			    zio, 0);
+		}
+	}
+
+	return (zio);
+}
+
+
 /*
  * Called by RAID-Z to ensure we don't compute the checksum twice.
  */
@@ -4641,7 +4681,8 @@ zio_done(zio_t *zio)
 		 * device is currently unavailable.
 		 */
 		if (zio->io_error != ECKSUM && zio->io_vd != NULL &&
-		    !vdev_is_dead(zio->io_vd)) {
+		    !vdev_is_dead(zio->io_vd) &&
+		    zio->io_prop.zp_direct_write_verify_error == B_FALSE) {
 			int ret = zfs_ereport_post(FM_EREPORT_ZFS_IO,
 			    zio->io_spa, zio->io_vd, &zio->io_bookmark, zio, 0);
 			if (ret != EALREADY) {
@@ -4656,7 +4697,8 @@ zio_done(zio_t *zio)
 
 		if ((zio->io_error == EIO || !(zio->io_flags &
 		    (ZIO_FLAG_SPECULATIVE | ZIO_FLAG_DONT_PROPAGATE))) &&
-		    zio == zio->io_logical) {
+		    zio == zio->io_logical &&
+		    zio->io_prop.zp_direct_write_verify_error == B_FALSE) {
 			/*
 			 * For logical I/O requests, tell the SPA to log the
 			 * error and generate a logical data ereport.
@@ -4892,6 +4934,7 @@ static zio_pipe_stage_t *zio_pipeline[] = {
 	zio_vdev_io_done,
 	zio_vdev_io_assess,
 	zio_checksum_verify,
+	zio_dio_checksum_verify,
 	zio_done
 };
 
@@ -5065,3 +5108,6 @@ ZFS_MODULE_PARAM(zfs_zio, zio_, dva_throttle_enabled, INT, ZMOD_RW,
 
 ZFS_MODULE_PARAM(zfs_zio, zio_, deadman_log_all, INT, ZMOD_RW,
 	"Log all slow ZIOs, not just those with vdevs");
+
+ZFS_MODULE_PARAM(zfs_zio, zio_, direct_write_verify, INT, ZMOD_RW,
+	"Verify checksum of direct IO write before committing to VDEV");

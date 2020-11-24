@@ -190,6 +190,7 @@ typedef enum {
 	ZFS_PROP_REDACTED,
 	ZFS_PROP_REDACT_SNAPS,
 	ZFS_PROP_SNAPSHOTS_CHANGED,
+	ZFS_PROP_DIRECT,
 	ZFS_NUM_PROPS
 } zfs_prop_t;
 
@@ -511,6 +512,12 @@ typedef enum {
 	ZFS_VOLMODE_NONE = 3
 } zfs_volmode_t;
 
+typedef enum {
+	ZFS_DIRECT_DISABLED = 0,
+	ZFS_DIRECT_STANDARD,
+	ZFS_DIRECT_ALWAYS
+} zfs_direct_t;
+
 typedef enum zfs_keystatus {
 	ZFS_KEYSTATUS_NONE = 0,
 	ZFS_KEYSTATUS_UNAVAILABLE,
@@ -760,6 +767,9 @@ typedef struct zpool_load_policy {
 
 /* Number of slow IOs */
 #define	ZPOOL_CONFIG_VDEV_SLOW_IOS		"vdev_slow_ios"
+
+/* Number of Direct IO write verify errors */
+#define	ZPOOL_CONFIG_VDEV_DIO_VERIFY_ERRORS	"vdev_dio_verify_errors"
 
 /* vdev enclosure sysfs path */
 #define	ZPOOL_CONFIG_VDEV_ENC_SYSFS_PATH	"vdev_enc_sysfs_path"
@@ -1164,6 +1174,7 @@ typedef struct vdev_stat {
 	uint64_t	vs_read_errors;		/* read errors		*/
 	uint64_t	vs_write_errors;	/* write errors		*/
 	uint64_t	vs_checksum_errors;	/* checksum errors	*/
+	uint64_t	vs_dio_verify_errors;	/* DIO write verify errors */
 	uint64_t	vs_initialize_errors;	/* initializing errors	*/
 	uint64_t	vs_self_healed;		/* self-healed bytes	*/
 	uint64_t	vs_scan_removing;	/* removing?	*/
