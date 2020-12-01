@@ -168,8 +168,6 @@ noload_compress(abd_t *src, void *dst, size_t s_len, size_t d_len,
 	ssize_t ret;
 
 	ret = __noload_run(noload_c_alg, src, dst, s_len, d_len, level);
-	if (ret < 0)
-		return (s_len);
 
 	return (ret);
 }
