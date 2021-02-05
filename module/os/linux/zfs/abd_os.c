@@ -745,17 +745,16 @@ abd_free_linear_page(abd_t *abd)
 
 #ifdef _KERNEL
 /*
- * Allocate a scatter ABD structure from user pages. This must be freed
- * with abd_free().
+ * Allocate a scatter ABD structure from user pages.
  */
 abd_t *
-abd_alloc_from_pages(struct page **pages, uint_t n_pages, unsigned long offset)
+abd_alloc_from_pages(struct page **pages, unsigned long offset, uint64_t size)
 {
 	abd_t *abd = abd_alloc_struct(0);
 	struct sg_table table;
 	gfp_t gfp = __GFP_NOWARN | GFP_NOIO;
-	size_t size = n_pages * PAGE_SIZE - offset;
 	int err;
+	uint_t n_pages = DIV_ROUND_UP(size, PAGE_SIZE);
 
 	VERIFY3U(size, <=, SPA_MAXBLOCKSIZE);
 	ASSERT3P(pages, !=, NULL);
@@ -765,10 +764,26 @@ abd_alloc_from_pages(struct page **pages, uint_t n_pages, unsigned long offset)
 	 * own the underlying data buffer, which is not true in this case.
 	 * Therefore, we don't ever use ABD_FLAG_META here.
 	 */
-	abd->abd_flags |= ABD_FLAG_FROM_PAGES | ABD_FLAG_OWNER;
+	abd->abd_flags |= ABD_FLAG_OWNER;
 	abd->abd_size = size;
 
-	while ((err = sg_alloc_table_from_pages(&table, pages, n_pages, offset,
+	if (size <= PAGE_SIZE) {
+		/*
+		 * We have only a single page in this case so, we will just
+		 * treat it like a linear ABD. We have to make sure to take
+		 * into account the offset though. In all other cases our
+		 * offset will be 0 as we are always PAGE_SIZE aligned.
+		 */
+		abd->abd_flags |= ABD_FLAG_LINEAR | ABD_FLAG_LINEAR_FP;
+		ABD_LINEAR_BUF(abd) = kmap_atomic(pages[0]) + offset;
+		abd_update_linear_stats(abd, ABDSTAT_INCR);
+		abd_verify(abd);
+		return (abd);
+	}
+
+	ASSERT0(offset);
+	abd->abd_flags |= ABD_FLAG_FROM_PAGES;
+	while ((err = sg_alloc_table_from_pages(&table, pages, n_pages, 0,
 	    size, gfp))) {
 		ABDSTAT_BUMP(abdstat_scatter_sg_table_retry);
 		schedule_timeout_interruptible(1);
@@ -778,10 +793,7 @@ abd_alloc_from_pages(struct page **pages, uint_t n_pages, unsigned long offset)
 	ABD_SCATTER(abd).abd_sgl = table.sgl;
 	ABD_SCATTER(abd).abd_nents = table.nents;
 
-	/*
-	 * XXX - if nents == 1 (happens often), should we convert
-	 * to LINEAR_PAGE?
-	 */
+
 	if (table.nents > 1) {
 		ABDSTAT_BUMP(abdstat_scatter_page_multi_chunk);
 		abd->abd_flags |= ABD_FLAG_MULTI_CHUNK;
@@ -812,6 +824,11 @@ abd_free_from_pages(abd_t *abd)
 	ABDSTAT_BUMPDOWN(abdstat_scatter_cnt);
 }
 
+void
+abd_free_linear_from_pages(abd_t *abd)
+{
+	kunmap_atomic(ABD_LINEAR_BUF(abd));
+}
 #endif /* _KERNEL */
 
 /*
@@ -950,7 +967,6 @@ abd_iter_map(struct abd_iter *aiter)
 		offset = aiter->iter_offset;
 		aiter->iter_mapsize = MIN(aiter->iter_sg->length - offset,
 		    aiter->iter_abd->abd_size - aiter->iter_pos);
-
 		paddr = zfs_kmap_atomic(sg_page(aiter->iter_sg),
 		    km_table[aiter->iter_km]);
 	}

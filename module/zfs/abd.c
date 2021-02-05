@@ -114,7 +114,7 @@ abd_verify(abd_t *abd)
 	    ABD_FLAG_OWNER | ABD_FLAG_META | ABD_FLAG_MULTI_ZONE |
 	    ABD_FLAG_MULTI_CHUNK | ABD_FLAG_LINEAR_PAGE | ABD_FLAG_GANG |
 	    ABD_FLAG_GANG_FREE | ABD_FLAG_ZEROS | ABD_FLAG_ALLOCD |
-	    ABD_FLAG_FROM_PAGES));
+	    ABD_FLAG_FROM_PAGES | ABD_FLAG_LINEAR_FP));
 #ifdef ZFS_DEBUG
 	IMPLY(abd->abd_parent != NULL, !(abd->abd_flags & ABD_FLAG_OWNER));
 #endif
@@ -238,8 +238,14 @@ abd_free_linear(abd_t *abd)
 		abd_free_linear_page(abd);
 		return;
 	}
+
+
 	if (abd->abd_flags & ABD_FLAG_META) {
 		zio_buf_free(ABD_LINEAR_BUF(abd), abd->abd_size);
+#if defined(_KERNEL)
+	} else if (abd_is_linear_from_pages(abd)) {
+		abd_free_linear_from_pages(abd);
+#endif
 	} else {
 		zio_data_buf_free(ABD_LINEAR_BUF(abd), abd->abd_size);
 	}

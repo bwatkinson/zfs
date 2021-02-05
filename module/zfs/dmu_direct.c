@@ -353,17 +353,12 @@ dmu_rw_uio_direct(dnode_t *dn, zfs_uio_t *uio, uint64_t size,
 {
 	abd_t *data;
 	int err;
-	offset_t pages_offset;
-	uint_t n_pages;
-	size_t start;
 
 	ASSERT(uio->uio_extflg & UIO_DIRECT);
 
-	zfs_uio_dio_get_offset_pages_cnt(uio, &pages_offset, &n_pages,
-	    &start, size);
-
-	data = abd_alloc_from_pages(&uio->uio_dio.pages[pages_offset],
-	    n_pages, start);
+	data = abd_alloc_from_pages(
+	    &uio->uio_dio.pages[uio->uio_dio.page_offset], uio->uio_dio.offset,
+	    size);
 
 	if (read) {
 		err = dmu_read_abd(dn, zfs_uio_offset(uio), size,

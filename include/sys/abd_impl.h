@@ -38,7 +38,7 @@ typedef enum abd_stats_op {
 } abd_stats_op_t;
 
 struct scatterlist; /* forward declaration */
-#if defined(_KERNEL)
+#if defined(__FreeBSD__) && defined(_KERNEL)
 struct sf_buf;
 #endif
 
@@ -53,7 +53,7 @@ struct abd_iter {
 	size_t		iter_offset;	/* offset in current sg/abd_buf, */
 					/* abd_offset included */
 	struct scatterlist *iter_sg;	/* current sg */
-#if defined(_KERNEL)
+#if defined(__FreeBSD__) && defined(_KERNEL)
 	struct sf_buf	*sf;		/* used to map in vm_page_t FreeBSD */
 #endif
 };
@@ -82,6 +82,7 @@ void abd_free_linear_page(abd_t *);
 #if defined(_KERNEL)
 abd_t *abd_get_offset_from_pages(abd_t *, abd_t *, size_t);
 void abd_free_from_pages(abd_t *);
+void abd_free_linear_from_pages(abd_t *);
 #endif
 /* OS specific abd_iter functions */
 void abd_iter_init(struct abd_iter  *, abd_t *);

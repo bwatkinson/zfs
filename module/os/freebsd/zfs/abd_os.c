@@ -478,35 +478,48 @@ abd_iter_from_page_index(struct abd_iter *aiter)
  * Allocate a scatter  ABD structure for user pages. This must be freed
  * with abd_free().
  */
-/* ARGSUSED */
 abd_t *
-abd_alloc_from_pages(vm_page_t *pages, uint_t n_pages, unsigned long offset)
+abd_alloc_from_pages(vm_page_t *pages, unsigned long offset, uint64_t size)
 {
 	/*
 	 * We can only map in user pages if based on PAGE_SIZE and not on
 	 * zfs_abd_chunk_size.
 	 */
-	size_t abd_size = n_pages * PAGE_SIZE;
-	VERIFY3U(abd_size, <=, SPA_MAXBLOCKSIZE);
+	VERIFY3U(size, <=, SPA_MAXBLOCKSIZE);
 	ASSERT3P(pages, !=, NULL);
 
-	abd_t *abd = abd_alloc_struct_pagesize(abd_size);
-	abd->abd_flags |= ABD_FLAG_ALLOCD;
+	abd_t *abd = abd_alloc_struct_pagesize(size);
+	abd->abd_flags |= ABD_FLAG_ALLOCD | ABD_FLAG_OWNER;
+	abd->abd_size = size;
+
+	if (size <= PAGE_SIZE) {
+		/*
+		 * We have only a single page in the case so, we will just
+		 * treat it like a linear ABD. We have to make sure to take
+		 * into account the offset though. In all other cases our
+		 * offset will be 0 as we are always PAGE_SIZE aligned.
+		 */
+		abd->abd_flags |= ABD_FLAG_LINEAR | ABD_FLAG_LINEAR_FP;
+		ABD_LINEAR_BUF(abd) = (char *)zfs_map_page(pages[0],
+		    &abd->abd_u.abd_linear.sf) + offset;
+		abd_update_linear_stats(abd, ABDSTAT_INCR);
+		abd_verify(abd);
+		return (abd);
+	}
 
 	/*
 	 * Even if this buf is filesystem metadata, we only track that if we
 	 * own the underlying data buffer, which is not true in this case.
 	 * Therefore, we don't ever use ABD_FLAG_META here.
 	 */
-	abd->abd_flags |= ABD_FLAG_FROM_PAGES | ABD_FLAG_OWNER;
-	abd->abd_size = abd_size;
+	abd->abd_flags |= ABD_FLAG_FROM_PAGES;
 	ABD_SCATTER(abd).abd_offset = 0;
 	ABD_SCATTER(abd).abd_chunk_size = PAGE_SIZE;
 
 	/*
 	 * Setting the ABD's abd_chunks to point to the user pages.
 	 */
-	for (int i = 0; i < abd_chunkcnt_for_bytes_pagesize(abd_size); i++)
+	for (int i = 0; i < abd_chunkcnt_for_bytes_pagesize(size); i++)
 		ABD_SCATTER(abd).abd_chunks[i] = pages[i];
 
 	ABDSTAT_BUMP(abdstat_scatter_cnt);
@@ -562,6 +575,13 @@ void
 abd_free_from_pages(abd_t *abd)
 {
 	ABDSTAT_BUMPDOWN(abdstat_scatter_cnt);
+}
+
+void
+abd_free_linear_from_pages(abd_t *abd)
+{
+	ASSERT3P(abd->abd_u.abd_linear.sf, !=, NULL);
+	zfs_unmap_page(abd->abd_u.abd_linear.sf);
 }
 
 #endif /* _KENREL */

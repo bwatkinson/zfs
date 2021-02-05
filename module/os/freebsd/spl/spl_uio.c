@@ -94,6 +94,13 @@ zfs_uioskip(zfs_uio_t *uio, size_t n)
 	zfs_uio_segflg(uio) = UIO_NOCOPY;
 	zfs_uiomove(NULL, n, zfs_uio_rw(uio), uio);
 	zfs_uio_segflg(uio) = segflg;
+
+	if (uio->uio_extflg & UIO_DIRECT) {
+		uio->uio_dio.offset += n;
+		uio->uio_dio.offset = uio->uio_dio.offset % PAGE_SIZE;
+		uio->uio_dio.page_offset += (n / PAGE_SIZE);
+		ASSERT3U(uio->uio_dio.page_offset, <=, uio->uio_dio.num_pages);
+	}
 }
 
 int
@@ -351,18 +358,6 @@ zfs_uio_get_dio_pages_alloc(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	uio->uio_extflg |= UIO_DIRECT;
 
 	return (0);
-}
-
-void
-zfs_uio_dio_get_offset_pages_cnt(zfs_uio_t *uio, offset_t *offset,
-    uint_t *n_pages, size_t *start, uint64_t size)
-{
-	ASSERT3P(uio->uio_dio.pages, !=, NULL);
-	*n_pages = DIV_ROUND_UP(size, PAGE_SIZE);
-	*offset = ((zfs_uio_offset(uio) - uio->uio_dio.orig_offset) /
-	    PAGE_SIZE);
-	*start = zfs_uio_offset(uio) % PAGE_SIZE;
-	ASSERT3S(*offset, >=, 0);
 }
 
 boolean_t

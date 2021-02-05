@@ -62,7 +62,8 @@ typedef enum zfs_uio_seg {
 typedef struct {
 	struct page	**pages;
 	int		num_pages;
-	offset_t	orig_loffset;
+	offset_t	offset;
+	offset_t	page_offset;
 } zfs_uio_dio_t;
 
 typedef struct zfs_uio {
@@ -144,7 +145,7 @@ zfs_uio_iovec_init(zfs_uio_t *uio, const struct iovec *iov,
 	uio->uio_resid = resid;
 	uio->uio_skip = skip;
 	bzero(&uio->uio_dio, sizeof (zfs_uio_dio_t));
-	uio->uio_dio.orig_loffset = uio->uio_loffset;
+	uio->uio_dio.offset = uio->uio_loffset % PAGE_SIZE;
 }
 
 static inline void
@@ -160,7 +161,7 @@ zfs_uio_bvec_init(zfs_uio_t *uio, struct bio *bio)
 	uio->uio_resid = BIO_BI_SIZE(bio);
 	uio->uio_skip = BIO_BI_SKIP(bio);
 	bzero(&uio->uio_dio, sizeof (zfs_uio_dio_t));
-	uio->uio_dio.orig_loffset = uio->uio_loffset;
+	uio->uio_dio.offset = uio->uio_loffset % PAGE_SIZE;
 }
 
 #if defined(HAVE_VFS_IOV_ITER)
@@ -178,7 +179,7 @@ zfs_uio_iov_iter_init(zfs_uio_t *uio, struct iov_iter *iter, offset_t offset,
 	uio->uio_resid = resid;
 	uio->uio_skip = skip;
 	bzero(&uio->uio_dio, sizeof (zfs_uio_dio_t));
-	uio->uio_dio.orig_loffset = uio->uio_loffset;
+	uio->uio_dio.offset = uio->uio_loffset % PAGE_SIZE;
 }
 
 static inline void
@@ -201,7 +202,7 @@ zfs_uio_iov_iter_bio_init(zfs_uio_t *uio, struct iov_iter *iter,
 	uio->uio_resid = BIO_BI_SIZE(bio);
 	uio->uio_skip = BIO_BI_SKIP(bio);
 	bzero(&uio->uio_dio, sizeof (zfs_uio_dio_t));
-	uio->uio_dio.orig_loffset = uio->uio_loffset;
+	uio->uio_dio.offset = uio->uio_loffset % PAGE_SIZE;
 }
 
 #endif /* HAVE_VFS_IOV_ITER */
