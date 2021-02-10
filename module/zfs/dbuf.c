@@ -150,7 +150,8 @@ dbuf_stats_t dbuf_stats = {
 		continue;						\
 }
 
-static boolean_t dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx);
+static boolean_t dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx,
+    dbuf_dirty_record_t *dr);
 static void dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx);
 static void dbuf_sync_leaf_verify_bonus_dnode(dbuf_dirty_record_t *dr);
 static int dbuf_read_verify_dnode_crypt(dmu_buf_impl_t *db, uint32_t flags);
@@ -1858,7 +1859,7 @@ dbuf_free_range(dnode_t *dn, uint64_t start_blkid, uint64_t end_blkid,
 
 		/* found a level 0 buffer in the range */
 		mutex_enter(&db->db_mtx);
-		if (dbuf_undirty(db, tx)) {
+		if (dbuf_undirty(db, tx, NULL)) {
 			/* mutex has been dropped and dbuf destroyed */
 			continue;
 		}
@@ -2395,9 +2396,19 @@ dbuf_undirty_bonus(dbuf_dirty_record_t *dr)
  * transaction.  Return whether this evicted the dbuf.
  */
 static boolean_t
-dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
+dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx, dbuf_dirty_record_t *dr_p)
 {
-	uint64_t txg = tx->tx_txg;
+	uint64_t txg;
+	dbuf_dirty_record_t *dr;
+
+	if (dr_p != NULL) {
+		ASSERT3P(tx, ==, NULL);
+		txg = dr_p->dr_txg;
+		dr = dr_p;
+	} else {
+		txg = tx->tx_txg;
+		dr = dbuf_find_dirty_eq(db, txg);
+	}
 
 	ASSERT(txg != 0);
 
@@ -2417,7 +2428,6 @@ dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	/*
 	 * If this buffer is not dirty, we're done.
 	 */
-	dbuf_dirty_record_t *dr = dbuf_find_dirty_eq(db, txg);
 	if (dr == NULL)
 		return (B_FALSE);
 	ASSERT(dr->dr_dbuf == db);
@@ -2462,6 +2472,12 @@ dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 			ASSERT(db->db_buf != NULL);
 			ASSERT(dr->dt.dl.dr_data != NULL);
 			arc_buf_destroy(dr->dt.dl.dr_data, db);
+			/*
+			 * We need to signal that the ARC buf has been
+			 * destroyed here in case we are waiting on a
+			 * dirty record to sync from dmu_write_direct_done().
+			 */
+			db->db_dirty_arcbuf_destroyed = B_TRUE;
 		}
 	}
 
@@ -2472,9 +2488,14 @@ dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 
 	if (zfs_refcount_remove(&db->db_holds, (void *)(uintptr_t)txg) == 0) {
 		/*
-		 * In the Direct IO case our db_buf will be NULL
-		 * as we are not caching in the ARC.
+		 * If we have been passed a dbuf_dirty_record_t we should be
+		 * holding the dbuf, so there is no way our db_holds should be
+		 * zero in this case.
+		 *
+		 * In the Direct IO case our db_buf will be NULL as we are not
+		 * caching in the ARC.
 		 */
+		ASSERT3P(dr_p, ==, NULL);
 		ASSERT(db->db_buf == NULL || arc_released(db->db_buf));
 		dbuf_destroy(db);
 		return (B_TRUE);
@@ -2540,6 +2561,61 @@ dmu_buf_is_dirty(dmu_buf_t *db_fake, dmu_tx_t *tx)
 	dr = dbuf_find_dirty_eq(db, tx->tx_txg);
 	mutex_exit(&db->db_mtx);
 	return (dr != NULL);
+}
+
+/*
+ * Direct IO writes may need to remove dirty records if the ARC buf is
+ * referenced by other dirty records.
+ */
+dbuf_dirty_record_t *
+dmu_buf_undirty(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr, arc_buf_t *buf)
+{
+	ASSERT3P(dr, !=, NULL);
+	ASSERT(dr->dr_dbuf == db);
+	ASSERT(MUTEX_HELD(&db->db_mtx));
+
+	uint8_t db_dirtycnt = db->db_dirtycnt;
+	dbuf_dirty_record_t *dr_next = list_next(&db->db_dirty_records, dr);
+
+	if (dr->dt.dl.dr_data != buf)
+		return (dr_next);
+
+	/*
+	 * It is possible that the current dirty record is being synced out.
+	 * If that is case, we must wait till the dirty data has been synced
+	 * through the transaction. There are only a few places that our
+	 * db_dirtycnt is updated:
+	 * dbuf_write_done()	- decreases count
+	 * dbuf_undirty_bonus()	- decreases count
+	 * dbuf_undirty()	- decreases count
+	 * dbuf_dirty()		- increases count
+	 *
+	 * In the increase case of dbuf_dirty() we only allow block sized
+	 * Direct IO writes, so we do not have to worry about the db_dirtycnt
+	 * increasing. In the three decreasing cases we should only hit
+	 * dbuf_write_done() if we are syncing the data, which will signal
+	 * our db_changed with a decreased db_dirtycnt. It is possible that
+	 * either dbuf_undirty() or dbuf_write_done() will call
+	 * arc_buf_destroy() on the shared ARC buf with the Direct IO write.
+	 * In that case, the dbuf will be flags with db_dirty_arcbuf_destroyed
+	 * as B_TRUE.
+	 */
+	if (dr->dr_txg == spa_syncing_txg(dmu_objset_spa(db->db_objset))) {
+		while (db_dirtycnt == db->db_dirtycnt)
+			cv_wait(&db->db_changed, &db->db_mtx);
+		return (NULL);
+	}
+
+	/*
+	 * If we are passing in a dbuf_dirty_record_t directly to
+	 * dbuf_undirty() we must hold the db, so it should never
+	 * be evicted after calling dbuf_undirty().
+	 */
+	VERIFY3B(dbuf_undirty(db, NULL, dr), ==, B_FALSE);
+
+	ASSERT3U(db->db_dirtycnt, >, 0);
+
+	return (dr_next);
 }
 
 void
@@ -3027,6 +3103,7 @@ dbuf_create(dnode_t *dn, uint8_t level, uint64_t blkid,
 	db->db_user_immediate_evict = FALSE;
 	db->db_freed_in_flight = FALSE;
 	db->db_pending_evict = FALSE;
+	db->db_dirty_arcbuf_destroyed = B_FALSE;
 
 	if (blkid == DMU_BONUS_BLKID) {
 		ASSERT3P(parent, ==, dn->dn_dbuf);
@@ -4628,8 +4705,15 @@ dbuf_write_done(zio_t *zio, arc_buf_t *buf, void *vdb)
 		ASSERT(db->db_blkid != DMU_BONUS_BLKID);
 		ASSERT(dr->dt.dl.dr_override_state == DR_NOT_OVERRIDDEN);
 		/* no dr_data if this is a NO_FILL or Direct IO */
-		if (dr->dt.dl.dr_data && dr->dt.dl.dr_data != db->db_buf)
+		if (dr->dt.dl.dr_data && dr->dt.dl.dr_data != db->db_buf) {
 			arc_buf_destroy(dr->dt.dl.dr_data, db);
+			/*
+			 * We need to signal that the ARC buf has been
+			 * destroyed here in case we are waiting on a
+			 * dirty record to sync from dmu_write_direct_done().
+			 */
+			db->db_dirty_arcbuf_destroyed = B_TRUE;
+		}
 	} else {
 		ASSERT(list_head(&dr->dt.di.dr_children) == NULL);
 		ASSERT3U(db->db.db_size, ==, 1 << dn->dn_phys->dn_indblkshift);

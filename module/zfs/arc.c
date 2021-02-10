@@ -3899,6 +3899,9 @@ arc_buf_destroy(arc_buf_t *buf, void* tag)
 	ASSERT3P(hdr->b_l1hdr.b_state, !=, arc_anon);
 	ASSERT3P(buf->b_data, !=, NULL);
 
+	if (buf->b_flags & ARC_BUF_FLAG_LOANED_DIRECT)
+		arc_return_buf(buf, tag);
+
 	(void) remove_reference(hdr, hash_lock, tag);
 	arc_buf_destroy_impl(buf);
 	mutex_exit(hash_lock);

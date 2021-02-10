@@ -816,9 +816,8 @@ abd_alloc_from_pages(struct page **pages, unsigned long offset, uint64_t size)
 		ASSERT0(ABD_SCATTER(abd).abd_offset);
 	}
 
-	ABDSTAT_BUMP(abdstat_scatter_cnt);
+	abd_update_scatter_stats(abd, ABDSTAT_INCR);
 
-	abd_verify(abd);
 	return (abd);
 }
 

@@ -138,18 +138,39 @@ dmu_write_direct_done(zio_t *zio)
 	mutex_enter(&db->db_mtx);
 	if (db->db_buf) {
 		arc_buf_t *buf = db->db_buf;
+
 		/*
 		 * The current contents of the dbuf are now stale.
 		 */
 		ASSERT(db->db_buf == dr->dt.dl.dr_data);
 
-		if (buf->b_flags & ARC_BUF_FLAG_LOANED_DIRECT)
-			arc_return_buf(buf, db);
-
 		db->db_buf = NULL;
 		db->db.db_data = NULL;
 		dr->dt.dl.dr_data = NULL;
-		arc_buf_destroy(buf, db);
+
+		/*
+		 * We must Remove any dirty data that might share the same
+		 * ARC buf as we are going to destroy the ARC buf for this
+		 * dbuf. It is possible that a dirty record will have already
+		 * destroyed the shared ARC buf in dmu_buf_undirty(), which
+		 * signaled by db_dirty_arcbuf_destroyed.
+		 *
+		 * Since we only allow block aligned Direct IO writes we
+		 * grabbed the first dirty record of the dbuf in
+		 * dmu_write_direct(). Since the rangelocks will prevent
+		 * another writer from adding to the db_dirty_records, we
+		 * can just grab the next dirty record from the list to
+		 * start checking for shared ARC bufs.
+		 */
+		dr = list_next(&db->db_dirty_records, dr);
+		while (dr != NULL) {
+			dr = dmu_buf_undirty(db, dr, buf);
+			if (db->db_dirty_arcbuf_destroyed == B_TRUE)
+				break;
+		}
+
+		if (db->db_dirty_arcbuf_destroyed == B_FALSE)
+			arc_buf_destroy(buf, db);
 	}
 	ASSERT(db->db.db_data == NULL);
 	db->db_state = DB_UNCACHED;
@@ -361,8 +382,7 @@ dmu_rw_uio_direct(dnode_t *dn, zfs_uio_t *uio, uint64_t size,
 	ASSERT3U(page_index, <, uio->uio_dio.num_pages);
 
 	data = abd_alloc_from_pages(
-	    &uio->uio_dio.pages[page_index], page_offset,
-	    size);
+	    &uio->uio_dio.pages[page_index], page_offset, size);
 
 	if (read)
 		err = dmu_read_abd(dn, offset, size, data, DMU_DIRECTIO);

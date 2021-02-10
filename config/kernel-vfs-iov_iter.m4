@@ -114,7 +114,6 @@ AC_DEFUN([ZFS_AC_KERNEL_SRC_VFS_IOV_ITER], [
 
 AC_DEFUN([ZFS_AC_KERNEL_VFS_IOV_ITER], [
 	enable_vfs_iov_iter="yes"
-	pass_iter_type_to_iov_iter_bvec="no"
 
 	AC_MSG_CHECKING([whether iov_iter types are available])
 	ZFS_LINUX_TEST_RESULT([iov_iter_types], [
@@ -224,7 +223,7 @@ AC_DEFUN([ZFS_AC_KERNEL_VFS_IOV_ITER], [
 			AC_MSG_RESULT(yes)
 			AC_DEFINE(HAVE_IOV_ITER_TYPE, 1,
 			    [iov_iter_type() is available])
-
+		], [
 			dnl #
 			dnl # Before 4.20,, it was required to pass ITER_BVEC
 			dnl # with the direction arg to iov_iter_bvec().
@@ -235,9 +234,7 @@ AC_DEFUN([ZFS_AC_KERNEL_VFS_IOV_ITER], [
 			dnl # 
 			AC_DEFINE(IOV_ITER_BVEC_PASS_TYPE, 1, [Must ]
 			    [pass iov iter type to iov_iter_bvec()])
-		], [
 			AC_MSG_RESULT(no)
-			pass_iter_type_to_iov_iter_bvec="yes"
 		])
 	])
 ])

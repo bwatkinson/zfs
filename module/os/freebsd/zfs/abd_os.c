@@ -169,7 +169,14 @@ abd_size_alloc_linear(size_t size)
 void
 abd_update_scatter_stats(abd_t *abd, abd_stats_op_t op)
 {
-	uint_t n = abd_scatter_chunkcnt(abd);
+	uint_t n = 0;
+
+	if (abd_is_from_pages(abd))
+		n = abd_from_pages_chunkcnt(abd);
+	else
+		n = abd_scatter_chunkcnt(abd);
+
+	ASSERT3U(n, >, 0);
 	ASSERT(op == ABDSTAT_INCR || op == ABDSTAT_DECR);
 	int waste = n * zfs_abd_chunk_size - abd->abd_size;
 	if (op == ABDSTAT_INCR) {
@@ -377,6 +384,8 @@ abd_free_linear_page(abd_t *abd)
 	 */
 	VERIFY(0);
 #endif
+
+	abd_update_scatter_stats(abd, ABDSTAT_DECR);
 }
 
 /*
@@ -574,9 +583,8 @@ abd_alloc_from_pages(vm_page_t *pages, unsigned long offset, uint64_t size)
 			ABD_SCATTER(abd).abd_chunks[i] = pages[i];
 	}
 
-	ABDSTAT_BUMP(abdstat_scatter_cnt);
+	abd_update_scatter_stats(abd, ABDSTAT_INCR);
 
-	abd_verify(abd);
 	return (abd);
 }
 
