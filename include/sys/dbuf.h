@@ -320,7 +320,7 @@ typedef struct dmu_buf_impl {
 
 	uint8_t db_dirtycnt;
 
-	boolean_t  db_dirty_arcbuf_destroyed;
+	uint8_t db_dirty_arcbuf_destroyed;
 } dmu_buf_impl_t;
 
 /* Note: the dbuf hash table is exposed only for the mdb module */

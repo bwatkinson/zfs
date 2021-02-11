@@ -211,7 +211,7 @@ abd_get_size(abd_t *abd)
 static inline boolean_t
 abd_is_from_pages(abd_t *abd)
 {
-	return ((abd->abd_flags & ABD_FLAG_FROM_PAGES) != 0);
+	return ((abd->abd_flags & ABD_FLAG_FROM_PAGES) ? B_TRUE : B_FALSE);
 }
 
 /*

@@ -2477,7 +2477,7 @@ dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx, dbuf_dirty_record_t *dr_p)
 			 * destroyed here in case we are waiting on a
 			 * dirty record to sync from dmu_write_direct_done().
 			 */
-			db->db_dirty_arcbuf_destroyed = B_TRUE;
+			db->db_dirty_arcbuf_destroyed = TRUE;
 		}
 	}
 
@@ -2571,7 +2571,7 @@ dbuf_dirty_record_t *
 dmu_buf_undirty(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr, arc_buf_t *buf)
 {
 	ASSERT3P(dr, !=, NULL);
-	ASSERT(dr->dr_dbuf == db);
+	ASSERT3P(dr->dr_dbuf, ==, db);
 	ASSERT(MUTEX_HELD(&db->db_mtx));
 
 	uint8_t db_dirtycnt = db->db_dirtycnt;
@@ -2582,23 +2582,25 @@ dmu_buf_undirty(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr, arc_buf_t *buf)
 
 	/*
 	 * It is possible that the current dirty record is being synced out.
-	 * If that is case, we must wait till the dirty data has been synced
-	 * through the transaction. There are only a few places that our
-	 * db_dirtycnt is updated:
-	 * dbuf_write_done()	- decreases count
-	 * dbuf_undirty_bonus()	- decreases count
-	 * dbuf_undirty()	- decreases count
-	 * dbuf_dirty()		- increases count
+	 * If that is case, we must wait till the dirty data has been
+	 * synced through the transaction. There are only a few places that
+	 * our db_dirtycnt is updated:
+	 *
+	 * dbuf_write_done()	 - decreases count
+	 * dbuf_undirty_bonus()	 - decreases count
+	 * dbuf_undirty()	 - decreases count
+	 * dnode_undirty_dbufs() - decreases count
+	 * dbuf_dirty()		 - increases count
 	 *
 	 * In the increase case of dbuf_dirty() we only allow block sized
 	 * Direct IO writes, so we do not have to worry about the db_dirtycnt
-	 * increasing. In the three decreasing cases we should only hit
+	 * increasing. In the four decreasing cases we should only hit
 	 * dbuf_write_done() if we are syncing the data, which will signal
 	 * our db_changed with a decreased db_dirtycnt. It is possible that
 	 * either dbuf_undirty() or dbuf_write_done() will call
 	 * arc_buf_destroy() on the shared ARC buf with the Direct IO write.
-	 * In that case, the dbuf will be flags with db_dirty_arcbuf_destroyed
-	 * as B_TRUE.
+	 * In that case, the dbuf will set the db_dirty_arcbuf_destroyed
+	 * flag as TRUE.
 	 */
 	if (dr->dr_txg == spa_syncing_txg(dmu_objset_spa(db->db_objset))) {
 		while (db_dirtycnt == db->db_dirtycnt)
@@ -3103,7 +3105,7 @@ dbuf_create(dnode_t *dn, uint8_t level, uint64_t blkid,
 	db->db_user_immediate_evict = FALSE;
 	db->db_freed_in_flight = FALSE;
 	db->db_pending_evict = FALSE;
-	db->db_dirty_arcbuf_destroyed = B_FALSE;
+	db->db_dirty_arcbuf_destroyed = FALSE;
 
 	if (blkid == DMU_BONUS_BLKID) {
 		ASSERT3P(parent, ==, dn->dn_dbuf);
@@ -4712,7 +4714,7 @@ dbuf_write_done(zio_t *zio, arc_buf_t *buf, void *vdb)
 			 * destroyed here in case we are waiting on a
 			 * dirty record to sync from dmu_write_direct_done().
 			 */
-			db->db_dirty_arcbuf_destroyed = B_TRUE;
+			db->db_dirty_arcbuf_destroyed = TRUE;
 		}
 	} else {
 		ASSERT(list_head(&dr->dt.di.dr_children) == NULL);
