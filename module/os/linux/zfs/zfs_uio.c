@@ -335,11 +335,10 @@ static void
 zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 {
 	/*
-	 * In order to make the pages are stable, we need lock each
-	 * page and check the PG_writeback bit. If the page is under
-	 * writeback, we will wait till a prior write on the page
-	 * the page has finished. This is signaled by end_page_writeback()
-	 * in zfs_uio_release_stable_pages().
+	 * In order to make the pages stable, we need to lock each page and
+	 * check the PG_writeback bit. If the page is under writeback, we
+	 * wait till a prior write on the page has finished which is signaled
+	 * by end_page_writeback() in zfs_uio_release_stable_pages().
 	 */
 	ASSERT3P(uio->uio_dio.pages, !=, NULL);
 	for (int i = 0; i < uio->uio_dio.num_pages; i++) {
@@ -347,9 +346,9 @@ zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 		ASSERT3P(p, !=, NULL);
 		lock_page(p);
 
-		while (PageWriteback(p)) {
+		while (PageWriteback(p))
 			wait_on_page_bit(p, PG_writeback);
-		}
+
 		TestSetPageWriteback(p);
 		unlock_page(p);
 	}
@@ -547,6 +546,7 @@ zfs_uio_get_dio_pages_alloc(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	 * Since we will be writing the user pages we must make sure that
 	 * they are stable. That way the contents of the pages can not
 	 * change in the event we are doing any of the following:
+	 *
 	 * Compression
 	 * Checksum
 	 * Encryption

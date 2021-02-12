@@ -542,7 +542,7 @@ abd_iter_from_page_index(struct abd_iter *aiter)
 
 #ifdef _KERNEL
 /*
- * Allocate a scatter  ABD structure for user pages.
+ * Allocate a scatter ABD structure from user pages.
  */
 abd_t *
 abd_alloc_from_pages(vm_page_t *pages, unsigned long offset, uint64_t size)

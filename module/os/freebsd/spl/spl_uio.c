@@ -339,6 +339,7 @@ zfs_uio_get_dio_pages_alloc(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	 * Since we will be writing the user pages we must make sure that they
 	 * are stable. That way the contents of the pages can not cahnge in the
 	 * event we are doing any of the following:
+	 *
 	 * Compression
 	 * Checksum
 	 * Encryption

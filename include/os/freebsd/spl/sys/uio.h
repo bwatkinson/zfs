@@ -39,7 +39,7 @@
 /*
  * uio_extflg: extended flags
  */
-#define	UIO_DIRECT	0x0001 /* Direct IO requset */
+#define	UIO_DIRECT	0x0001	/* Direct IO requset */
 
 typedef	struct iovec	iovec_t;
 typedef	enum uio_seg	zfs_uio_seg_t;

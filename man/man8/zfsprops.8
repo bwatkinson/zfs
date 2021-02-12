@@ -1012,33 +1012,36 @@ section of
 .It Xo
 .Sy direct Ns = Ns Sy disabled Ns | Ns Sy standard Ns | Ns Sy always
 .Xc
-Sets the policy for Direct IO when an IO request uses the
-.Sx O_DIRECT
-flag. The default value is
-.Sy standard.
-.Pp
-All Direct IO requests must be page-aligned or EINVAL is returned.
-.Pp
-If this property is set to
-.Sy disabled
-all Direct IO requests will be silently ignored and all read and write
-requests being directed though the ARC.
-.Pp
-If this property is set to
+Controls the behavior of direct requests (e.g. O_DIRECT). The
 .Sy standard
-all IO requests requesting Direct IO will attempt to bypass the ARC
-based on the
-.Sx alignment
-of the request. For write requests, the offset and size of the requeset must
-be recordsize aligned or the write will be silently directed through the ARC.
-For read requests there is no restriction on the request size or offset.
-.Pp
-If this parameter is set to
+behavior for direct requests is to bypass the ARC when possible.
+These requests will not be cached and performance will be limited by the
+raw speed of the underlying disks (this is the default).
 .Sy always
-all IO requests will be treated as though the O_DIRECT flag was passed and
-follow the same alignment restrictions as the
-.Sy standard
-property value.
+causes every read or write request to be treated as a direct request.
+.Sy disabled
+causes the O_DIRECT flag to be silently ignored and all direct requests will
+be handled by the ARC.
+This is the default behavior of OpenZFS release 2.0 and prior.
+.Pp
+Bypassing the ARC requires that a direct reequest be correctly aligned.
+For write requests the starting offset and size of the request must be
+.Sy recordsize Ns
+-aligned, if not the write will be silently redirected through the ARC.
+For read requests there is no
+.Sy recordsize
+alignment restrictions on either the starting offset or size.
+All direct requests must be page-aligned or an error is returned.
+.Pp
+Concurrently mixing buffered and direct requests to overlapping regions of
+a file can decrease performance.
+However, the resulting file will always be coherent.
+For example, a direct read after a buffered write will return the data
+from teh buffered write. Applications should avoid overlapping direct
+requests with
+.Xx mmap 2
+based file access as this may lead to checksum errors.
+.Pp
 .It Xo
 .Sy dnodesize Ns = Ns Sy legacy Ns | Ns Sy auto Ns | Ns Sy 1k Ns | Ns
 .Sy 2k Ns | Ns Sy 4k Ns | Ns Sy 8k Ns | Ns Sy 16k

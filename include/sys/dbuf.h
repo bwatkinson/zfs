@@ -59,17 +59,17 @@ extern "C" {
 /*
  * The simplified state transition diagram for dbufs looks like:
  *
- *		+----> READ ----+
- *		|		|
- *		|		V
- *  (alloc)-->UNCACHED	     CACHED-->EVICTING-->(free)
- *		|		^	 ^
- *		|		|	 |
- *		+----> FILL ----+	 |
+ *		+----> READ -------------+
  *		|			 |
- *		|			 |
- *		+--------> NOFILL -------+
- *
+ *		|			 V
+ *  (alloc)-->UNCACHED			CACHED-->EVICTING-->(free)
+ *		|			 ^          ^
+ *		|			 |	    |
+ *		+----> FILL -------------+	    |
+ *		|			 |	    |
+ *		|			 |	    |
+ *		+--------> NOFILL -------+-----> UNCACHED
+ *                                              (Direct IO)
  * DB_SEARCH is an invalid state for a dbuf. It is used by dbuf_free_range
  * to find all dbufs in a range of a dnode and must be less than any other
  * dbuf_states_t (see comment on dn_dbufs in dnode.h).

@@ -109,6 +109,13 @@ typedef struct dbuf_stats {
 	 * the data in the regular dbuf cache.
 	 */
 	kstat_named_t metadata_cache_overflow;
+	/*
+	 * Statistics for Direct IO.
+	 */
+	kstat_named_t direct_undirty_wait;
+	kstat_named_t direct_undirty;
+	kstat_named_t direct_read_wait;
+	kstat_named_t direct_read_retry;
 } dbuf_stats_t;
 
 dbuf_stats_t dbuf_stats = {
@@ -132,7 +139,11 @@ dbuf_stats_t dbuf_stats = {
 	{ "metadata_cache_count",		KSTAT_DATA_UINT64 },
 	{ "metadata_cache_size_bytes",		KSTAT_DATA_UINT64 },
 	{ "metadata_cache_size_bytes_max",	KSTAT_DATA_UINT64 },
-	{ "metadata_cache_overflow",		KSTAT_DATA_UINT64 }
+	{ "metadata_cache_overflow",		KSTAT_DATA_UINT64 },
+	{ "direct_undirty_wait",		KSTAT_DATA_UINT64 },
+	{ "direct_undirty",			KSTAT_DATA_UINT64 },
+	{ "direct_read_wait",			KSTAT_DATA_UINT64 },
+	{ "direct_read_retry",			KSTAT_DATA_UINT64 }
 };
 
 #define	DBUF_STAT_INCR(stat, val)	\
@@ -1606,8 +1617,6 @@ dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 	int err = 0;
 	boolean_t prefetch;
 	dnode_t *dn;
-	blkptr_t *bp;
-	dbuf_dirty_record_t *dr_head;
 
 	/*
 	 * We don't have to hold the mutex to check db_state because it
@@ -1623,7 +1632,7 @@ dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 	    DBUF_IS_CACHEABLE(db);
 
 	mutex_enter(&db->db_mtx);
-
+top:
 	if (db->db_state == DB_NOFILL) {
 		mutex_exit(&db->db_mtx);
 		return (SET_ERROR(EIO));
@@ -1668,16 +1677,59 @@ dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 	} else if (db->db_state == DB_UNCACHED) {
 		spa_t *spa = dn->dn_objset->os_spa;
 		boolean_t need_wait = B_FALSE;
+		blkptr_t *bp = NULL;
 
-		db_lock_type_t dblt = dmu_buf_lock_parent(db, RW_READER, FTAG);
+		/*
+		 * With DR_OVERRIDEN for the dirty record state and the dbuf
+		 * being uncached, we have a Direct IO write using this dbuf.
+		 * If the dirty record is in the process of syncing, we need
+		 * to wait. The reason for this is we drop the db_mtx
+		 * in dbuf_read_impl() which can lead the dbuf transistioning
+		 * to a DB_READ state. This is an invalid state for a dbuf
+		 * in syncing context (see dbuf_sync_leaf).
+		 *
+		 * In the event that we are syncing out the dirty record,
+		 * dbuf_write_done() will update the dirty record count and
+		 * the original db->db_blkptr will point to the updated data
+		 * on disk from the Direct IO write. If we are not syncing the
+		 * dirty record it is safe just to return the updated block
+		 * pointer in dr_overridden_by.
+		 */
+		dbuf_dirty_record_t *dr = list_head(&db->db_dirty_records);
+		if (db->db_level == 0 && dr &&
+		    dr->dt.dl.dr_override_state == DR_OVERRIDDEN) {
+			uint8_t db_dirtycnt = db->db_dirtycnt;
 
-		bp = db->db_blkptr;
-		dr_head = list_head(&db->db_dirty_records);
-		if (dr_head &&
-		    dr_head->dt.dl.dr_override_state == DR_OVERRIDDEN) {
-			/* we have a Direct IO write, use it's bp */
-			bp = &dr_head->dt.dl.dr_overridden_by;
+			if (dr->dr_txg ==
+			    spa_syncing_txg(dmu_objset_spa(db->db_objset))) {
+
+				while (db_dirtycnt == db->db_dirtycnt) {
+					DBUF_STAT_BUMP(direct_read_wait);
+					cv_wait(&db->db_changed, &db->db_mtx);
+				}
+
+				/*
+				 * When there are multiple blocked readers
+				 * the first to be woekn transitions the dbuf
+				 * to the DB_READ state. In which case we
+				 * jump to the top to reassess the dbuf state.
+				 */
+				if (db->db_state != DB_UNCACHED) {
+					DBUF_STAT_BUMP(direct_read_retry);
+					goto top;
+				}
+			} else {
+				bp = &dr->dt.dl.dr_overridden_by;
+			}
 		}
+
+		/*
+		 * We have to be careful to only grab the dbuf block pointer
+		 * after we have locked the parent.
+		 */
+		db_lock_type_t dblt = dmu_buf_lock_parent(db, RW_READER, FTAG);
+		if (bp == NULL)
+			bp = db->db_blkptr;
 
 		if (zio == NULL &&
 		    bp != NULL && !BP_IS_HOLE(bp)) {
@@ -2603,8 +2655,11 @@ dmu_buf_undirty(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr, arc_buf_t *buf)
 	 * flag as TRUE.
 	 */
 	if (dr->dr_txg == spa_syncing_txg(dmu_objset_spa(db->db_objset))) {
-		while (db_dirtycnt == db->db_dirtycnt)
+		while (db_dirtycnt == db->db_dirtycnt) {
+			DBUF_STAT_BUMP(direct_undirty_wait);
 			cv_wait(&db->db_changed, &db->db_mtx);
+		}
+
 		return (NULL);
 	}
 
@@ -2616,6 +2671,7 @@ dmu_buf_undirty(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr, arc_buf_t *buf)
 	VERIFY3B(dbuf_undirty(db, NULL, dr), ==, B_FALSE);
 
 	ASSERT3U(db->db_dirtycnt, >, 0);
+	DBUF_STAT_BUMP(direct_undirty);
 
 	return (dr_next);
 }
@@ -4795,10 +4851,6 @@ dbuf_write_override_done(zio_t *zio)
 		if (!BP_IS_HOLE(obp))
 			dsl_free(spa_get_dsl(zio->io_spa), zio->io_txg, obp);
 
-		/*
-		 * DOUBLE CHECK THIS!!!
-		 * if (dr->dt.dl.dr_data)
-		 */
 		if (dr->dt.dl.dr_data && dr->dt.dl.dr_data != db->db_buf)
 			arc_release(dr->dt.dl.dr_data, db);
 	}
@@ -5004,7 +5056,8 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 	    dr->dt.dl.dr_override_state == DR_OVERRIDDEN) {
 		/*
 		 * The BP for this block has been provided by open context
-		 * (by dmu_sync() or dmu_buf_write_embedded()).
+		 * (by dmu_sync(), dmu_write_direct(),
+		 *  or dmu_buf_write_embedded()).
 		 */
 		blkptr_t *bp = &dr->dt.dl.dr_overridden_by;
 		abd_t *contents = NULL;
