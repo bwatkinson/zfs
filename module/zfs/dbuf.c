@@ -79,6 +79,13 @@ typedef struct dbuf_stats {
 	kstat_named_t cache_levels[DN_MAX_LEVELS];
 	kstat_named_t cache_levels_bytes[DN_MAX_LEVELS];
 	/*
+	 * Statistics for Direct IO.
+	 */
+	kstat_named_t direct_undirty_wait;
+	kstat_named_t direct_undirty;
+	kstat_named_t direct_read_wait;
+	kstat_named_t direct_read_retry;
+	/*
 	 * Statistics about the dbuf hash table.
 	 */
 	kstat_named_t hash_hits;
@@ -109,13 +116,6 @@ typedef struct dbuf_stats {
 	 * the data in the regular dbuf cache.
 	 */
 	kstat_named_t metadata_cache_overflow;
-	/*
-	 * Statistics for Direct IO.
-	 */
-	kstat_named_t direct_undirty_wait;
-	kstat_named_t direct_undirty;
-	kstat_named_t direct_read_wait;
-	kstat_named_t direct_read_retry;
 } dbuf_stats_t;
 
 dbuf_stats_t dbuf_stats = {
@@ -128,6 +128,10 @@ dbuf_stats_t dbuf_stats = {
 	{ "cache_total_evicts",			KSTAT_DATA_UINT64 },
 	{ { "cache_levels_N",			KSTAT_DATA_UINT64 } },
 	{ { "cache_levels_bytes_N",		KSTAT_DATA_UINT64 } },
+	{ "direct_undirty_wait",		KSTAT_DATA_UINT64 },
+	{ "direct_undirty",			KSTAT_DATA_UINT64 },
+	{ "direct_read_wait",			KSTAT_DATA_UINT64 },
+	{ "direct_read_retry",			KSTAT_DATA_UINT64 },
 	{ "hash_hits",				KSTAT_DATA_UINT64 },
 	{ "hash_misses",			KSTAT_DATA_UINT64 },
 	{ "hash_collisions",			KSTAT_DATA_UINT64 },
@@ -139,11 +143,7 @@ dbuf_stats_t dbuf_stats = {
 	{ "metadata_cache_count",		KSTAT_DATA_UINT64 },
 	{ "metadata_cache_size_bytes",		KSTAT_DATA_UINT64 },
 	{ "metadata_cache_size_bytes_max",	KSTAT_DATA_UINT64 },
-	{ "metadata_cache_overflow",		KSTAT_DATA_UINT64 },
-	{ "direct_undirty_wait",		KSTAT_DATA_UINT64 },
-	{ "direct_undirty",			KSTAT_DATA_UINT64 },
-	{ "direct_read_wait",			KSTAT_DATA_UINT64 },
-	{ "direct_read_retry",			KSTAT_DATA_UINT64 }
+	{ "metadata_cache_overflow",		KSTAT_DATA_UINT64 }
 };
 
 #define	DBUF_STAT_INCR(stat, val)	\

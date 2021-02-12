@@ -2,7 +2,6 @@ pkgdatadir = $(datadir)/@PACKAGE@/zfs-tests/tests/functional/io
 dist_pkgdata_SCRIPTS = \
 	setup.ksh \
 	cleanup.ksh \
-	dio_recordsize.ksh \
 	io_uring.ksh \
 	libaio.ksh \
 	mmap.ksh \
