@@ -888,10 +888,12 @@ zfs_get_data(void *arg, lr_write_t *lr, char *buf, struct lwb *lwb, zio_t *zio)
 {
 	zfsvfs_t *zfsvfs = arg;
 	objset_t *os = zfsvfs->z_os;
+	spa_t *spa = os->os_spa;
 	znode_t *zp;
 	uint64_t object = lr->lr_foid;
 	uint64_t offset = lr->lr_offset;
 	uint64_t size = lr->lr_length;
+	dmu_buf_t *db;
 	zgd_t *zgd;
 	int error = 0;
 
@@ -963,49 +965,31 @@ zfs_get_data(void *arg, lr_write_t *lr, char *buf, struct lwb *lwb, zio_t *zio)
 			zil_fault_io = 0;
 		}
 #endif
-		if (error) {
+		/*
+		 * All Direct IO writes will have already completed and the
+		 * block pointer is already stored in the the log record.
+		 */
+		if (error == 0 && !DVA_IS_EMPTY(&(lr->lr_blkptr.blk_dva[0]))) {
+			ASSERT(zfs_blkptr_verify(spa, &lr->lr_blkptr, B_FALSE,
+			    BLK_VERIFY_HALT));
 			zfs_get_done(zgd, error);
 			return (error);
+		} else {
+			ASSERT(BP_IS_HOLE(&lr->lr_blkptr));
 		}
 
-		dmu_buf_t *dbp;
-		error = dmu_buf_hold_noread(os, object, offset, zgd, &dbp);
-		if (error) {
-			zfs_get_done(zgd, error);
-			return (error);
-		}
+		if (error == 0)
+			error = dmu_buf_hold(os, object, offset, zgd, &db,
+			    DMU_READ_NO_PREFETCH);
 
-		zgd->zgd_db = dbp;
-
-		ASSERT3U(dbp->db_offset, ==, offset);
-		ASSERT3U(dbp->db_size, ==, size);
-
-		/*
-		 * All O_DIRECT writes will have already completed and the
-		 * block pointer can be immediately stored in the log record.
-		 */
-		dmu_buf_impl_t *db = (dmu_buf_impl_t *)dbp;
-		mutex_enter(&db->db_mtx);
-
-		dbuf_dirty_record_t *dr = dbuf_find_dirty_eq(db,
-		    lr->lr_common.lrc_txg);
-
-		if (dr != NULL && dr->dt.dl.dr_data == NULL &&
-		    dr->dt.dl.dr_override_state == DR_OVERRIDDEN) {
-			lr->lr_blkptr = dr->dt.dl.dr_overridden_by;
-			mutex_exit(&db->db_mtx);
-			zfs_get_done(zgd, 0);
-			return (0);
-		}
-		mutex_exit(&db->db_mtx);
-
-		/*
-		 * Buffered writes may still need to be synced.
-		 */
-		error = dbuf_read(db, NULL, DB_RF_CANFAIL | DB_RF_NOPREFETCH);
 		if (error == 0) {
 			blkptr_t *bp = &lr->lr_blkptr;
+
+			zgd->zgd_db = db;
 			zgd->zgd_bp = bp;
+
+			ASSERT3U(db->db_offset, ==, offset);
+			ASSERT3U(db->db_size, ==, size);
 
 			error = dmu_sync(zio, lr->lr_common.lrc_txg,
 			    zfs_get_done, zgd);

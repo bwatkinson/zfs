@@ -606,7 +606,36 @@ zfs_log_write(zilog_t *zilog, dmu_tx_t *tx, int txtype,
 		lr->lr_offset = off;
 		lr->lr_length = len;
 		lr->lr_blkoff = 0;
-		BP_ZERO(&lr->lr_blkptr);
+
+		if (ioflag & O_DIRECT) {
+			/*
+			 * We first need to verify that this was in fact a
+			 * Direct write. It is possible the O_DIRECT flag is
+			 * still set, but we did not in fact issue an O_DIRECT
+			 * write because the request was not block aligned.
+			 *
+			 * All Direct IO writes will have already completed and
+			 * the block pointer can be immediately stored in the
+			 * log record.
+			 */
+			dmu_buf_t *dbp;
+			dmu_buf_hold_noread(zilog->zl_os, zp->z_id, off, FTAG,
+			    &dbp);
+			dmu_buf_impl_t *db_tmp = (dmu_buf_impl_t *)dbp;
+			mutex_enter(&db_tmp->db_mtx);
+			dbuf_dirty_record_t *dr =
+			    list_head(&db_tmp->db_dirty_records);
+			if (dr && dr->dt.dl.dr_data == NULL &&
+			    dr->dt.dl.dr_override_state == DR_OVERRIDDEN) {
+				lr->lr_blkptr = dr->dt.dl.dr_overridden_by;
+			} else {
+				BP_ZERO(&lr->lr_blkptr);
+			}
+			mutex_exit(&db_tmp->db_mtx);
+			dmu_buf_rele(dbp, FTAG);
+		} else {
+			BP_ZERO(&lr->lr_blkptr);
+		}
 
 		itx->itx_private = ZTOZSB(zp);
 
