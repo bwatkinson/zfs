@@ -733,6 +733,16 @@ typedef enum spa_mode {
 } spa_mode_t;
 
 /*
+ * At a minimum for Direct IO memory buffers must be SPA_MINBLOCKSIZE-aligned.
+ */
+static inline boolean_t
+spa_dio_aligned(void *buf)
+{
+	return ((((unsigned long)(buf) & (SPA_MINBLOCKSIZE - 1)) == 0) ?
+	    B_TRUE : B_FALSE);
+}
+
+/*
  * Send TRIM commands in-line during normal pool operation while deleting.
  *	OFF: no
  *	ON: yes

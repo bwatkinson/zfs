@@ -48,6 +48,7 @@
 #include <sys/types.h>
 #include <sys/uio_impl.h>
 #include <sys/zfs_debug.h>
+#include <sys/spa.h>
 #include <linux/kmap_compat.h>
 #include <linux/uaccess.h>
 
@@ -332,15 +333,11 @@ zfs_uioskip(zfs_uio_t *uio, size_t n)
 EXPORT_SYMBOL(zfs_uioskip);
 
 /*
- * Check if the uio is both logically page-aligned in terms of offset
- * and length in the file, and page-aligned in memory.
+ * Check if the uio is SPA_MINBLOCKSIZE-aligned in memory.
  */
 boolean_t
-zfs_uio_page_aligned(zfs_uio_t *uio)
+zfs_uio_dio_aligned(zfs_uio_t *uio)
 {
-	if (!IO_PAGE_ALIGNED(zfs_uio_offset(uio), zfs_uio_resid(uio)))
-		return (B_FALSE);
-
 	if (uio->uio_segflg == UIO_BVEC) {
 		/* Currently unsupported */
 		return (B_FALSE);
@@ -356,8 +353,8 @@ zfs_uio_page_aligned(zfs_uio_t *uio)
 		for (int i = uio->uio_iovcnt; i > 0; iov++, i--) {
 			unsigned long addr = (unsigned long)iov->iov_base;
 			size_t size = iov->iov_len;
-			if ((addr & (PAGE_SIZE - 1)) ||
-			    (size & (PAGE_SIZE - 1))) {
+			if ((addr & (SPA_MINBLOCKSIZE - 1)) ||
+			    (size & (SPA_MINBLOCKSIZE - 1))) {
 				return (B_FALSE);
 			}
 		}
@@ -422,7 +419,7 @@ zfs_uio_free_dio_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	}
 
 	vmem_free(uio->uio_dio.pages,
-	    uio->uio_dio.npages * sizeof (struct page *));
+	    uio->uio_dio.allocated_npages * sizeof (struct page *));
 }
 EXPORT_SYMBOL(zfs_uio_free_dio_pages);
 
@@ -537,18 +534,18 @@ int
 zfs_uio_get_dio_pages_alloc(zfs_uio_t *uio, zfs_uio_rw_t rw)
 {
 	int error = 0;
-	size_t npages = DIV_ROUND_UP(uio->uio_resid, PAGE_SIZE);
+	size_t npages = DIV_ROUND_UP(uio->uio_resid, PAGE_SIZE) + 1;
 	size_t size = npages * sizeof (struct page *);
 
 	if (uio->uio_segflg == UIO_USERSPACE) {
 		uio->uio_dio.pages = vmem_alloc(size, KM_SLEEP);
 		error = zfs_uio_get_dio_pages_iov(uio, rw);
-		ASSERT3S(uio->uio_dio.npages, ==, npages);
+		ASSERT3S(uio->uio_dio.npages, <=, npages);
 #if defined(HAVE_VFS_IOV_ITER)
 	} else if (uio->uio_segflg == UIO_ITER) {
 		uio->uio_dio.pages = vmem_alloc(size, KM_SLEEP);
 		error = zfs_uio_get_dio_pages_iov_iter(uio, rw);
-		ASSERT3S(uio->uio_dio.npages, ==, npages);
+		ASSERT3S(uio->uio_dio.npages, <=, npages);
 #endif
 	} else {
 		return (SET_ERROR(EOPNOTSUPP));
@@ -557,6 +554,8 @@ zfs_uio_get_dio_pages_alloc(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	if (error) {
 		vmem_free(uio->uio_dio.pages, size);
 		return (error);
+	} else {
+		uio->uio_dio.allocated_npages = npages;
 	}
 
 	/*

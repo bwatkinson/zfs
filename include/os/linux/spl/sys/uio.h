@@ -60,8 +60,9 @@ typedef enum zfs_uio_seg {
  * This structures is used when doing Direct IO.
  */
 typedef struct {
-	struct page	**pages;	/* Mapped pages */
-	int		npages;		/* Number of mapped pages */
+	struct page	**pages;	  /* Mapped pages */
+	int		npages;		  /* Number of mapped pages */
+	int		allocated_npages; /* At most npages + 1 */
 } zfs_uio_dio_t;
 
 typedef struct zfs_uio {

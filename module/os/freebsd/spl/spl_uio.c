@@ -111,21 +111,18 @@ zfs_uio_fault_move(void *p, size_t n, zfs_uio_rw_t dir, zfs_uio_t *uio)
 }
 
 /*
- * Check if the uio is both logically page-aligned in terms of offset
- * and length in the file, and page-aligned in memory.
+ * Check if the uio is SPA_MINBLOCKSIZE-aligned in memory.
  */
 boolean_t
-zfs_uio_page_aligned(zfs_uio_t *uio)
+zfs_uio_dio_aligned(zfs_uio_t *uio)
 {
 	const struct iovec *iov = GET_UIO_STRUCT(uio)->uio_iov;
-
-	if (!IO_PAGE_ALIGNED(zfs_uio_offset(uio), zfs_uio_resid(uio)))
-		return (B_FALSE);
 
 	for (int i = zfs_uio_iovcnt(uio); i > 0; iov++, i--) {
 		unsigned long addr = (unsigned long)iov->iov_base;
 		size_t size = iov->iov_len;
-		if ((addr & (PAGE_SIZE - 1)) || (size & (PAGE_SIZE - 1))) {
+		if ((addr & (SPA_MINBLOCKSIZE - 1)) ||
+		    (size & (SPA_MINBLOCKSIZE - 1))) {
 				return (B_FALSE);
 		}
 	}
@@ -259,7 +256,7 @@ zfs_uio_free_dio_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	    uio->uio_dio.npages);
 
 	kmem_free(uio->uio_dio.pages,
-	    uio->uio_dio.npages * sizeof (vm_page_t));
+	    uio->uio_dio.allocated_npages * sizeof (vm_page_t));
 }
 
 static long
@@ -356,7 +353,7 @@ int
 zfs_uio_get_dio_pages_alloc(zfs_uio_t *uio, zfs_uio_rw_t rw)
 {
 	int error = 0;
-	size_t npages = DIV_ROUND_UP(zfs_uio_resid(uio), PAGE_SIZE);
+	size_t npages = DIV_ROUND_UP(zfs_uio_resid(uio), PAGE_SIZE) + 1;
 	size_t size = npages * sizeof (vm_page_t);
 
 	ASSERT(zfs_uio_rw(uio) == rw);
@@ -368,6 +365,9 @@ zfs_uio_get_dio_pages_alloc(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	if (error) {
 		kmem_free(uio->uio_dio.pages, size);
 		return (error);
+	} else {
+		ASSERT3S(uio->uio_dio.npages, <=, npages);
+		uio->uio_dio.allocated_pages = npages;
 	}
 
 	/*

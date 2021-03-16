@@ -500,6 +500,7 @@ abd_alloc_zero_scatter(void)
 
 #define	zfs_kmap_atomic(chunk, km)	((void *)chunk)
 #define	zfs_kmap(chunk)			((void *)chunk)
+#define	sg_virt(chunk)			((void *)chunk)
 #define	zfs_kunmap_atomic(addr, km)	do { (void)(addr); } while (0)
 #define	zfs_kunmap(chunk)		((void *)chunk)
 #define	local_irq_save(flags)		do { (void)(flags); } while (0)
@@ -770,10 +771,29 @@ abd_alloc_from_pages(struct page **pages, unsigned long offset, uint64_t size)
 {
 	uint_t npages = DIV_ROUND_UP(size, PAGE_SIZE);
 	struct sg_table table;
+	unsigned long page_offset = 0;
+	void *addr = NULL;
 
 	VERIFY3U(size, <=, SPA_MAXBLOCKSIZE);
 	ASSERT3U(offset, <, PAGE_SIZE);
 	ASSERT3P(pages, !=, NULL);
+
+	/*
+	 * Need to take into account memory alignment into the first page.
+	 */
+	addr = zfs_kmap_atomic(pages[0], 0);
+	page_offset = offset_in_page(addr);
+	zfs_kunmap_atomic(addr, 0);
+	if (page_offset > 0) {
+		offset += page_offset;
+		if (((offset + size) % PAGE_SIZE)) {
+			npages += 1;
+		}
+		if (offset >= PAGE_SIZE) {
+			pages++;
+			offset = offset % PAGE_SIZE;
+		}
+	}
 
 	/*
 	 * Even if this buf is filesystem metadata, we only track that if we
@@ -790,7 +810,7 @@ abd_alloc_from_pages(struct page **pages, unsigned long offset, uint64_t size)
 		schedule_timeout_interruptible(1);
 	}
 
-	if (size < PAGE_SIZE) {
+	if (size < PAGE_SIZE && page_offset == 0) {
 		/*
 		 * Since there is only one entry, this ABD can be represented
 		 * as a linear buffer. All single-page (4K) ABD's constructed
@@ -960,6 +980,14 @@ abd_iter_map(struct abd_iter *aiter)
 		offset = aiter->iter_offset;
 		aiter->iter_mapsize = aiter->iter_abd->abd_size - offset;
 		paddr = ABD_LINEAR_BUF(aiter->iter_abd);
+#if defined(_KERNEL)
+	} else if (abd_is_from_pages(aiter->iter_abd)) {
+		offset = aiter->iter_offset;
+		aiter->iter_mapsize = MIN(aiter->iter_sg->length - offset,
+		    aiter->iter_abd->abd_size - aiter->iter_pos);
+		paddr = zfs_kmap_atomic(sg_page(aiter->iter_sg) +
+		    aiter->iter_sg->offset, km_table[aiter->iter_km]);
+#endif
 	} else {
 		offset = aiter->iter_offset;
 		aiter->iter_mapsize = MIN(aiter->iter_sg->length - offset,
