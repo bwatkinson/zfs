@@ -337,26 +337,30 @@ EXPORT_SYMBOL(zfs_uioskip);
 boolean_t
 zfs_uio_page_aligned(zfs_uio_t *uio)
 {
-	if (uio->uio_segflg == UIO_BVEC) {
-		/* Currently unsupported */
-		return (B_FALSE);
+	const struct iovec *iov;
+
+	if (uio->uio_segflg == UIO_USERSPACE ||
+	    uio->uio_segflg == UIO_SYSSPACE) {
+		iov = uio->uio_iov;
 #if defined(HAVE_VFS_IOV_ITER)
 	} else if (uio->uio_segflg == UIO_ITER) {
-		if (iov_iter_alignment(uio->uio_iter) & (PAGE_SIZE - 1)) {
-			return (B_FALSE);
-		}
+		iov = uio->uio_iter->iov;
 #endif
 	} else {
-		const struct iovec *iov = uio->uio_iov;
+		/* Currently not supported */
+		return (B_FALSE);
+	}
 
-		for (int i = uio->uio_iovcnt; i > 0; iov++, i--) {
-			unsigned long addr = (unsigned long)iov->iov_base;
-			size_t size = iov->iov_len;
-			if ((addr & (PAGE_SIZE - 1)) ||
-			    (size & (PAGE_SIZE - 1))) {
-				return (B_FALSE);
-			}
+	size_t skip = uio->uio_skip;
+
+	for (int i = uio->uio_iovcnt; i > 0; iov++, i--) {
+		unsigned long addr = (unsigned long)(iov->iov_base + skip);
+		size_t size = iov->iov_len - skip;
+		if ((addr & (PAGE_SIZE - 1)) ||
+		    (size & (PAGE_SIZE - 1))) {
+			return (B_FALSE);
 		}
+		skip = 0;
 	}
 
 	return (B_TRUE);
@@ -451,11 +455,7 @@ zfs_uio_iov_step(struct iovec v, zfs_uio_rw_t rw, zfs_uio_t *uio, int *numpages)
 static int
 zfs_uio_get_dio_pages_iov(zfs_uio_t *uio, zfs_uio_rw_t rw)
 {
-#if defined(HAVE_VFS_IOV_ITER)
-	const struct iovec *iovp = uio->uio_iter->iov;
-#else
 	const struct iovec *iovp = uio->uio_iov;
-#endif
 	size_t skip = uio->uio_skip;
 	size_t wanted, maxsize;
 

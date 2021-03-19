@@ -51,7 +51,6 @@ typedef	enum uio_rw	zfs_uio_rw_t;
 typedef struct {
 	vm_page_t	*pages;
 	int		npages;
-	offset_t	page_offset;
 } zfs_uio_dio_t;
 
 typedef struct zfs_uio {
