@@ -387,7 +387,7 @@ zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 			lock_page(p);
 		}
 
-		TestSetPageWriteback(p);
+		test_set_page_writeback(p);
 		unlock_page(p);
 	}
 }
