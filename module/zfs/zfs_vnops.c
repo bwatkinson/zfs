@@ -168,6 +168,27 @@ zfs_access(znode_t *zp, int mode, int flag, cred_t *cr)
 
 static unsigned long zfs_vnops_read_chunk_size = 1024 * 1024; /* Tunable */
 
+boolean_t
+zfs_check_direct_enabled(znode_t *zp, int ioflags)
+{
+	boolean_t is_direct = B_FALSE;
+
+	zfsvfs_t *zfsvfs = ZTOZSB(zp);
+
+	ZFS_ENTER(zfsvfs);
+
+	if (ioflags & O_DIRECT &&
+	    zfsvfs->z_os->os_direct != ZFS_DIRECT_DISABLED) {
+		is_direct = B_TRUE;
+	} else if (zfsvfs->z_os->os_direct == ZFS_DIRECT_ALWAYS) {
+		is_direct = B_TRUE;
+	}
+
+	ZFS_EXIT(zfsvfs);
+
+	return (is_direct);
+}
+
 /*
  * Determine if direct IO has been requested (either via the O_DIRECT flag or
  * the "direct" dataset property). When inherited by the property only apply
@@ -178,7 +199,7 @@ static unsigned long zfs_vnops_read_chunk_size = 1024 * 1024; /* Tunable */
  * request is unaligned.  In all cases, if the file has been accessed via
  * mmap(2) then perform buffered IO to keep the mapped region synchronized.
  */
-static int
+int
 zfs_setup_direct(struct znode *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
     int *ioflagp)
 {
@@ -186,35 +207,41 @@ zfs_setup_direct(struct znode *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
 	objset_t *os = zfsvfs->z_os;
 	int ioflag = *ioflagp;
 
-	if (os->os_direct == ZFS_DIRECT_ALWAYS && zfs_uio_page_aligned(uio) &&
-	    zfs_uio_blksz_aligned(uio, SPA_MINBLOCKSIZE)) {
-		if ((rw == UIO_WRITE && zfs_uio_resid(uio) >= zp->z_blksz) ||
-		    (rw == UIO_READ)) {
-			ioflag |= O_DIRECT;
-		}
-	} else if (os->os_direct == ZFS_DIRECT_DISABLED) {
-		ioflag &= ~O_DIRECT;
-	}
+	ZFS_ENTER(zfsvfs);
+	ZFS_VERIFY_ZP(zp);
+
+	if (os->os_direct == ZFS_DIRECT_DISABLED)
+		return (EAGAIN);
+	else if (os->os_direct == ZFS_DIRECT_ALWAYS)
+		ioflag |= O_DIRECT;
 
 	if (ioflag & O_DIRECT) {
 		if (!zfs_uio_page_aligned(uio) ||
 		    !zfs_uio_blksz_aligned(uio, SPA_MINBLOCKSIZE)) {
+			ZFS_EXIT(zfsvfs);
 			return (SET_ERROR(EINVAL));
 		}
 
 		if (zn_has_cached_data(zp, zfs_uio_offset(uio),
 		    zfs_uio_offset(uio) + zfs_uio_resid(uio) - 1)) {
-			ioflag &= ~O_DIRECT;
+			ZFS_EXIT(zfsvfs);
+			return (SET_ERROR(EAGAIN));
 		}
 
-		if (ioflag & O_DIRECT) {
-			int error = zfs_uio_get_dio_pages_alloc(uio, rw);
-			if (error)
-				return (error);
+		int error = zfs_uio_get_dio_pages_alloc(uio, rw);
+		if (error) {
+			ZFS_EXIT(zfsvfs);
+			return (error);
 		}
+	} else {
+		ZFS_EXIT(zfsvfs);
+		return (EAGAIN);
 	}
 
 	IMPLY(ioflag & O_DIRECT, uio->uio_extflg & UIO_DIRECT);
+
+	ZFS_EXIT(zfsvfs);
+
 	*ioflagp = ioflag;
 
 	return (0);
@@ -304,13 +331,6 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		error = 0;
 		goto out;
 	}
-
-	/*
-	 * Enable direct IO when requested.
-	 */
-	error = zfs_setup_direct(zp, uio, UIO_READ, &ioflag);
-	if (error)
-		goto out;
 
 	ASSERT(zfs_uio_offset(uio) < zp->z_size);
 	ssize_t chunk_size = zfs_vnops_read_chunk_size;
@@ -493,13 +513,6 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		zfs_rangelock_exit(lr);
 		ZFS_EXIT(zfsvfs);
 		return (SET_ERROR(EFBIG));
-	}
-
-	error = zfs_setup_direct(zp, uio, UIO_WRITE, &ioflag);
-	if (error) {
-		zfs_rangelock_exit(lr);
-		ZFS_EXIT(zfsvfs);
-		return (error);
 	}
 
 	if (n > limit - woff)
@@ -790,7 +803,6 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 
 	zfs_znode_update_vfs(zp);
 	zfs_rangelock_exit(lr);
-	zfs_uio_free_dio_pages(uio, UIO_WRITE);
 
 	/*
 	 * If we're in replay mode, or we made no progress, or the
