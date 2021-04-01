@@ -466,12 +466,13 @@ zpl_iter_write(struct kiocb *kiocb, struct iov_iter *from)
 
 	if (direct) {
 		/*
-		 * generic_file_direct_write() will attempt to flush out any
+		 * zpl_generic_file_direct_write() will attempt to flush out any
 		 * pages in the page cache and invalidate them. If this is
 		 * successful it will cal the direct_IO
 		 * address_space_operation (zpl_iter_write_direct()).
 		 */
-		size_t wrote = generic_file_direct_write(kiocb, from);
+		size_t wrote = zpl_generic_file_direct_write(kiocb, from,
+		    kiocb->ki_pos);
 		if (wrote == -EINVAL || !iov_iter_count(from))
 			return (wrote);
 		kiocb->ki_flags &= ~IOCB_DIRECT;
@@ -711,13 +712,13 @@ zpl_aio_write(struct kiocb *kiocb, const struct iovec *iov,
 		loff_t pos = kiocb->ki_pos;
 
 		/*
-		 * generic_file_direct_write() will attempt to flush out any
+		 * zpl_generic_file_direct_write() will attempt to flush out any
 		 * pages in the page cahce and invalidate them. If this is
 		 * successful it will call the direct_IO
 		 * address_space_operation (zpl_aio_write_direct()).
 		 */
-		ssize_t wrote = generic_file_direct_write(kiocb, iov, &nr_segs,
-		    pos, &kiocb->ki_pos, count, ocount);
+		ssize_t wrote = zpl_generic_file_direct_write(kiocb, iov,
+		    &nr_segs, pos, &kiocb->ki_pos, count, ocount);
 		if (wrote == -EINVAL || wrote == count)
 			return (wrote);
 	}
