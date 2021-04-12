@@ -375,7 +375,6 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 	dataset_kstats_update_read_kstats(&zfsvfs->z_kstat, nread);
 out:
 	zfs_rangelock_exit(lr);
-	zfs_uio_free_dio_pages(uio, UIO_READ);
 
 	ZFS_ACCESSTIME_STAMP(zfsvfs, zp);
 	ZFS_EXIT(zfsvfs);

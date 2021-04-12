@@ -576,7 +576,12 @@ dmu_buf_hold_array_by_dnode(dnode_t *dn, uint64_t offset, uint64_t length,
 		dbp[i] = &db->db;
 	}
 
-	if (!read)
+	/*
+	 * If we are doing O_DIRECT we still hold the dbufs, even for reads,
+	 * but we do not issue any here reads. We do not want to account for
+	 * writes in this case.
+	 */
+	if (!read && ((flags & DMU_DIRECTIO) == 0))
 		zfs_racct_write(dn->dn_objset->os_spa, length, nblks, flags);
 
 	if (zs)
