@@ -353,6 +353,8 @@ zfs_uio_page_aligned(zfs_uio_t *uio)
 
 	size_t skip = uio->uio_skip;
 
+	zfs_dbgmsg("skip = %d", skip);
+
 	for (int i = uio->uio_iovcnt; i > 0; iov++, i--) {
 		unsigned long addr = (unsigned long)(iov->iov_base + skip);
 		size_t size = iov->iov_len - skip;

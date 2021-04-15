@@ -212,8 +212,14 @@ zfs_setup_direct(struct znode *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
 
 	if (os->os_direct == ZFS_DIRECT_DISABLED)
 		return (EAGAIN);
-	else if (os->os_direct == ZFS_DIRECT_ALWAYS)
-		ioflag |= O_DIRECT;
+	else if (os->os_direct == ZFS_DIRECT_ALWAYS &&
+	    zfs_uio_page_aligned(uio) &&
+	    zfs_uio_blksz_aligned(uio, SPA_MINBLOCKSIZE)) {
+		if ((rw == UIO_WRITE && zfs_uio_resid(uio) >= zp->z_blksz) ||
+		    (rw == UIO_READ)) {
+			ioflag |= O_DIRECT;
+		}
+	}
 
 	if (ioflag & O_DIRECT) {
 		if (!zfs_uio_page_aligned(uio) ||
