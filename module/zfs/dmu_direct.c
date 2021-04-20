@@ -245,6 +245,7 @@ dmu_write_abd(dnode_t *dn, uint64_t offset, uint64_t size,
     abd_t *data, uint32_t flags, dmu_tx_t *tx)
 {
 	dmu_buf_t **dbp;
+	spa_t *spa = dn->dn_objset->os_spa;
 	int numbufs, err;
 
 	ASSERT(flags & DMU_DIRECTIO);
@@ -254,8 +255,7 @@ dmu_write_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 	if (err)
 		return (err);
 
-	zio_t *pio = zio_root(dn->dn_objset->os_spa, NULL, NULL,
-	    ZIO_FLAG_CANFAIL);
+	zio_t *pio = zio_root(spa, NULL, NULL, ZIO_FLAG_CANFAIL);
 
 	for (int i = 0; i < numbufs; i++) {
 		dmu_buf_impl_t *db = (dmu_buf_impl_t *)dbp[i];
@@ -263,6 +263,7 @@ dmu_write_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 		abd_t *abd = abd_get_offset_size(data,
 		    db->db.db_offset - offset, dn->dn_datablksz);
 
+		zfs_racct_write(spa, db->db.db_size, 1, flags);
 		err = dmu_write_direct(pio, db, abd, tx);
 		ASSERT0(err);
 	}
