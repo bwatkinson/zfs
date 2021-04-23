@@ -263,8 +263,8 @@ dmu_write_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 		abd_t *abd = abd_get_offset_size(data,
 		    db->db.db_offset - offset, dn->dn_datablksz);
 
-		err = dmu_write_direct(pio, db, abd, tx);
 		zfs_racct_write(spa, db->db.db_size, 1, flags);
+		err = dmu_write_direct(pio, db, abd, tx);
 		ASSERT0(err);
 	}
 
