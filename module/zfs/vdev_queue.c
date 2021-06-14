@@ -878,8 +878,20 @@ vdev_queue_io(zio_t *zio)
 	vdev_queue_t *vq = &zio->io_vd->vdev_queue;
 	zio_t *nio;
 
-	if (zio->io_flags & ZIO_FLAG_DONT_QUEUE)
+	if (zio->io_flags & ZIO_FLAG_DONT_QUEUE) {
+		/*
+		 * If this is an O_DIRECT write we might have to an optional
+		 * I/O that we can simply discard because we are not doing
+		 * any aggregation.
+		 */
+		if (zio->io_prop.zp_direct_write &&
+		    zio->io_flags & ZIO_FLAG_NODATA) {
+			ASSERT3U(zio->io_type, ==, ZIO_TYPE_WRITE);
+			ASSERT3P(zio->io_abd, ==, NULL);
+			zio_vdev_io_bypass(zio);
+		}
 		return (zio);
+	}
 
 	/*
 	 * Children i/os inherent their parent's priority, which might
@@ -935,6 +947,17 @@ vdev_queue_io_done(zio_t *zio)
 {
 	vdev_queue_t *vq = &zio->io_vd->vdev_queue;
 	zio_t *nio;
+
+	/*
+	 * If this was an O_DIRECT write we did not put it in the
+	 * VDEV queue so we just return.
+	 */
+	if (zio->io_prop.zp_direct_write) {
+		ASSERT(zio->io_flags & ZIO_FLAG_DONT_QUEUE);
+		ASSERT3U(zio->io_type, ==, ZIO_TYPE_WRITE);
+		zio->io_delta = gethrtime() - zio->io_timestamp;
+		return;
+	}
 
 	mutex_enter(&vq->vq_lock);
 

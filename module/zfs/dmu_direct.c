@@ -230,7 +230,8 @@ dmu_write_direct(zio_t *pio, dmu_buf_impl_t *db, abd_t *data, dmu_tx_t *tx)
 	zio_t *zio = zio_write(pio, os->os_spa, txg, bp, data,
 	    db->db.db_size, db->db.db_size, &zp,
 	    dmu_write_direct_ready, NULL, NULL, dmu_write_direct_done, dsa,
-	    ZIO_PRIORITY_SYNC_WRITE, ZIO_FLAG_CANFAIL, &zb);
+	    ZIO_PRIORITY_SYNC_WRITE, ZIO_FLAG_CANFAIL | ZIO_FLAG_DONT_QUEUE,
+	    &zb);
 
 	if (pio == NULL)
 		return (zio_wait(zio));

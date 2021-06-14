@@ -1475,11 +1475,20 @@ zio_vdev_child_io(zio_t *pio, blkptr_t *bp, vdev_t *vd, uint64_t offset,
 		flags &= ~ZIO_FLAG_IO_ALLOCATING;
 	}
 
+	/*
+	 * If our parent is an O_DIRECT write we must flag the child so
+	 * we skip the VDEV queues when issuing the IO.
+	 */
+	if (pio->io_prop.zp_direct_write)
+		flags |= ZIO_FLAG_DONT_QUEUE;
 
 	zio = zio_create(pio, pio->io_spa, pio->io_txg, bp, data, size, size,
 	    done, private, type, priority, flags, vd, offset, &pio->io_bookmark,
 	    ZIO_STAGE_VDEV_IO_START >> 1, pipeline);
 	ASSERT3U(zio->io_child_type, ==, ZIO_CHILD_VDEV);
+
+	if (pio->io_prop.zp_direct_write)
+		zio->io_prop.zp_direct_write = B_TRUE;
 
 	zio->io_physdone = pio->io_physdone;
 	if (vd->vdev_ops->vdev_op_leaf && zio->io_logical != NULL)
@@ -3854,6 +3863,19 @@ zio_vdev_io_start(zio_t *zio)
 			return (NULL);
 		}
 		zio->io_delay = gethrtime();
+
+		/*
+		 * If we were issued an optional IO for an O_DIRECT write we
+		 * will just return the ZIO as it was updated with
+		 * zio_vdev_io_bypass() in vdev_queue_io(). We just want
+		 * this I/O to complete immediately.
+		 */
+		if (zio->io_prop.zp_direct_write &&
+		    zio->io_flags & ZIO_FLAG_NODATA) {
+			ASSERT3U(zio->io_type, ==, ZIO_TYPE_WRITE);
+			ASSERT(zio->io_flags & ZIO_FLAG_DONT_QUEUE);
+			return (zio);
+		}
 	}
 
 	vd->vdev_ops->vdev_op_io_start(zio);
