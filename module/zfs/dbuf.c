@@ -150,6 +150,9 @@ struct {
 	wmsum_t cache_total_evicts;
 	wmsum_t cache_levels[DN_MAX_LEVELS];
 	wmsum_t cache_levels_bytes[DN_MAX_LEVELS];
+	wmsum_t direct_sync_wait;
+	wmsum_t direct_undirty_wait;
+	wmsum_t direct_undirty;
 	wmsum_t hash_hits;
 	wmsum_t hash_misses;
 	wmsum_t hash_collisions;
@@ -809,6 +812,12 @@ dbuf_kstat_update(kstat_t *ksp, int rw)
 		ds->cache_levels_bytes[i].value.ui64 =
 		    wmsum_value(&dbuf_sums.cache_levels_bytes[i]);
 	}
+	ds->direct_sync_wait.value.ui64 =
+	    wmsum_value(&dbuf_sums.direct_sync_wait);
+	ds->direct_undirty_wait.value.ui64 =
+	    wmsum_value(&dbuf_sums.direct_undirty_wait);
+	ds->direct_undirty.value.ui64 =
+	    wmsum_value(&dbuf_sums.direct_undirty);
 	ds->hash_hits.value.ui64 =
 	    wmsum_value(&dbuf_sums.hash_hits);
 	ds->hash_misses.value.ui64 =
@@ -897,6 +906,9 @@ retry:
 		wmsum_init(&dbuf_sums.cache_levels[i], 0);
 		wmsum_init(&dbuf_sums.cache_levels_bytes[i], 0);
 	}
+	wmsum_init(&dbuf_sums.direct_sync_wait, 0);
+	wmsum_init(&dbuf_sums.direct_undirty_wait, 0);
+	wmsum_init(&dbuf_sums.direct_undirty, 0);
 	wmsum_init(&dbuf_sums.hash_hits, 0);
 	wmsum_init(&dbuf_sums.hash_misses, 0);
 	wmsum_init(&dbuf_sums.hash_collisions, 0);
@@ -974,6 +986,9 @@ dbuf_fini(void)
 		wmsum_fini(&dbuf_sums.cache_levels[i]);
 		wmsum_fini(&dbuf_sums.cache_levels_bytes[i]);
 	}
+	wmsum_fini(&dbuf_sums.direct_sync_wait);
+	wmsum_fini(&dbuf_sums.direct_undirty_wait);
+	wmsum_fini(&dbuf_sums.direct_undirty);
 	wmsum_fini(&dbuf_sums.hash_hits);
 	wmsum_fini(&dbuf_sums.hash_misses);
 	wmsum_fini(&dbuf_sums.hash_collisions);
