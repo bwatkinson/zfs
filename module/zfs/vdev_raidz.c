@@ -1555,6 +1555,14 @@ vdev_raidz_io_start_write(zio_t *zio, raidz_row_t *rr, uint64_t ashift)
 		raidz_col_t *rc = &rr->rr_col[c];
 		vdev_t *cvd = vd->vdev_child[rc->rc_devidx];
 
+		/*
+		 * If this is a non rotational disk we will not issue the
+		 * optional I/Os to reduce contention of the disk VDEV
+		 * queue lock (vq_lock).
+		 */
+		if (cvd->vdev_ops == &vdev_disk_ops && cvd->vdev_nonrot)
+			continue;
+
 		zio_nowait(zio_vdev_child_io(zio, NULL, cvd,
 		    rc->rc_offset + rc->rc_size, NULL, 1ULL << ashift,
 		    zio->io_type, zio->io_priority,
