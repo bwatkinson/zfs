@@ -2691,6 +2691,50 @@ dmu_buf_undirty(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr)
 	return (dr_prev);
 }
 
+/*
+ * Direct IO reads can read directly from the ARC, but the data has
+ * to be untransformed in order to copy it over into user pages.
+ */
+int
+dmu_buf_untransform_direct(dmu_buf_impl_t *db, spa_t *spa)
+{
+	int err = 0;
+
+	DB_DNODE_ENTER(db);
+	ASSERT3S(db->db_state, ==, DB_CACHED);
+	ASSERT(MUTEX_HELD(&db->db_mtx));
+
+	/*
+	 * Ensure that this block's dnode has been decrypted if
+	 * the caller has requested decrypted data.
+	 */
+	err = dbuf_read_verify_dnode_crypt(db, 0);
+
+	/*
+	 * If the arc buf is compressed or encrypted and the caller
+	 * requested uncompressed data, we need to untransform it
+	 * before returning. We also call arc_untransform() on any
+	 * unauthenticated blocks, which will verify their MAC if
+	 * the key is now available.
+	 */
+	if (err == 0 && db->db_buf != NULL &&
+	    (arc_is_encrypted(db->db_buf) ||
+	    arc_is_unauthenticated(db->db_buf) ||
+	    arc_get_compression(db->db_buf) != ZIO_COMPRESS_OFF)) {
+		zbookmark_phys_t zb;
+
+		SET_BOOKMARK(&zb, dmu_objset_id(db->db_objset),
+		    db->db.db_object, db->db_level, db->db_blkid);
+		dbuf_fix_old_data(db, spa_syncing_txg(spa));
+		err = arc_untransform(db->db_buf, spa, &zb, B_FALSE);
+		dbuf_set_data(db, db->db_buf);
+	}
+	DB_DNODE_EXIT(db);
+	DBUF_STAT_BUMP(hash_hits);
+
+	return (err);
+}
+
 void
 dmu_buf_will_not_fill(dmu_buf_t *db_fake, dmu_tx_t *tx)
 {

@@ -315,6 +315,12 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 			size_t len = MIN(size - aoff, db->db.db_size - boff);
 
 			if (db->db_state == DB_CACHED) {
+				/*
+				 * We need to untransformed the ARC buf data
+				 * before we copy it over.
+				 */
+				int err = dmu_buf_untransform_direct(db, spa);
+				ASSERT0(err);
 				abd_copy_from_buf_off(data,
 				    (char *)db->db.db_data + boff, aoff, len);
 			} else {
