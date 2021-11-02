@@ -53,6 +53,30 @@ dmu_get_bp_from_dbuf(dmu_buf_impl_t *db)
 		/* We have a Direct IO write, use it's bp */
 		ASSERT3S(db->db_state, !=, DB_NOFILL);
 		bp = &dr_dio->dt.dl.dr_overridden_by;
+#if defined(__FreeBSD__)
+		printf("%s(%d): We have a Direct IO write so returning BP "
+		    "db = %p, db->db.db_offset = %lu, db->db.db_size = %lu, "
+		    "bp = %p\n", __FUNCTION__, __LINE__, db,
+		    db->db.db_offset, db->db.db_size, bp);
+#else
+		zfs_dbgmsg("We have a Direct IO write so returning BP "
+		    "db = %p, db->db.db_offset = %lu, db->db.db_size = %lu, "
+		    "bp = %p", db, (unsigned long)db->db.db_offset,
+		    (unsigned long)db->db.db_size, bp);
+#endif
+	} else {
+#if defined(__FreeBSD__)
+		printf("%s(%d): We did not detect Direct IO write db = %p, "
+		    "db->db.db_offset = %lu, db->db.db_size = %lu, "
+		    "bp = %p\n", __FUNCTION__, __LINE__, db,
+		    db->db.db_offset, db->db.db_size, bp);
+#else
+		zfs_dbgmsg("We did not detect Direct IO write db = %p, "
+		    "db->db.db_offset = %lu db->db.db_size = %lu, "
+		    "bp = %p\n", db, 
+		    (unsigned long)db->db.db_offset,
+		    (unsigned long)db->db.db_size, bp);
+#endif
 	}
 
 	return (bp);
@@ -123,6 +147,17 @@ dmu_write_direct_done(zio_t *zio)
 	abd_free(zio->io_abd);
 
 	if (zio->io_error == 0) {
+#if defined(__FreeBSD__)
+		printf("%s(%d): Yes we here db: %p, db->db.db_offset = %lu "
+		    "db->db.db_size = %lu, zio->io_bp = %p\n", __FUNCTION__,
+		    __LINE__, db, db->db.db_offset, db->db.db_size,
+		    zio->io_bp);
+#else
+		zfs_dbgmsg("Yes we here db: %p, db->db.db_offset = %lu "
+		    "db->db.db_size = %lu, zio->io_bp = %p", db,
+		    (unsigned long)db->db.db_offset,
+		    (unsigned long)db->db.db_size, zio->io_bp);
+#endif
 		/*
 		 * After a successful Direct IO write any stale contents in
 		 * the ARC must be cleaned up in order to force all future
@@ -167,6 +202,18 @@ dmu_write_direct_done(zio_t *zio)
 		ASSERT(db->db.db_data == NULL);
 		db->db_state = DB_UNCACHED;
 		mutex_exit(&db->db_mtx);
+	} else {
+#if defined(__FreeBSD__)
+		printf("%s(%d): zio->io_error = %d, db: %p, "
+		    "db->db.db_offset = %lu, db->db.db_size = %lu\n",
+		    __FUNCTION__, __LINE__, zio->io_error, db,
+		    db->db.db_offset, db->db.db_size);
+#else
+		zfs_dbgmsg("zio->io_error = %d, db: %p, db->db.db_offset = %lu "
+		    "db->db.db_size = %lu", zio->io_error, db,
+		    (unsigned long)db->db.db_offset,
+		    (unsigned long)db->db.db_size);
+#endif
 	}
 
 	dmu_sync_done(zio, NULL, zio->io_private);
@@ -324,7 +371,27 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 			    offset - db->db.db_offset : 0;
 			size_t len = MIN(size - aoff, db->db.db_size - boff);
 
+#if defined(__FreeBSD__)
+			printf("%s(%d): Yes we here db = %p, bp = %p, "
+			    "db->db.db_offset = %lu, db->db.db_size = %lu\n",
+			    __FUNCTION__, __LINE__, db, bp, db->db.db_offset,
+			    db->db.db_size);
+#else
+			zfs_dbgmsg("Yes we here db = %p, bp = %p, "
+			    "db->db.db_offset = %lu db->db.db_size = %lu", db,
+			    bp, (unsigned long)db->db.db_offset,
+			    (unsigned long)db->db.db_size);
+#endif
+
 			if (db->db_state == DB_CACHED) {
+#if defined(__FreeBSD__)
+				printf("%s(%d): Yes we have db->db_state == "
+				    "DB_CACHED db = %p\n",
+				    __FUNCTION__, __LINE__, db);
+#else
+				zfs_dbgmsg("Yes we have db->db_state == "
+				    "DB_CACHED db = %p", db);
+#endif
 				/*
 				 * We need to untransformed the ARC buf data
 				 * before we copy it over.
@@ -340,6 +407,17 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 			mutex_exit(&db->db_mtx);
 			continue;
 		}
+#if defined(__FreeBSD__)
+		printf("%s(%d): We are going to issue Direct IO Read  db = %p, "
+		    "bp = %p, db->db.db_offset = %lu, db->db.db_size = %lu\n",
+		    __FUNCTION__, __LINE__, db, bp, db->db.db_offset,
+		    db->db.db_size);
+#else
+		zfs_dbgmsg("We are going to issue Direct IO Read  db = %p, "
+		    "bp = %p, db->db.db_offset = %lu, db->db.db_size = %lu",
+		    db, bp, (unsigned long)db->db.db_offset,
+		    (unsigned long)db->db.db_size);
+#endif
 
 		mbuf = make_abd_for_dbuf(db, data, offset, size);
 		ASSERT3P(mbuf, !=, NULL);
