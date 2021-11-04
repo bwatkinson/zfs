@@ -4405,10 +4405,36 @@ zfs_freebsd_read(struct vop_read_args *ap)
 	int ioflag = ioflags(ap->a_ioflag);
 
 	zfs_uio_init(&uio, ap->a_uio);
+
 	error = zfs_setup_direct(zp, &uio, UIO_READ, &ioflag);
 
-	if (error == EINVAL)
-		return (error);
+	/*
+	 * XXX We occasionally get an EFAULT for Direct IO reads. This still
+	 * needs to be resolved. The EFAULT comes from
+	 * zfs_uio_get__dio_pages_alloc() -> zfs_uio_get_dio_pages_impl() ->
+	 * zfs_uio_iov_step() -> zfs_uio_get_user_pages(). We return EFAULT
+	 * from zfs_uio_iov_step(). When a Direct IO read fails to map in
+	 * the user pages (returning EFAULT) the Direct IO request is broken
+	 * up into two separate IO requests and issued separately using
+	 * Direct IO.
+	 */
+	if (error) {
+#ifdef ZFS_DEBUG
+		if (error == EFAULT) {
+#if 0
+			printf("%s(%d): Direct IO read returning EFAULT "
+			    "uio = %p, zfs_uio_offset(uio) = %lu "
+			    "zfs_uio_resid(uio) = %lu\n",
+			    __FUNCTION__, __LINE__, &uio, zfs_uio_offset(&uio),
+			    zfs_uio_resid(&uio));
+#endif
+#endif
+		}
+
+		if (error != EAGAIN)
+			return (error);
+		ioflag &= ~O_DIRECT;
+	}
 
 	error = zfs_read(zp, &uio, ioflag, ap->a_cred);
 
@@ -4435,10 +4461,14 @@ zfs_freebsd_write(struct vop_write_args *ap)
 	int ioflag = ioflags(ap->a_ioflag);
 
 	zfs_uio_init(&uio, ap->a_uio);
+
 	error = zfs_setup_direct(zp, &uio, UIO_WRITE, &ioflag);
 
-	if (error == EINVAL)
-		return (error);
+	if (error) {
+		if (error !=  EAGAIN)
+			return (error);
+		ioflag &= ~O_DIRECT;
+	}
 
 	error = zfs_write(zp, &uio, ioflag, ap->a_cred);
 
