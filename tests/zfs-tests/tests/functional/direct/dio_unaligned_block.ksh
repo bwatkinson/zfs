@@ -65,7 +65,7 @@ log_must zfs set direct=standard $TESTPOOL/$TESTFS
 log_mustnot stride_dd -i /dev/urandom -o $tmp_file -b 512 -c 8 -D
 log_mustnot stride_dd -i $tmp_file -o /dev/null -b 512 -c 8 -d
 
-logt_must zfs set direct=always $TESTPOOL/$TESTFS
+log_must zfs set direct=always $TESTPOOL/$TESTFS
 # sub-pagesize direct writes/read will always pass if direct=always.
 log_must stride_dd -i /dev/urandom -o $tmp_file -b 512 -c 8
 log_must stride_dd -i $tmp_file -o /dev/null -b 512 -c 8
