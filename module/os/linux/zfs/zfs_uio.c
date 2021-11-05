@@ -523,9 +523,7 @@ zfs_uio_release_stable_pages(zfs_uio_t *uio)
 void
 zfs_uio_free_dio_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
 {
-	if (!(uio->uio_extflg & UIO_DIRECT))
-		return;
-
+	ASSERT(uio->uio_extflg & UIO_DIRECT);
 	ASSERT3P(uio->uio_dio.pages, !=, NULL);
 
 	if (rw == UIO_WRITE)
