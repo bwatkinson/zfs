@@ -367,6 +367,10 @@ zpl_iter_read_direct(struct kiocb *kiocb, struct iov_iter *to)
 	ret = zfs_setup_direct(ITOZ(ip), &uio, UIO_READ, &flags);
 	if (ret)
 		return (-ret);
+	else if ((flags & O_DIRECT) == 0)
+		return (-EAGAIN);
+
+	ASSERT(uio.uio_extflg & UIO_DIRECT);
 
 	crhold(cr);
 	fstrans_cookie_t cookie = spl_fstrans_mark();
@@ -489,6 +493,10 @@ zpl_iter_write_direct(struct kiocb *kiocb, struct iov_iter *from)
 	ret = zfs_setup_direct(ITOZ(ip), &uio, UIO_WRITE, &flags);
 	if (ret)
 		return (-ret);
+	else if ((flags & O_DIRECT) == 0)
+		return (-EAGAIN);
+
+	ASSERT(uio.uio_extflg & UIO_DIRECT);
 
 	crhold(cr);
 	fstrans_cookie_t cookie = spl_fstrans_mark();
@@ -610,6 +618,10 @@ zpl_aio_read_direct(struct kiocb *kiocb, const struct iovec *iov,
 	ret = zfs_setup_direct(ITOZ(ip), &uio, UIO_READ, &flags);
 	if (ret)
 		return (-ret);
+	else if ((flags & O_DIRECT) == 0)
+		return (-EAGAIN);
+
+	ASSERT(uio.uio_extflg & UIO_DIRECT);
 
 	crhold(cr);
 	cookie = spl_fstrans_mark();
@@ -721,6 +733,10 @@ zpl_aio_write_direct(struct kiocb *kiocb, const struct iovec *iov,
 	ret = zfs_setup_direct(ITOZ(ip), &uio, UIO_WRITE, &flags);
 	if (ret)
 		return (-ret);
+	else if ((flags & O_DIRECT) == 0)
+		return (-EAGAIN);
+
+	ASSERT(uio.uio_extflg & UIO_DIRECT);
 
 	crhold(cr);
 	cookie = spl_fstrans_mark();
