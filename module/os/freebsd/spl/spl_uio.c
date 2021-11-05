@@ -242,9 +242,7 @@ zfs_uio_unhold_pages(vm_page_t *m, int count)
 void
 zfs_uio_free_dio_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
 {
-	if (!(uio->uio_extflg & UIO_DIRECT))
-		return;
-
+	ASSERT(uio->uio_extflg & UIO_DIRECT);
 	ASSERT3P(uio->uio_dio.pages, !=, NULL);
 	ASSERT(zfs_uio_rw(uio) == rw);
 
