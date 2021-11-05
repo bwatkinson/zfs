@@ -311,8 +311,6 @@ zpl_iter_read_direct(struct kiocb *kiocb, struct iov_iter *to)
 	ret = zfs_setup_direct(ITOZ(ip), &uio, UIO_READ, &flags);
 	if (ret)
 		return (-ret);
-	else if ((flags & O_DIRECT) == 0)
-		return (-EAGAIN);
 
 	ASSERT(uio.uio_extflg & UIO_DIRECT);
 
@@ -349,7 +347,12 @@ zpl_iter_read(struct kiocb *kiocb, struct iov_iter *to)
 
 	if (direct) {
 		ssize_t read = zpl_iter_read_direct(kiocb, to);
-		if (read == -EINVAL || !iov_iter_count(to))
+		/*
+		 * In the event we get EAGAIN we are falling back to
+		 * buffered IO.
+		 */
+		if ((read == -EINVAL || !iov_iter_count(to)) &&
+		    read != -EAGAIN)
 			return (read);
 		kiocb->ki_flags &= ~IOCB_DIRECT;
 	}
@@ -438,8 +441,6 @@ zpl_iter_write_direct(struct kiocb *kiocb, struct iov_iter *from)
 	ret = zfs_setup_direct(ITOZ(ip), &uio, UIO_WRITE, &flags);
 	if (ret)
 		return (-ret);
-	else if ((flags & O_DIRECT) == 0)
-		return (-EAGAIN);
 
 	ASSERT(uio.uio_extflg & UIO_DIRECT);
 
@@ -481,7 +482,12 @@ zpl_iter_write(struct kiocb *kiocb, struct iov_iter *from)
 		 */
 		size_t wrote = zpl_generic_file_direct_write(kiocb, from,
 		    kiocb->ki_pos);
-		if (wrote == -EINVAL || !iov_iter_count(from))
+		/*
+		 * In the event we get EAGAIN we are falling back to
+		 * buffered IO.
+		 */
+		if ((wrote == -EINVAL || !iov_iter_count(from)) &&
+		    wrote != -EAGAIN)
 			return (wrote);
 		kiocb->ki_flags &= ~IOCB_DIRECT;
 	}
@@ -563,8 +569,6 @@ zpl_aio_read_direct(struct kiocb *kiocb, const struct iovec *iov,
 	ret = zfs_setup_direct(ITOZ(ip), &uio, UIO_READ, &flags);
 	if (ret)
 		return (-ret);
-	else if ((flags & O_DIRECT) == 0)
-		return (-EAGAIN);
 
 	ASSERT(uio.uio_extflg & UIO_DIRECT);
 
@@ -607,8 +611,13 @@ zpl_aio_read(struct kiocb *kiocb, const struct iovec *iov,
 	    flags);
 
 	if (direct) {
+		/*
+		 * In the event we get EAGAIN we are falling back to
+		 * buffered IO.
+		 */
 		ssize_t read = zpl_aio_read_direct(kiocb, iov, nr_segs, pos);
-		if (read == -EINVAL || read == count)
+		if ((read == -EINVAL || read == count) &&
+		    read != -EAGAIN)
 			return (read);
 	}
 
@@ -676,8 +685,6 @@ zpl_aio_write_direct(struct kiocb *kiocb, const struct iovec *iov,
 	ret = zfs_setup_direct(ITOZ(ip), &uio, UIO_WRITE, &flags);
 	if (ret)
 		return (-ret);
-	else if ((flags & O_DIRECT) == 0)
-		return (-EAGAIN);
 
 	ASSERT(uio.uio_extflg & UIO_DIRECT);
 
@@ -735,7 +742,12 @@ zpl_aio_write(struct kiocb *kiocb, const struct iovec *iov,
 		 */
 		ssize_t wrote = zpl_generic_file_direct_write(kiocb, iov,
 		    &nr_segs, pos, &kiocb->ki_pos, count, ocount);
-		if (wrote == -EINVAL || wrote == count)
+		/*
+		 * In the event we get EAGAIN we are falling back to
+		 * buffered IO.
+		 */
+		if ((wrote == -EINVAL || wrote == count) &&
+		    wrote != -EAGAIN)
 			return (wrote);
 	}
 
