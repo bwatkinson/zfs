@@ -598,7 +598,7 @@ zpl_aio_read_direct(struct kiocb *kiocb, const struct iovec *iov,
 	fstrans_cookie_t cookie;
 	struct file *filp = kiocb->ki_filp;
 	struct inode *ip = filp->f_mapping->host;
-	int flags = filp->f_flags | zfs_io_flags(kiocb) | O_DIRECT;
+	int flags = filp->f_flags | zfs_io_flags(kiocb);
 	size_t count;
 	ssize_t ret;
 
@@ -724,7 +724,7 @@ zpl_aio_write_direct(struct kiocb *kiocb, const struct iovec *iov,
 	fstrans_cookie_t cookie;
 	struct file *filp = kiocb->ki_filp;
 	struct inode *ip = filp->f_mapping->host;
-	int flags = filp->f_flags | zfs_io_flags(kiocb) | O_DIRECT;
+	int flags = filp->f_flags | zfs_io_flags(kiocb);
 	size_t count;
 	ssize_t ret;
 
