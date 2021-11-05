@@ -244,15 +244,17 @@ zfs_setup_direct(struct znode *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
 	ZFS_ENTER(zfsvfs);
 	ZFS_VERIFY_ZP(zp);
 
-	if (os->os_direct == ZFS_DIRECT_ALWAYS &&
+	if (os->os_direct == ZFS_DIRECT_DISABLED) {
+		ZFS_EXIT(zfsvfs);
+		return (EAGAIN);
+
+	} else if (os->os_direct == ZFS_DIRECT_ALWAYS &&
 	    zfs_uio_page_aligned(uio) &&
 	    zfs_uio_blksz_aligned(uio, SPA_MINBLOCKSIZE)) {
 		if ((rw == UIO_WRITE && zfs_uio_resid(uio) >= zp->z_blksz) ||
 		    (rw == UIO_READ)) {
 			ioflag |= O_DIRECT;
 		}
-	} else if (os->os_direct == ZFS_DIRECT_DISABLED) {
-		ioflag &= ~O_DIRECT;
 	}
 
 	if (ioflag & O_DIRECT) {
@@ -264,16 +266,18 @@ zfs_setup_direct(struct znode *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
 
 		if (zn_has_cached_data(zp, zfs_uio_offset(uio),
 		    zfs_uio_offset(uio) + zfs_uio_resid(uio) - 1)) {
-			ioflag &= ~O_DIRECT;
+			ZFS_EXIT(zfsvfs);
+			return (SET_ERROR(EAGAIN));
 		}
 
-		if (ioflag & O_DIRECT) {
-			int error = zfs_uio_get_dio_pages_alloc(uio, rw);
-			if (error) {
-				ZFS_EXIT(zfsvfs);
-				return (error);
-			}
+		int error = zfs_uio_get_dio_pages_alloc(uio, rw);
+		if (error) {
+			ZFS_EXIT(zfsvfs);
+			return (error);
 		}
+	} else {
+		ZFS_EXIT(zfsvfs);
+		return (EAGAIN);
 	}
 
 	IMPLY(ioflag & O_DIRECT, uio->uio_extflg & UIO_DIRECT);
