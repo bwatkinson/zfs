@@ -4422,9 +4422,7 @@ zfs_freebsd_read(struct vop_read_args *ap)
 #endif
 		}
 
-		if (error != EAGAIN)
-			return (error);
-		ioflag &= ~O_DIRECT;
+		return (error);
 	}
 
 	error = zfs_read(zp, &uio, ioflag, ap->a_cred);
@@ -4456,9 +4454,7 @@ zfs_freebsd_write(struct vop_write_args *ap)
 	error = zfs_setup_direct(zp, &uio, UIO_WRITE, &ioflag);
 
 	if (error) {
-		if (error !=  EAGAIN)
-			return (error);
-		ioflag &= ~O_DIRECT;
+		return (error);
 	}
 
 	error = zfs_write(zp, &uio, ioflag, ap->a_cred);
