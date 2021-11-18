@@ -159,6 +159,7 @@ uint32_t zfs_vdev_trim_min_active = 1;
 uint32_t zfs_vdev_trim_max_active = 2;
 uint32_t zfs_vdev_rebuild_min_active = 1;
 uint32_t zfs_vdev_rebuild_max_active = 3;
+unsigned long zfs_vdev_rebuild_bulk_write_byte_limit = 0;
 
 /*
  * When the pool has less than zfs_vdev_async_write_active_min_dirty_percent
@@ -284,6 +285,8 @@ vdev_queue_timestamp_compare(const void *x1, const void *x2)
 static int
 vdev_queue_class_min_active(vdev_queue_t *vq, zio_priority_t p)
 {
+	ASSERT3U(p, !=, ZIO_PRIORITY_REBUILD_BULK_WRITE);
+
 	switch (p) {
 	case ZIO_PRIORITY_SYNC_READ:
 		return (zfs_vdev_sync_read_min_active);
@@ -362,6 +365,8 @@ vdev_queue_max_async_writes(spa_t *spa)
 static int
 vdev_queue_class_max_active(spa_t *spa, vdev_queue_t *vq, zio_priority_t p)
 {
+	ASSERT3U(p, !=, ZIO_PRIORITY_REBUILD_BULK_WRITE);
+
 	switch (p) {
 	case ZIO_PRIORITY_SYNC_READ:
 		return (zfs_vdev_sync_read_max_active);
@@ -427,6 +432,8 @@ vdev_queue_class_to_issue(vdev_queue_t *vq)
 	 */
 	for (n = 0; n < ZIO_PRIORITY_NUM_QUEUEABLE; n++) {
 		p = (vq->vq_last_prio + n + 1) % ZIO_PRIORITY_NUM_QUEUEABLE;
+		if (p == ZIO_PRIORITY_REBUILD_BULK_WRITE)
+			continue;
 		if (avl_numnodes(vdev_queue_class_tree(vq, p)) > 0 &&
 		    vq->vq_class[p].vqc_active <
 		    vdev_queue_class_min_active(vq, p)) {
@@ -440,6 +447,8 @@ vdev_queue_class_to_issue(vdev_queue_t *vq)
 	 * maximum # outstanding i/os.
 	 */
 	for (p = 0; p < ZIO_PRIORITY_NUM_QUEUEABLE; p++) {
+		if (p == ZIO_PRIORITY_REBUILD_BULK_WRITE)
+			continue;
 		if (avl_numnodes(vdev_queue_class_tree(vq, p)) > 0 &&
 		    vq->vq_class[p].vqc_active <
 		    vdev_queue_class_max_active(spa, vq, p)) {
@@ -459,6 +468,7 @@ vdev_queue_init(vdev_t *vd)
 	zio_priority_t p;
 
 	mutex_init(&vq->vq_lock, NULL, MUTEX_DEFAULT, NULL);
+	mutex_init(&vq->vq_rebuild_bulk_write_lock, NULL, MUTEX_DEFAULT, NULL);
 	vq->vq_vdev = vd;
 	taskq_init_ent(&vd->vdev_queue.vq_io_search.io_tqent);
 
@@ -494,6 +504,8 @@ vdev_queue_init(vdev_t *vd)
 	}
 
 	vq->vq_last_offset = 0;
+	vq->vq_rebuild_bulk_write_last_offset = 0;
+	vq->vq_rebuild_bulk_write_bytes = 0;
 }
 
 void
@@ -509,6 +521,25 @@ vdev_queue_fini(vdev_t *vd)
 	avl_destroy(vdev_queue_type_tree(vq, ZIO_TYPE_TRIM));
 
 	mutex_destroy(&vq->vq_lock);
+	mutex_destroy(&vq->vq_rebuild_bulk_write_lock);
+}
+
+static void
+vdev_queue_bulk_write_io_add(vdev_queue_t *vq, zio_t *zio)
+{
+	ASSERT(MUTEX_HELD(&vq->vq_rebuild_bulk_write_lock));
+	avl_add(vdev_queue_class_tree(vq, ZIO_PRIORITY_REBUILD_BULK_WRITE),
+	    zio);
+	vq->vq_rebuild_bulk_write_bytes += zio->io_size;
+}
+
+static void
+vdev_queue_bulk_write_io_remove(vdev_queue_t *vq, zio_t *zio)
+{
+	ASSERT(MUTEX_HELD(&vq->vq_rebuild_bulk_write_lock));
+	avl_remove(vdev_queue_class_tree(vq, ZIO_PRIORITY_REBUILD_BULK_WRITE),
+	    zio);
+	vq->vq_rebuild_bulk_write_bytes -= zio->io_size;
 }
 
 static void
@@ -530,6 +561,8 @@ vdev_queue_io_remove(vdev_queue_t *vq, zio_t *zio)
 static boolean_t
 vdev_queue_is_interactive(zio_priority_t p)
 {
+	ASSERT3U(p, !=, ZIO_PRIORITY_REBUILD_BULK_WRITE);
+
 	switch (p) {
 	case ZIO_PRIORITY_SCRUB:
 	case ZIO_PRIORITY_REMOVAL:
@@ -539,6 +572,20 @@ vdev_queue_is_interactive(zio_priority_t p)
 	default:
 		return (B_TRUE);
 	}
+}
+
+static void
+vdev_queue_bulk_write_pending_add(vdev_queue_t *vq, zio_t *zio)
+{
+	ASSERT(MUTEX_HELD(&vq->vq_rebuild_bulk_write_lock));
+	vq->vq_class[ZIO_PRIORITY_REBUILD_BULK_WRITE].vqc_active++;
+}
+
+static void
+vdev_queue_bulk_write_pending_remove(vdev_queue_t *vq, zio_t *zio)
+{
+	ASSERT(MUTEX_HELD(&vq->vq_rebuild_bulk_write_lock));
+	vq->vq_class[ZIO_PRIORITY_REBUILD_BULK_WRITE].vqc_active--;
 }
 
 static void
@@ -608,6 +655,8 @@ vdev_queue_aggregate(vdev_queue_t *vq, zio_t *zio)
 	enum zio_flag flags = zio->io_flags & ZIO_FLAG_AGG_INHERIT;
 	uint64_t next_offset;
 	abd_t *abd;
+
+	ASSERT3U(zio->io_priority, !=, ZIO_PRIORITY_REBUILD_BULK_WRITE);
 
 	maxblocksize = spa_maxblocksize(vq->vq_vdev->vdev_spa);
 	if (vq->vq_vdev->vdev_nonrot)
@@ -805,6 +854,67 @@ vdev_queue_aggregate(vdev_queue_t *vq, zio_t *zio)
 	return (aio);
 }
 
+static void
+vdev_queue_issue_rebuild_bulk_writes(vdev_queue_t *vq, boolean_t force_drain)
+{
+	avl_index_t idx;
+	avl_tree_t *tree =
+	    vdev_queue_class_tree(vq, ZIO_PRIORITY_REBUILD_BULK_WRITE);
+
+	ASSERT(MUTEX_HELD(&vq->vq_rebuild_bulk_write_lock));
+
+	/*
+	 * First check if we should drain the rebuild writes
+	 */
+	if (vq->vq_rebuild_bulk_write_bytes <
+	    zfs_vdev_rebuild_bulk_write_byte_limit && !force_drain)
+		return;
+
+	/*
+	 * If rebuild writes are being drained then all of the writes collected
+	 * are going to be issued out the queue at once.
+	 */
+	while (avl_numnodes(tree) > 0) {
+		vq->vq_rebuild_bulk_write_io_search.io_offset =
+		    vq->vq_rebuild_bulk_write_last_offset - 1;
+		VERIFY3P(avl_find(tree, &vq->vq_rebuild_bulk_write_io_search,
+		    &idx), ==, NULL);
+		zio_t *zio = avl_nearest(tree, idx, AVL_AFTER);
+		if (zio == NULL)
+			zio = avl_first(tree);
+
+		ASSERT0(zio->io_flags & ZIO_FLAG_NODATA);
+
+		vdev_queue_bulk_write_io_remove(vq, zio);
+		vdev_queue_bulk_write_pending_add(vq, zio);
+		vq->vq_rebuild_bulk_write_last_offset =
+		    zio->io_offset + zio->io_size;
+		vdev_t *vd = zio->io_vd;
+		ASSERT3B(vd->vdev_ops->vdev_op_leaf, ==, B_TRUE);
+		vd->vdev_ops->vdev_op_io_start(zio);
+	}
+
+	ASSERT0(vq->vq_rebuild_bulk_write_bytes);
+}
+
+/*
+ * This is used to make sure any remaining rebuild writes in the queue are
+ * completely drained out after a sequential resivler has completed.
+ */
+void
+vdev_queue_drain_all_rebuild_bulk_writes(vdev_t *vd)
+{
+	vdev_queue_t *vq = &vd->vdev_queue;
+	avl_tree_t *tree = vdev_queue_class_tree(vq,
+	    ZIO_PRIORITY_REBUILD_BULK_WRITE);
+
+	mutex_enter(&vq->vq_rebuild_bulk_write_lock);
+	if (avl_numnodes(tree) > 0) {
+		vdev_queue_issue_rebuild_bulk_writes(vq, B_TRUE);
+	}
+	mutex_exit(&vq->vq_rebuild_bulk_write_lock);
+}
+
 static zio_t *
 vdev_queue_io_to_issue(vdev_queue_t *vq)
 {
@@ -872,6 +982,8 @@ vdev_queue_io(zio_t *zio)
 	zio_t *dio, *nio;
 	zio_link_t *zl = NULL;
 
+	ASSERT3U(zio->io_priority, !=, ZIO_PRIORITY_REBUILD_BULK_WRITE);
+
 	if (zio->io_flags & ZIO_FLAG_DONT_QUEUE)
 		return (zio);
 
@@ -908,10 +1020,23 @@ vdev_queue_io(zio_t *zio)
 	zio->io_flags |= ZIO_FLAG_DONT_CACHE | ZIO_FLAG_DONT_QUEUE;
 	zio->io_timestamp = gethrtime();
 
-	mutex_enter(&vq->vq_lock);
-	vdev_queue_io_add(vq, zio);
-	nio = vdev_queue_io_to_issue(vq);
-	mutex_exit(&vq->vq_lock);
+	if (zio->io_priority == ZIO_PRIORITY_REBUILD &&
+	    zio->io_type == ZIO_TYPE_WRITE &&
+	    zfs_vdev_rebuild_bulk_write_byte_limit > 0) {
+		/* rebuild bulk writes are requested */
+		mutex_enter(&vq->vq_rebuild_bulk_write_lock);
+		zio->io_priority = ZIO_PRIORITY_REBUILD_BULK_WRITE;
+		vdev_queue_bulk_write_io_add(vq, zio);
+		vdev_queue_issue_rebuild_bulk_writes(vq, B_FALSE);
+		mutex_exit(&vq->vq_rebuild_bulk_write_lock);
+		return (zio);
+
+	} else {
+		mutex_enter(&vq->vq_lock);
+		vdev_queue_io_add(vq, zio);
+		nio = vdev_queue_io_to_issue(vq);
+		mutex_exit(&vq->vq_lock);
+	}
 
 	if (nio == NULL)
 		return (NULL);
@@ -939,6 +1064,18 @@ vdev_queue_io_done(zio_t *zio)
 	hrtime_t now = gethrtime();
 	vq->vq_io_complete_ts = now;
 	vq->vq_io_delta_ts = zio->io_delta = now - zio->io_timestamp;
+
+	/*
+	 * If this was a bulk rebuild write we will no use
+	 * vdev_queue_io_to_issue() to issue further IO's. Bulk rebuild writes
+	 * are only issued in vdev_queue_issue_rebuild_bulk_writes().
+	 */
+	if (zio->io_priority == ZIO_PRIORITY_REBUILD_BULK_WRITE) {
+		mutex_enter(&vq->vq_rebuild_bulk_write_lock);
+		vdev_queue_bulk_write_pending_remove(vq, zio);
+		mutex_exit(&vq->vq_rebuild_bulk_write_lock);
+		return;
+	}
 
 	mutex_enter(&vq->vq_lock);
 	vdev_queue_pending_remove(vq, zio);
@@ -977,6 +1114,8 @@ vdev_queue_change_io_priority(zio_t *zio, zio_priority_t priority)
 	if (zio->io_priority == ZIO_PRIORITY_NOW)
 		return;
 
+	ASSERT3U(zio->io_priority, !=, ZIO_PRIORITY_REBUILD_BULK_WRITE);
+	ASSERT3U(priority, !=, ZIO_PRIORITY_REBUILD_BULK_WRITE);
 	ASSERT3U(zio->io_priority, <, ZIO_PRIORITY_NUM_QUEUEABLE);
 	ASSERT3U(priority, <, ZIO_PRIORITY_NUM_QUEUEABLE);
 
@@ -1118,4 +1257,7 @@ ZFS_MODULE_PARAM(zfs_vdev, zfs_vdev_, nia_delay, INT, ZMOD_RW,
 
 ZFS_MODULE_PARAM(zfs_vdev, zfs_vdev_, queue_depth_pct, INT, ZMOD_RW,
 	"Queue depth percentage for each top-level vdev");
+
+ZFS_MODULE_PARAM(zfs_vdev, zfs_vdev_, rebuild_bulk_write_byte_limit, ULONG,
+	ZMOD_RW, "Maximum amount of bytes before rebuild writes are flushed");
 /* END CSTYLED */

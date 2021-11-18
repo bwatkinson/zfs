@@ -449,6 +449,24 @@ vdev_count_leaves(spa_t *spa)
 	return (rc);
 }
 
+static void
+vdev_flush_rebuild_bulk_writes_impl(vdev_t *vd)
+{
+	if (vd->vdev_ops->vdev_op_leaf)
+		vdev_queue_drain_all_rebuild_bulk_writes(vd);
+
+	for (int c = 0; c < vd->vdev_children; c++)
+		vdev_flush_rebuild_bulk_writes_impl(vd->vdev_child[c]);
+}
+
+void
+vdev_flush_rebuild_bulk_writes(spa_t *spa)
+{
+	spa_config_enter(spa, SCL_VDEV, FTAG, RW_READER);
+	vdev_flush_rebuild_bulk_writes_impl(spa->spa_root_vdev);
+	spa_config_exit(spa, SCL_VDEV, FTAG);
+}
+
 void
 vdev_add_child(vdev_t *pvd, vdev_t *cvd)
 {
@@ -4569,7 +4587,9 @@ vdev_stat_update(zio_t *zio, uint64_t psize)
 			 * double counting repaired bytes the virtual dRAID
 			 * spare vdev is excluded from the processed bytes.
 			 */
-			if (zio->io_priority == ZIO_PRIORITY_REBUILD) {
+			if (zio->io_priority == ZIO_PRIORITY_REBUILD ||
+			    zio->io_priority ==
+			    ZIO_PRIORITY_REBUILD_BULK_WRITE) {
 				vdev_t *tvd = vd->vdev_top;
 				vdev_rebuild_t *vr = &tvd->vdev_rebuild_config;
 				vdev_rebuild_phys_t *vrp = &vr->vr_rebuild_phys;

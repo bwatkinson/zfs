@@ -887,6 +887,8 @@ vdev_rebuild_thread(void *arg)
 	range_tree_destroy(vr->vr_scan_tree);
 	spa_config_exit(spa, SCL_CONFIG, FTAG);
 
+	vdev_flush_rebuild_bulk_writes(spa);
+
 	/* Wait for any remaining rebuild I/O to complete */
 	mutex_enter(&vr->vr_io_lock);
 	while (vr->vr_bytes_inflight > 0)

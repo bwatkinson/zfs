@@ -3863,6 +3863,29 @@ zio_vdev_io_start(zio_t *zio)
 		if ((zio = vdev_queue_io(zio)) == NULL)
 			return (NULL);
 
+		/*
+		 * If rebuild bulk writes are being used, then we must remove
+		 * this child from the parent ZIOs and notify the parents to
+		 * continue. This is required so there is no deadlock in
+		 * vdev_rebuild_range(). Sequential resilvers are limited by
+		 * vr_bytes_inflight_max and because the writes are being
+		 * delayed the parent read just return to allow
+		 * vr_bytes_inflight to be reduced.
+		 */
+		if (zio->io_priority == ZIO_PRIORITY_REBUILD_BULK_WRITE) {
+			zio_link_t *zl = NULL;
+			zio_t *pio, *pio_next;
+			for (pio = zio_walk_parents(zio, &zl); pio != NULL;
+			    pio = pio_next) {
+				zio_link_t *remove_zl = zl;
+				pio_next = zio_walk_parents(zio, &zl);
+				zio_remove_child(pio, zio, remove_zl);
+				zio_notify_parent(pio, zio, ZIO_WAIT_DONE,
+				    NULL);
+			}
+			return (NULL);
+		}
+
 		if (!vdev_accessible(vd, zio)) {
 			zio->io_error = SET_ERROR(ENXIO);
 			zio_interrupt(zio);

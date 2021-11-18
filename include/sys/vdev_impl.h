@@ -172,6 +172,10 @@ struct vdev_queue {
 	hrtime_t	vq_io_delta_ts;
 	zio_t		vq_io_search; /* used as local for stack reduction */
 	kmutex_t	vq_lock;
+	zio_t		vq_rebuild_bulk_write_io_search;
+	kmutex_t	vq_rebuild_bulk_write_lock;
+	uint64_t	vq_rebuild_bulk_write_bytes;
+	uint64_t	vq_rebuild_bulk_write_last_offset;
 };
 
 typedef enum vdev_alloc_bias {
@@ -571,6 +575,12 @@ extern vdev_t *vdev_alloc_common(spa_t *spa, uint_t id, uint64_t guid,
 extern int vdev_alloc(spa_t *spa, vdev_t **vdp, nvlist_t *config,
     vdev_t *parent, uint_t id, int alloctype);
 extern void vdev_free(vdev_t *vd);
+
+/*
+ * Rebuild bulk write flushing
+ */
+extern void
+vdev_queue_drain_all_rebuild_bulk_writes(vdev_t *vd);
 
 /*
  * Add or remove children and parents
