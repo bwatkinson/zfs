@@ -690,8 +690,6 @@ typedef struct zpool_load_policy {
 #define	ZPOOL_CONFIG_VDEV_AGG_SCRUB_HISTO	"vdev_agg_scrub_histo"
 #define	ZPOOL_CONFIG_VDEV_AGG_TRIM_HISTO	"vdev_agg_trim_histo"
 #define	ZPOOL_CONFIG_VDEV_AGG_REBUILD_HISTO	"vdev_agg_rebuild_histo"
-#define	ZPOOL_CONFIG_VDEV_AGG_REBUILD_BULK_WRITE_HISTO \
-	"vdev_agg_rebuild_bulk_write_histo"
 
 /* Number of slow IOs */
 #define	ZPOOL_CONFIG_VDEV_SLOW_IOS		"vdev_slow_ios"

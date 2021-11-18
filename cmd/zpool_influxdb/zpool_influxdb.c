@@ -510,12 +510,10 @@ print_vdev_size_stats(nvlist_t *nvroot, const char *pool_name,
 	    {ZPOOL_CONFIG_VDEV_IND_TRIM_HISTO,    "trim_write_ind"},
 	    {ZPOOL_CONFIG_VDEV_AGG_TRIM_HISTO,    "trim_write_agg"},
 #endif
-	    {ZPOOL_CONFIG_VDEV_IND_REBUILD_HISTO,    "rebuild_write_ind"},
+	    {ZPOOL_CONFIG_VDEV_IND_REBUILD_HISTO,    "rebuild_ind"},
+	    {ZPOOL_CONFIG_VDEV_AGG_REBUILD_HISTO,    "rebuild_agg"},
 	    {ZPOOL_CONFIG_VDEV_IND_REBUILD_BULK_WRITE_HISTO,
 	    "rebuild_bulk_write_ind"},
-	    {ZPOOL_CONFIG_VDEV_AGG_REBUILD_HISTO,    "rebuild_write_agg"},
-	    {ZPOOL_CONFIG_VDEV_AGG_REBUILD_BULK_WRITE_HISTO,
-	    "rebuild_bullk_write_agg"},
 	    {NULL,	NULL}
 	};
 

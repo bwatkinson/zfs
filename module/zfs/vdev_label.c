@@ -400,11 +400,6 @@ vdev_config_generate_stats(vdev_t *vd, nvlist_t *nv)
 	    vsx->vsx_agg_histo[ZIO_PRIORITY_REBUILD],
 	    ARRAY_SIZE(vsx->vsx_agg_histo[ZIO_PRIORITY_REBUILD]));
 
-	fnvlist_add_uint64_array(nvx,
-	    ZPOOL_CONFIG_VDEV_AGG_REBUILD_BULK_WRITE_HISTO,
-	    vsx->vsx_agg_histo[ZIO_PRIORITY_REBUILD_BULK_WRITE],
-	    ARRAY_SIZE(vsx->vsx_agg_histo[ZIO_PRIORITY_REBUILD_BULK_WRITE]));
-
 	/* IO delays */
 	fnvlist_add_uint64(nvx, ZPOOL_CONFIG_VDEV_SLOW_IOS, vs->vs_slow_ios);
 

@@ -211,7 +211,7 @@ enum iostat_type {
  * of all the nvlists a flag requires.  Also specifies the order in
  * which data gets printed in zpool iostat.
  */
-static const char *vsx_type_to_nvlist[IOS_COUNT][17] = {
+static const char *vsx_type_to_nvlist[IOS_COUNT][16] = {
 	[IOS_L_HISTO] = {
 	    ZPOOL_CONFIG_VDEV_TOT_R_LAT_HISTO,
 	    ZPOOL_CONFIG_VDEV_TOT_W_LAT_HISTO,
@@ -259,9 +259,8 @@ static const char *vsx_type_to_nvlist[IOS_COUNT][17] = {
 	    ZPOOL_CONFIG_VDEV_IND_TRIM_HISTO,
 	    ZPOOL_CONFIG_VDEV_AGG_TRIM_HISTO,
 	    ZPOOL_CONFIG_VDEV_IND_REBUILD_HISTO,
-	    ZPOOL_CONFIG_VDEV_IND_REBUILD_BULK_WRITE_HISTO,
 	    ZPOOL_CONFIG_VDEV_AGG_REBUILD_HISTO,
-	    ZPOOL_CONFIG_VDEV_AGG_REBUILD_BULK_WRITE_HISTO,
+	    ZPOOL_CONFIG_VDEV_IND_REBUILD_BULK_WRITE_HISTO,
 	    NULL},
 };
 
@@ -3888,7 +3887,7 @@ typedef struct name_and_columns {
 	unsigned int columns;	/* Center name to this number of columns */
 } name_and_columns_t;
 
-#define	IOSTAT_MAX_LABELS	15	/* Max number of labels on one line */
+#define	IOSTAT_MAX_LABELS	16	/* Max number of labels on one line */
 
 static const name_and_columns_t iostat_top_labels[][IOSTAT_MAX_LABELS] =
 {
@@ -3896,15 +3895,16 @@ static const name_and_columns_t iostat_top_labels[][IOSTAT_MAX_LABELS] =
 	    {NULL}},
 	[IOS_LATENCY] = {{"total_wait", 2}, {"disk_wait", 2}, {"syncq_wait", 2},
 	    {"asyncq_wait", 2}, {"scrub", 1}, {"trim", 1}, {"rebuild", 1},
-	    {NULL}},
+	    {"rebuild_bulk_write"}, {NULL}},
 	[IOS_QUEUES] = {{"syncq_read", 2}, {"syncq_write", 2},
 	    {"asyncq_read", 2}, {"asyncq_write", 2}, {"scrubq_read", 2},
-	    {"trimq_write", 2}, {"rebuildq_write", 2}, {NULL}},
+	    {"trimq_write", 2}, {"rebuildq", 2},
+	    {"rebuildq_bulk_write", 2}, {NULL}},
 	[IOS_L_HISTO] = {{"total_wait", 2}, {"disk_wait", 2}, {"syncq_wait", 2},
 	    {"asyncq_wait", 2}, {NULL}},
 	[IOS_RQ_HISTO] = {{"sync_read", 2}, {"sync_write", 2},
 	    {"async_read", 2}, {"async_write", 2}, {"scrub", 2},
-	    {"trim", 2}, {"rebuild", 2}, {NULL}},
+	    {"trim", 2}, {"rebuild", 2}, {"rebuild_bulk_write", 1}, {NULL}},
 };
 
 /* Shorthand - if "columns" field not set, default to 1 column */
@@ -3920,10 +3920,10 @@ static const name_and_columns_t iostat_bottom_labels[][IOSTAT_MAX_LABELS] =
 	    {"pend"}, {"activ"}, {"pend"}, {"activ"}, {NULL}},
 	[IOS_L_HISTO] = {{"read"}, {"write"}, {"read"}, {"write"}, {"read"},
 	    {"write"}, {"read"}, {"write"}, {"scrub"}, {"trim"}, {"rebuild"},
-	    {NULL}},
+	    {"rebuild_bulk_write"}, {NULL}},
 	[IOS_RQ_HISTO] = {{"ind"}, {"agg"}, {"ind"}, {"agg"}, {"ind"}, {"agg"},
 	    {"ind"}, {"agg"}, {"ind"}, {"agg"}, {"ind"}, {"agg"},
-	    {"ind"}, {"agg"}, {NULL}},
+	    {"ind"}, {"agg"}, {"ind"}, {NULL}},
 };
 
 static const char *histo_to_title[] = {
