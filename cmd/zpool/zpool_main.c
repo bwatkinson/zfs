@@ -211,7 +211,7 @@ enum iostat_type {
  * of all the nvlists a flag requires.  Also specifies the order in
  * which data gets printed in zpool iostat.
  */
-static const char *vsx_type_to_nvlist[IOS_COUNT][16] = {
+static const char *vsx_type_to_nvlist[IOS_COUNT][17] = {
 	[IOS_L_HISTO] = {
 	    ZPOOL_CONFIG_VDEV_TOT_R_LAT_HISTO,
 	    ZPOOL_CONFIG_VDEV_TOT_W_LAT_HISTO,
@@ -224,7 +224,7 @@ static const char *vsx_type_to_nvlist[IOS_COUNT][16] = {
 	    ZPOOL_CONFIG_VDEV_SCRUB_LAT_HISTO,
 	    ZPOOL_CONFIG_VDEV_TRIM_LAT_HISTO,
 	    ZPOOL_CONFIG_VDEV_REBUILD_LAT_HISTO,
-	    ZPOOL_CONFIG_VDEV_REBUILD_BULK_WRITE_LAT_HISTO,
+	    ZPOOL_CONFIG_VDEV_REBUILD_WRITE_LAT_HISTO,
 	    NULL},
 	[IOS_LATENCY] = {
 	    ZPOOL_CONFIG_VDEV_TOT_R_LAT_HISTO,
@@ -233,7 +233,7 @@ static const char *vsx_type_to_nvlist[IOS_COUNT][16] = {
 	    ZPOOL_CONFIG_VDEV_DISK_W_LAT_HISTO,
 	    ZPOOL_CONFIG_VDEV_TRIM_LAT_HISTO,
 	    ZPOOL_CONFIG_VDEV_REBUILD_LAT_HISTO,
-	    ZPOOL_CONFIG_VDEV_REBUILD_BULK_WRITE_LAT_HISTO,
+	    ZPOOL_CONFIG_VDEV_REBUILD_WRITE_LAT_HISTO,
 	    NULL},
 	[IOS_QUEUES] = {
 	    ZPOOL_CONFIG_VDEV_SYNC_R_ACTIVE_QUEUE,
@@ -243,7 +243,7 @@ static const char *vsx_type_to_nvlist[IOS_COUNT][16] = {
 	    ZPOOL_CONFIG_VDEV_SCRUB_ACTIVE_QUEUE,
 	    ZPOOL_CONFIG_VDEV_TRIM_ACTIVE_QUEUE,
 	    ZPOOL_CONFIG_VDEV_REBUILD_ACTIVE_QUEUE,
-	    ZPOOL_CONFIG_VDEV_REBUILD_BULK_WRITE_ACTIVE_QUEUE,
+	    ZPOOL_CONFIG_VDEV_REBUILD_WRITE_ACTIVE_QUEUE,
 	    NULL},
 	[IOS_RQ_HISTO] = {
 	    ZPOOL_CONFIG_VDEV_SYNC_IND_R_HISTO,
@@ -260,7 +260,8 @@ static const char *vsx_type_to_nvlist[IOS_COUNT][16] = {
 	    ZPOOL_CONFIG_VDEV_AGG_TRIM_HISTO,
 	    ZPOOL_CONFIG_VDEV_IND_REBUILD_HISTO,
 	    ZPOOL_CONFIG_VDEV_AGG_REBUILD_HISTO,
-	    ZPOOL_CONFIG_VDEV_IND_REBUILD_BULK_WRITE_HISTO,
+	    ZPOOL_CONFIG_VDEV_IND_REBUILD_WRITE_HISTO,
+	    ZPOOL_CONFIG_VDEV_AGG_REBUILD_WRITE_HISTO,
 	    NULL},
 };
 
@@ -3887,7 +3888,7 @@ typedef struct name_and_columns {
 	unsigned int columns;	/* Center name to this number of columns */
 } name_and_columns_t;
 
-#define	IOSTAT_MAX_LABELS	16	/* Max number of labels on one line */
+#define	IOSTAT_MAX_LABELS	17	/* Max number of labels on one line */
 
 static const name_and_columns_t iostat_top_labels[][IOSTAT_MAX_LABELS] =
 {
@@ -3895,16 +3896,16 @@ static const name_and_columns_t iostat_top_labels[][IOSTAT_MAX_LABELS] =
 	    {NULL}},
 	[IOS_LATENCY] = {{"total_wait", 2}, {"disk_wait", 2}, {"syncq_wait", 2},
 	    {"asyncq_wait", 2}, {"scrub", 1}, {"trim", 1}, {"rebuild", 1},
-	    {"rebuild_bulk_write"}, {NULL}},
+	    {"rebuild_write", 1}, {NULL}},
 	[IOS_QUEUES] = {{"syncq_read", 2}, {"syncq_write", 2},
 	    {"asyncq_read", 2}, {"asyncq_write", 2}, {"scrubq_read", 2},
 	    {"trimq_write", 2}, {"rebuildq", 2},
-	    {"rebuildq_bulk_write", 2}, {NULL}},
+	    {"rebuildq_write", 2}, {NULL}},
 	[IOS_L_HISTO] = {{"total_wait", 2}, {"disk_wait", 2}, {"syncq_wait", 2},
 	    {"asyncq_wait", 2}, {NULL}},
 	[IOS_RQ_HISTO] = {{"sync_read", 2}, {"sync_write", 2},
 	    {"async_read", 2}, {"async_write", 2}, {"scrub", 2},
-	    {"trim", 2}, {"rebuild", 2}, {"rebuild_bulk_write", 1}, {NULL}},
+	    {"trim", 2}, {"rebuild", 2}, {"rebuild_write", 2}, {NULL}},
 };
 
 /* Shorthand - if "columns" field not set, default to 1 column */
@@ -3920,10 +3921,10 @@ static const name_and_columns_t iostat_bottom_labels[][IOSTAT_MAX_LABELS] =
 	    {"pend"}, {"activ"}, {"pend"}, {"activ"}, {NULL}},
 	[IOS_L_HISTO] = {{"read"}, {"write"}, {"read"}, {"write"}, {"read"},
 	    {"write"}, {"read"}, {"write"}, {"scrub"}, {"trim"}, {"rebuild"},
-	    {"rebuild_bulk_write"}, {NULL}},
+	    {"rebuild_write"}, {NULL}},
 	[IOS_RQ_HISTO] = {{"ind"}, {"agg"}, {"ind"}, {"agg"}, {"ind"}, {"agg"},
 	    {"ind"}, {"agg"}, {"ind"}, {"agg"}, {"ind"}, {"agg"},
-	    {"ind"}, {"agg"}, {"ind"}, {NULL}},
+	    {"ind"}, {"agg"}, {"ind"}, {"agg"}, {NULL}},
 };
 
 static const char *histo_to_title[] = {
@@ -4556,9 +4557,9 @@ print_iostat_queues(iostat_cbdata_t *cb, nvlist_t *oldnv,
 		ZPOOL_CONFIG_VDEV_TRIM_PEND_QUEUE,
 		ZPOOL_CONFIG_VDEV_TRIM_ACTIVE_QUEUE,
 		ZPOOL_CONFIG_VDEV_REBUILD_PEND_QUEUE,
-		ZPOOL_CONFIG_VDEV_REBUILD_BULK_WRITE_PEND_QUEUE,
+		ZPOOL_CONFIG_VDEV_REBUILD_WRITE_PEND_QUEUE,
 		ZPOOL_CONFIG_VDEV_REBUILD_ACTIVE_QUEUE,
-		ZPOOL_CONFIG_VDEV_REBUILD_BULK_WRITE_ACTIVE_QUEUE,
+		ZPOOL_CONFIG_VDEV_REBUILD_WRITE_ACTIVE_QUEUE,
 	};
 
 	struct stat_array *nva;
@@ -4599,7 +4600,7 @@ print_iostat_latency(iostat_cbdata_t *cb, nvlist_t *oldnv,
 		ZPOOL_CONFIG_VDEV_SCRUB_LAT_HISTO,
 		ZPOOL_CONFIG_VDEV_TRIM_LAT_HISTO,
 		ZPOOL_CONFIG_VDEV_REBUILD_LAT_HISTO,
-		ZPOOL_CONFIG_VDEV_REBUILD_BULK_WRITE_LAT_HISTO,
+		ZPOOL_CONFIG_VDEV_REBUILD_WRITE_LAT_HISTO,
 	};
 	struct stat_array *nva;
 

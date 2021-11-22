@@ -513,6 +513,8 @@ enum blk_verify_flag {
 
 extern int zio_bookmark_compare(const void *, const void *);
 
+extern void zio_rebuild_write_update_parent(zio_t *zio);
+
 extern zio_t *zio_null(zio_t *pio, spa_t *spa, vdev_t *vd,
     zio_done_func_t *done, void *priv, enum zio_flag flags);
 

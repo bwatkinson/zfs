@@ -2468,7 +2468,8 @@ vdev_draid_spare_child_done(zio_t *zio)
 	 * In the case of rebuild bulk writes this ZIO will have removed its
 	 * parent, so the ZIO's error will not be set in the parent.
 	 */
-	if (zio->io_priority == ZIO_PRIORITY_REBUILD_BULK_WRITE) {
+	if (zio->io_priority == ZIO_PRIORITY_REBUILD_WRITE &&
+	    zio_unique_parent(zio) == NULL) {
 		return;
 	}
 

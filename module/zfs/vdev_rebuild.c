@@ -896,6 +896,8 @@ vdev_rebuild_thread(void *arg)
 
 	mutex_exit(&vr->vr_io_lock);
 
+	vdev_flush_rebuild_bulk_writes(spa);
+
 	mutex_destroy(&vr->vr_io_lock);
 	cv_destroy(&vr->vr_io_cv);
 

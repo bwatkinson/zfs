@@ -413,8 +413,8 @@ print_vdev_latency_stats(nvlist_t *nvroot, const char *pool_name,
 #endif
 	    {ZPOOL_CONFIG_VDEV_REBUILD_LAT_HISTO,    "rebuild", 0},
 	    {NULL,	NULL},
-	    {ZPOOL_CONFIG_VDEV_REBUILD_BULK_WRITE_LAT_HISTO,
-	    "rebuild_bulk_write", 0},
+	    {ZPOOL_CONFIG_VDEV_REBUILD_WRITE_LAT_HISTO,
+	    "rebuild_write", 0},
 	    {NULL,	NULL}
 	};
 
@@ -512,8 +512,10 @@ print_vdev_size_stats(nvlist_t *nvroot, const char *pool_name,
 #endif
 	    {ZPOOL_CONFIG_VDEV_IND_REBUILD_HISTO,    "rebuild_ind"},
 	    {ZPOOL_CONFIG_VDEV_AGG_REBUILD_HISTO,    "rebuild_agg"},
-	    {ZPOOL_CONFIG_VDEV_IND_REBUILD_BULK_WRITE_HISTO,
-	    "rebuild_bulk_write_ind"},
+	    {ZPOOL_CONFIG_VDEV_IND_REBUILD_WRITE_HISTO,
+	    "rebuild_write_ind"},
+	    {ZPOOL_CONFIG_VDEV_AGG_REBUILD_WRITE_HISTO,
+	    "rebuild_write_agg"},
 	    {NULL,	NULL}
 	};
 
@@ -594,16 +596,16 @@ print_queue_stats(nvlist_t *nvroot, const char *pool_name,
 	    {ZPOOL_CONFIG_VDEV_ASYNC_W_ACTIVE_QUEUE,	"async_w_active"},
 	    {ZPOOL_CONFIG_VDEV_SCRUB_ACTIVE_QUEUE,	"async_scrub_active"},
 	    {ZPOOL_CONFIG_VDEV_REBUILD_ACTIVE_QUEUE,	"rebuild_active"},
-	    {ZPOOL_CONFIG_VDEV_REBUILD_BULK_WRITE_ACTIVE_QUEUE,
-	    "rebuild_bulk_write_active"},
+	    {ZPOOL_CONFIG_VDEV_REBUILD_WRITE_ACTIVE_QUEUE,
+	    "rebuild_write_active"},
 	    {ZPOOL_CONFIG_VDEV_SYNC_R_PEND_QUEUE,	"sync_r_pend"},
 	    {ZPOOL_CONFIG_VDEV_SYNC_W_PEND_QUEUE,	"sync_w_pend"},
 	    {ZPOOL_CONFIG_VDEV_ASYNC_R_PEND_QUEUE,	"async_r_pend"},
 	    {ZPOOL_CONFIG_VDEV_ASYNC_W_PEND_QUEUE,	"async_w_pend"},
 	    {ZPOOL_CONFIG_VDEV_SCRUB_PEND_QUEUE,	"async_scrub_pend"},
 	    {ZPOOL_CONFIG_VDEV_REBUILD_PEND_QUEUE,	"rebuild_pend"},
-	    {ZPOOL_CONFIG_VDEV_REBUILD_BULK_WRITE_PEND_QUEUE,
-	    "rebuild_bulk_write_pend"},
+	    {ZPOOL_CONFIG_VDEV_REBUILD_WRITE_PEND_QUEUE,
+	    "rebuild_write_pend"},
 	    {NULL,	NULL}
 	};
 
@@ -651,16 +653,16 @@ print_top_level_vdev_stats(nvlist_t *nvroot, const char *pool_name)
 	    {ZPOOL_CONFIG_VDEV_ASYNC_W_ACTIVE_QUEUE, "async_w_active_queue"},
 	    {ZPOOL_CONFIG_VDEV_SCRUB_ACTIVE_QUEUE, "async_scrub_active_queue"},
 	    {ZPOOL_CONFIG_VDEV_REBUILD_ACTIVE_QUEUE, "rebuild_active_queue"},
-	    {ZPOOL_CONFIG_VDEV_REBUILD_BULK_WRITE_ACTIVE_QUEUE,
-	    "rebuild_bulk_write_active_queue"},
+	    {ZPOOL_CONFIG_VDEV_REBUILD_WRITE_ACTIVE_QUEUE,
+	    "rebuild_write_active_queue"},
 	    {ZPOOL_CONFIG_VDEV_SYNC_R_PEND_QUEUE, "sync_r_pend_queue"},
 	    {ZPOOL_CONFIG_VDEV_SYNC_W_PEND_QUEUE, "sync_w_pend_queue"},
 	    {ZPOOL_CONFIG_VDEV_ASYNC_R_PEND_QUEUE, "async_r_pend_queue"},
 	    {ZPOOL_CONFIG_VDEV_ASYNC_W_PEND_QUEUE, "async_w_pend_queue"},
 	    {ZPOOL_CONFIG_VDEV_SCRUB_PEND_QUEUE, "async_scrub_pend_queue"},
 	    {ZPOOL_CONFIG_VDEV_REBUILD_PEND_QUEUE, "rebuild_pend_queue"},
-	    {ZPOOL_CONFIG_VDEV_REBUILD_BULK_WRITE_PEND_QUEUE,
-	    "rebuild_bulk_write_pend_queue"},
+	    {ZPOOL_CONFIG_VDEV_REBUILD_WRITE_PEND_QUEUE,
+	    "rebuild_write_pend_queue"},
 	    {NULL, NULL}
 	};
 

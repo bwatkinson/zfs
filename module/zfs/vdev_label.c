@@ -260,8 +260,8 @@ vdev_config_generate_stats(vdev_t *vd, nvlist_t *nv)
 	    vsx->vsx_active_queue[ZIO_PRIORITY_REBUILD]);
 
 	fnvlist_add_uint64(nvx,
-	    ZPOOL_CONFIG_VDEV_REBUILD_BULK_WRITE_ACTIVE_QUEUE,
-	    vsx->vsx_active_queue[ZIO_PRIORITY_REBUILD_BULK_WRITE]);
+	    ZPOOL_CONFIG_VDEV_REBUILD_WRITE_ACTIVE_QUEUE,
+	    vsx->vsx_active_queue[ZIO_PRIORITY_REBUILD_WRITE]);
 
 	/* ZIOs pending */
 	fnvlist_add_uint64(nvx, ZPOOL_CONFIG_VDEV_SYNC_R_PEND_QUEUE,
@@ -285,8 +285,8 @@ vdev_config_generate_stats(vdev_t *vd, nvlist_t *nv)
 	fnvlist_add_uint64(nvx, ZPOOL_CONFIG_VDEV_REBUILD_PEND_QUEUE,
 	    vsx->vsx_pend_queue[ZIO_PRIORITY_REBUILD]);
 
-	fnvlist_add_uint64(nvx, ZPOOL_CONFIG_VDEV_REBUILD_BULK_WRITE_PEND_QUEUE,
-	    vsx->vsx_pend_queue[ZIO_PRIORITY_REBUILD_BULK_WRITE]);
+	fnvlist_add_uint64(nvx, ZPOOL_CONFIG_VDEV_REBUILD_WRITE_PEND_QUEUE,
+	    vsx->vsx_pend_queue[ZIO_PRIORITY_REBUILD_WRITE]);
 
 	/* Histograms */
 	fnvlist_add_uint64_array(nvx, ZPOOL_CONFIG_VDEV_TOT_R_LAT_HISTO,
@@ -334,9 +334,9 @@ vdev_config_generate_stats(vdev_t *vd, nvlist_t *nv)
 	    ARRAY_SIZE(vsx->vsx_queue_histo[ZIO_PRIORITY_REBUILD]));
 
 	fnvlist_add_uint64_array(nvx,
-	    ZPOOL_CONFIG_VDEV_REBUILD_BULK_WRITE_LAT_HISTO,
-	    vsx->vsx_queue_histo[ZIO_PRIORITY_REBUILD_BULK_WRITE],
-	    ARRAY_SIZE(vsx->vsx_queue_histo[ZIO_PRIORITY_REBUILD_BULK_WRITE]));
+	    ZPOOL_CONFIG_VDEV_REBUILD_WRITE_LAT_HISTO,
+	    vsx->vsx_queue_histo[ZIO_PRIORITY_REBUILD_WRITE],
+	    ARRAY_SIZE(vsx->vsx_queue_histo[ZIO_PRIORITY_REBUILD_WRITE]));
 
 	/* Request sizes */
 	fnvlist_add_uint64_array(nvx, ZPOOL_CONFIG_VDEV_SYNC_IND_R_HISTO,
@@ -368,9 +368,9 @@ vdev_config_generate_stats(vdev_t *vd, nvlist_t *nv)
 	    ARRAY_SIZE(vsx->vsx_ind_histo[ZIO_PRIORITY_REBUILD]));
 
 	fnvlist_add_uint64_array(nvx,
-	    ZPOOL_CONFIG_VDEV_IND_REBUILD_BULK_WRITE_HISTO,
-	    vsx->vsx_ind_histo[ZIO_PRIORITY_REBUILD_BULK_WRITE],
-	    ARRAY_SIZE(vsx->vsx_ind_histo[ZIO_PRIORITY_REBUILD_BULK_WRITE]));
+	    ZPOOL_CONFIG_VDEV_IND_REBUILD_WRITE_HISTO,
+	    vsx->vsx_ind_histo[ZIO_PRIORITY_REBUILD_WRITE],
+	    ARRAY_SIZE(vsx->vsx_ind_histo[ZIO_PRIORITY_REBUILD_WRITE]));
 
 	fnvlist_add_uint64_array(nvx, ZPOOL_CONFIG_VDEV_SYNC_AGG_R_HISTO,
 	    vsx->vsx_agg_histo[ZIO_PRIORITY_SYNC_READ],
@@ -399,6 +399,11 @@ vdev_config_generate_stats(vdev_t *vd, nvlist_t *nv)
 	fnvlist_add_uint64_array(nvx, ZPOOL_CONFIG_VDEV_AGG_REBUILD_HISTO,
 	    vsx->vsx_agg_histo[ZIO_PRIORITY_REBUILD],
 	    ARRAY_SIZE(vsx->vsx_agg_histo[ZIO_PRIORITY_REBUILD]));
+
+	fnvlist_add_uint64_array(nvx,
+	    ZPOOL_CONFIG_VDEV_AGG_REBUILD_WRITE_HISTO,
+	    vsx->vsx_agg_histo[ZIO_PRIORITY_REBUILD_WRITE],
+	    ARRAY_SIZE(vsx->vsx_agg_histo[ZIO_PRIORITY_REBUILD_WRITE]));
 
 	/* IO delays */
 	fnvlist_add_uint64(nvx, ZPOOL_CONFIG_VDEV_SLOW_IOS, vs->vs_slow_ios);

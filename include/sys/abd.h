@@ -46,6 +46,7 @@ typedef enum abd_flags {
 	ABD_FLAG_GANG_FREE	= 1 << 7, /* gang ABD is responsible for mem */
 	ABD_FLAG_ZEROS		= 1 << 8, /* ABD for zero-filled buffer */
 	ABD_FLAG_ALLOCD		= 1 << 9, /* we allocated the abd_t */
+	ABD_FLAG_REBUILD_WRITE_ALLOCD = 1 << 10,
 } abd_flags_t;
 
 typedef struct abd {
@@ -190,6 +191,13 @@ static inline boolean_t
 abd_is_gang(abd_t *abd)
 {
 	return ((abd->abd_flags & ABD_FLAG_GANG) ? B_TRUE : B_FALSE);
+}
+
+static inline boolean_t
+abd_rebuild_write_allocated(abd_t *abd)
+{
+	return ((abd->abd_flags & ABD_FLAG_REBUILD_WRITE_ALLOCD) ? B_TRUE :
+	    B_FALSE);
 }
 
 static inline uint_t

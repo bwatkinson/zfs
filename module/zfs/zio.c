@@ -797,6 +797,40 @@ zio_bookmark_compare(const void *x1, const void *x2)
 
 /*
  * ==========================================================================
+ * Rebuild write helper
+ * ==========================================================================
+ */
+void
+zio_rebuild_write_update_parent(zio_t *zio)
+{
+	ASSERT3U(zio->io_priority, ==, ZIO_PRIORITY_REBUILD_WRITE);
+
+	/*
+	 * If the rebuild write is being stored to be issued later, then the
+	 * ABD from the parent must be copied here. We do this in order to
+	 * remove the parent so that the rebuild reads can continue from
+	 * vdev_rebuild_range(). If the parent is not removed and notified
+	 * then a deadlock will occur waiting on the vr_bytes_inflight to be
+	 * reduced.
+	 */
+	abd_t *abd = abd_alloc_sametype(zio->io_abd, zio->io_size);
+	abd_copy(abd, zio->io_abd, zio->io_size);
+	zio->io_abd = abd;
+	zio->io_abd->abd_flags |= ABD_FLAG_REBUILD_WRITE_ALLOCD;
+
+	zio_link_t *zl = NULL;
+	zio_t *pio, *pio_next;
+	for (pio = zio_walk_parents(zio, &zl); pio != NULL;
+	    pio = pio_next) {
+		zio_link_t *remove_zl = zl;
+		pio_next = zio_walk_parents(zio, &zl);
+		zio_remove_child(pio, zio, remove_zl);
+		zio_notify_parent(pio, zio, ZIO_WAIT_DONE, NULL);
+	}
+}
+
+/*
+ * ==========================================================================
  * Create the various types of I/O (read, write, free, etc)
  * ==========================================================================
  */
@@ -3862,29 +3896,6 @@ zio_vdev_io_start(zio_t *zio)
 
 		if ((zio = vdev_queue_io(zio)) == NULL)
 			return (NULL);
-
-		/*
-		 * If rebuild bulk writes are being used, then we must remove
-		 * this child from the parent ZIOs and notify the parents to
-		 * continue. This is required so there is no deadlock in
-		 * vdev_rebuild_range(). Sequential resilvers are limited by
-		 * vr_bytes_inflight_max and because the writes are being
-		 * delayed the parent read just return to allow
-		 * vr_bytes_inflight to be reduced.
-		 */
-		if (zio->io_priority == ZIO_PRIORITY_REBUILD_BULK_WRITE) {
-			zio_link_t *zl = NULL;
-			zio_t *pio, *pio_next;
-			for (pio = zio_walk_parents(zio, &zl); pio != NULL;
-			    pio = pio_next) {
-				zio_link_t *remove_zl = zl;
-				pio_next = zio_walk_parents(zio, &zl);
-				zio_remove_child(pio, zio, remove_zl);
-				zio_notify_parent(pio, zio, ZIO_WAIT_DONE,
-				    NULL);
-			}
-			return (NULL);
-		}
 
 		if (!vdev_accessible(vd, zio)) {
 			zio->io_error = SET_ERROR(ENXIO);

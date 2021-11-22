@@ -4589,7 +4589,7 @@ vdev_stat_update(zio_t *zio, uint64_t psize)
 			 */
 			if (zio->io_priority == ZIO_PRIORITY_REBUILD ||
 			    zio->io_priority ==
-			    ZIO_PRIORITY_REBUILD_BULK_WRITE) {
+			    ZIO_PRIORITY_REBUILD_WRITE) {
 				vdev_t *tvd = vd->vdev_top;
 				vdev_rebuild_t *vr = &tvd->vdev_rebuild_config;
 				vdev_rebuild_phys_t *vrp = &vr->vr_rebuild_phys;

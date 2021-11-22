@@ -172,10 +172,8 @@ struct vdev_queue {
 	hrtime_t	vq_io_delta_ts;
 	zio_t		vq_io_search; /* used as local for stack reduction */
 	kmutex_t	vq_lock;
-	zio_t		vq_rebuild_bulk_write_io_search;
-	kmutex_t	vq_rebuild_bulk_write_lock;
+	boolean_t	vq_rebuild_bulk_write_storing;
 	uint64_t	vq_rebuild_bulk_write_bytes;
-	uint64_t	vq_rebuild_bulk_write_last_offset;
 };
 
 typedef enum vdev_alloc_bias {
