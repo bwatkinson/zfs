@@ -577,9 +577,20 @@ vdev_queue_io_remove(vdev_queue_t *vq, zio_t *zio)
 	if (zio->io_priority == ZIO_PRIORITY_REBUILD_WRITE) {
 		vq->vq_rebuild_bulk_write_bytes -= zio->io_size;
 		ASSERT3U(vq->vq_rebuild_bulk_write_bytes, >=, 0);
+		/*
+		 * If this was a stored rebuild write we did not add this to
+		 * the type AVL tree. The reason for this is we do not want
+		 * the aggregation code to pick up any of the rebuild writes
+		 * before we have hit the
+		 * zfs_vdev_rebuild_bulk_write_byte_limit limit.
+		 */
+		if (!abd_rebuild_write_allocated(zio->io_abd))
+			avl_remove(vdev_queue_type_tree(vq, zio->io_type),
+			    zio);
+	} else {
+		avl_remove(vdev_queue_type_tree(vq, zio->io_type), zio);
 	}
 	avl_remove(vdev_queue_class_tree(vq, zio->io_priority), zio);
-	avl_remove(vdev_queue_type_tree(vq, zio->io_type), zio);
 }
 
 static boolean_t
