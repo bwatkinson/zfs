@@ -691,6 +691,9 @@ vdev_queue_aggregate(vdev_queue_t *vq, zio_t *zio)
 		limit = zfs_vdev_aggregation_limit;
 	limit = MAX(MIN(limit, maxblocksize), 0);
 
+	if (zio->io_priority == ZIO_PRIORITY_REBUILD_WRITE)
+		ASSERT3B(vq->vq_rebuild_bulk_write_storing, ==, B_FALSE);
+
 	if (zio->io_flags & ZIO_FLAG_DONT_AGGREGATE || limit == 0)
 		return (NULL);
 
@@ -880,12 +883,24 @@ vdev_queue_aggregate(vdev_queue_t *vq, zio_t *zio)
 	return (aio);
 }
 
+void
+vdev_queue_reset_rebuild_bulk_writes(vdev_t *vd)
+{
+	vdev_queue_t *vq = &vd->vdev_queue;
+
+	ASSERT3B(vd->vdev_ops->vdev_op_leaf, ==, B_TRUE);
+	mutex_enter(&vq->vq_lock);
+	ASSERT0(vq->vq_rebuild_bulk_write_bytes);
+	vq->vq_rebuild_bulk_write_storing = B_TRUE;
+	mutex_exit(&vq->vq_lock);
+}
+
 /*
  * This is used to make sure any remaining rebuild writes in the queue are
  * completely drained out after a sequential resivler has completed.
  */
 void
-vdev_queue_drain_all_rebuild_bulk_writes(vdev_t *vd)
+vdev_queue_drain_all_rebuild_bulk_writes(vdev_t *vd, boolean_t force_drain)
 {
 	vdev_queue_t *vq = &vd->vdev_queue;
 	avl_index_t idx;
@@ -893,13 +908,13 @@ vdev_queue_drain_all_rebuild_bulk_writes(vdev_t *vd)
 	    ZIO_PRIORITY_REBUILD_WRITE);
 
 	mutex_enter(&vq->vq_lock);
-	if (avl_numnodes(tree) > 0 &&
-	    vq->vq_rebuild_bulk_write_storing == B_TRUE) {
 
-		/*
-		 * If rebuild writes are being drained then all of the writes
-		 * collected are going to be issued out the queue at once.
-		 */
+	/*
+	 * If rebuild writes are being drained then all of the writes
+	 * collected are going to be issued out the queue at once.
+	 */
+	if (vq->vq_rebuild_bulk_write_storing == B_TRUE ||
+	    force_drain == B_TRUE) {
 		while (avl_numnodes(tree) > 0) {
 			vq->vq_io_search.io_offset = vq->vq_last_offset - 1;
 			VERIFY3P(avl_find(tree, &vq->vq_io_search, &idx), ==,
@@ -923,7 +938,6 @@ vdev_queue_drain_all_rebuild_bulk_writes(vdev_t *vd)
 		ASSERT0(vq->vq_rebuild_bulk_write_bytes);
 	}
 
-	vq->vq_rebuild_bulk_write_storing = B_TRUE;
 	mutex_exit(&vq->vq_lock);
 }
 
@@ -1064,6 +1078,9 @@ vdev_queue_io_done(zio_t *zio)
 	vq->vq_io_delta_ts = zio->io_delta = now - zio->io_timestamp;
 
 	mutex_enter(&vq->vq_lock);
+
+	if (zio->io_priority == ZIO_PRIORITY_REBUILD_WRITE)
+		ASSERT3B(vq->vq_rebuild_bulk_write_storing, ==, B_FALSE);
 
 	vdev_queue_pending_remove(vq, zio);
 

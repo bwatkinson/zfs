@@ -575,10 +575,11 @@ extern int vdev_alloc(spa_t *spa, vdev_t **vdp, nvlist_t *config,
 extern void vdev_free(vdev_t *vd);
 
 /*
- * Rebuild bulk write flushing
+ * Rebuild bulk write reset/flushing
  */
-extern void
-vdev_queue_drain_all_rebuild_bulk_writes(vdev_t *vd);
+extern void vdev_queue_reset_rebuild_bulk_writes(vdev_t *vd);
+extern void vdev_queue_drain_all_rebuild_bulk_writes(vdev_t *vd,
+	boolean_t force_drain);
 
 /*
  * Add or remove children and parents

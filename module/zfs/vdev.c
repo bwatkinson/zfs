@@ -450,20 +450,40 @@ vdev_count_leaves(spa_t *spa)
 }
 
 static void
-vdev_flush_rebuild_bulk_writes_impl(vdev_t *vd)
+vdev_reset_rebuild_bulk_writes_impl(vdev_t *vd)
 {
 	if (vd->vdev_ops->vdev_op_leaf)
-		vdev_queue_drain_all_rebuild_bulk_writes(vd);
+		vdev_queue_reset_rebuild_bulk_writes(vd);
 
 	for (int c = 0; c < vd->vdev_children; c++)
-		vdev_flush_rebuild_bulk_writes_impl(vd->vdev_child[c]);
+		vdev_reset_rebuild_bulk_writes_impl(vd->vdev_child[c]);
 }
 
 void
-vdev_flush_rebuild_bulk_writes(spa_t *spa)
+vdev_reset_rebuild_bulk_writes(spa_t *spa)
 {
 	spa_config_enter(spa, SCL_VDEV, FTAG, RW_READER);
-	vdev_flush_rebuild_bulk_writes_impl(spa->spa_root_vdev);
+	vdev_reset_rebuild_bulk_writes_impl(spa->spa_root_vdev);
+	spa_config_exit(spa, SCL_VDEV, FTAG);
+}
+
+
+static void
+vdev_flush_rebuild_bulk_writes_impl(vdev_t *vd, boolean_t force_drain)
+{
+	if (vd->vdev_ops->vdev_op_leaf)
+		vdev_queue_drain_all_rebuild_bulk_writes(vd, force_drain);
+
+	for (int c = 0; c < vd->vdev_children; c++)
+		vdev_flush_rebuild_bulk_writes_impl(vd->vdev_child[c],
+		    force_drain);
+}
+
+void
+vdev_flush_rebuild_bulk_writes(spa_t *spa, boolean_t force_drain)
+{
+	spa_config_enter(spa, SCL_VDEV, FTAG, RW_READER);
+	vdev_flush_rebuild_bulk_writes_impl(spa->spa_root_vdev, force_drain);
 	spa_config_exit(spa, SCL_VDEV, FTAG);
 }
 
