@@ -684,9 +684,6 @@ vdev_queue_aggregate(vdev_queue_t *vq, zio_t *zio)
 	uint64_t next_offset;
 	abd_t *abd;
 
-	if (zio->io_priority == ZIO_PRIORITY_REBUILD_WRITE)
-		ASSERT3B(vq->vq_rebuild_bulk_write_storing, ==, B_FALSE);
-
 	maxblocksize = spa_maxblocksize(vq->vq_vdev->vdev_spa);
 	if (vq->vq_vdev->vdev_nonrot)
 		limit = zfs_vdev_aggregation_limit_non_rotating;
@@ -1067,9 +1064,6 @@ vdev_queue_io_done(zio_t *zio)
 	vq->vq_io_delta_ts = zio->io_delta = now - zio->io_timestamp;
 
 	mutex_enter(&vq->vq_lock);
-
-	if (zio->io_priority == ZIO_PRIORITY_REBUILD_WRITE)
-		ASSERT3B(vq->vq_rebuild_bulk_write_storing, ==, B_FALSE);
 
 	vdev_queue_pending_remove(vq, zio);
 
