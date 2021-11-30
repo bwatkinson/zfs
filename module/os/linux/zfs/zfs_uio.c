@@ -500,11 +500,15 @@ zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 
 		while (PageWriteback(p)) {
 			unlock_page(p);
+#ifdef HAVE_PAGEMAP_FOLIO_WAIT_BIT
+			folio_wait_bit(page_folio(p), PG_writeback);
+#else
 			wait_on_page_bit(p, PG_writeback);
+#endif
 			lock_page(p);
 		}
 
-		test_set_page_writeback(p);
+		set_page_writeback(p);
 		unlock_page(p);
 	}
 }
