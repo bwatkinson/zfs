@@ -2805,6 +2805,7 @@ dmu_buf_undirty(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr)
 
 	uint8_t db_dirtycnt = db->db_dirtycnt;
 	dbuf_dirty_record_t *dr_prev = list_prev(&db->db_dirty_records, dr);
+	spa_t *spa = dmu_objset_spa(db->db_objset);
 
 	/*
 	 * It is possible that the current dirty record is being synced out.
@@ -2824,7 +2825,9 @@ dmu_buf_undirty(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr)
 	 * dbuf_write_done() if we are syncing the data, which will signal
 	 * our db_changed with a decreased db_dirtycnt.
 	 */
+	spa_config_enter(spa, SCL_CONFIG, FTAG, RW_READER);
 	if (dr->dr_txg == spa_syncing_txg(dmu_objset_spa(db->db_objset))) {
+		spa_config_exit(spa, SCL_CONFIG, FTAG);
 		while (db_dirtycnt == db->db_dirtycnt) {
 			DBUF_STAT_BUMP(direct_undirty_wait);
 			cv_wait(&db->db_changed, &db->db_mtx);
@@ -2832,6 +2835,7 @@ dmu_buf_undirty(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr)
 
 		return (dr_prev);
 	}
+	spa_config_exit(spa, SCL_CONFIG, FTAG);
 
 	/*
 	 * If we are passing in a dbuf_dirty_record_t directly to
