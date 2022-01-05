@@ -1975,9 +1975,10 @@ dmu_sync(zio_t *pio, uint64_t txg, dmu_sync_cb_t *done, zgd_t *zgd)
 	dsa->dsa_tx = NULL;
 
 	zio_nowait(arc_write(pio, os->os_spa, txg, zgd->zgd_bp,
-	    dr->dt.dl.dr_data, !DBUF_IS_CACHEABLE(db), dbuf_is_l2cacheable(db),
-	    &zp, dmu_sync_ready, NULL, dmu_sync_done, dsa,
-	    ZIO_PRIORITY_SYNC_WRITE, ZIO_FLAG_CANFAIL, &zb));
+	    dr->dt.dl.dr_data, !DBUF_IS_CACHEABLE(db),
+	    dbuf_is_l2cacheable(db, NULL), &zp, dmu_sync_ready, NULL,
+	    dmu_sync_done, dsa, ZIO_PRIORITY_SYNC_WRITE, ZIO_FLAG_CANFAIL,
+	    &zb));
 
 	return (0);
 }

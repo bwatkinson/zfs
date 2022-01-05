@@ -641,7 +641,7 @@ dbuf_is_metadata(dmu_buf_impl_t *db)
  * L2ARC.
  */
 boolean_t
-dbuf_is_l2cacheable(dmu_buf_impl_t *db)
+dbuf_is_l2cacheable(dmu_buf_impl_t *db, blkptr_t *bp)
 {
 	if (db->db_objset->os_secondary_cache == ZFS_CACHE_ALL ||
 	    (db->db_objset->os_secondary_cache ==
@@ -649,10 +649,17 @@ dbuf_is_l2cacheable(dmu_buf_impl_t *db)
 		if (l2arc_exclude_special == 0)
 			return (B_TRUE);
 
-		blkptr_t *bp = db->db_blkptr;
-		if (bp == NULL || BP_IS_HOLE(bp))
+		/*
+		 * bp must be checked in the event it was passed from
+		 * dbuf_read_impl() as the result of a the BP being set from
+		 * a Direct I/O write in dbuf_read(). See comments in
+		 * dbuf_read().
+		 */
+		blkptr_t *db_bp = bp == NULL ? db->db_blkptr : bp;
+
+		if (db_bp == NULL || BP_IS_HOLE(db_bp))
 			return (B_FALSE);
-		uint64_t vdev = DVA_GET_VDEV(bp->blk_dva);
+		uint64_t vdev = DVA_GET_VDEV(db_bp->blk_dva);
 		vdev_t *rvd = db->db_objset->os_spa->spa_root_vdev;
 		vdev_t *vd = NULL;
 
@@ -1678,7 +1685,7 @@ dbuf_read_impl(dmu_buf_impl_t *db, dnode_t *dn, zio_t *zio, uint32_t flags,
 
 	if (!DBUF_IS_CACHEABLE(db))
 		aflags |= ARC_FLAG_UNCACHED;
-	else if (dbuf_is_l2cacheable(db))
+	else if (dbuf_is_l2cacheable(db, bpp))
 		aflags |= ARC_FLAG_L2CACHE;
 
 	dbuf_add_ref(db, NULL);
@@ -5426,7 +5433,7 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 
 		dr->dr_zio = arc_write(pio, os->os_spa, txg,
 		    &dr->dr_bp_copy, data, !DBUF_IS_CACHEABLE(db),
-		    dbuf_is_l2cacheable(db), &zp, dbuf_write_ready,
+		    dbuf_is_l2cacheable(db, NULL), &zp, dbuf_write_ready,
 		    children_ready_cb, dbuf_write_done, db,
 		    ZIO_PRIORITY_ASYNC_WRITE, ZIO_FLAG_MUSTSUCCEED, &zb);
 	}
