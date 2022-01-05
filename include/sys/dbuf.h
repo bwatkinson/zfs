@@ -475,7 +475,7 @@ dbuf_get_dirty_direct(dmu_buf_impl_t *db)
 	(dbuf_is_metadata(_db) &&					\
 	((_db)->db_objset->os_primary_cache == ZFS_CACHE_METADATA)))
 
-boolean_t dbuf_is_l2cacheable(dmu_buf_impl_t *db);
+boolean_t dbuf_is_l2cacheable(dmu_buf_impl_t *db, blkptr_t *db_bp);
 
 #ifdef ZFS_DEBUG
 
