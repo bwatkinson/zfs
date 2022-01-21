@@ -32,18 +32,19 @@ function dio_cleanup
 #
 # Generate an IO workload using fio and then verify the resulting data.
 #
-function dio_and_verify # mode file-size block-size directory extra-args
+function dio_and_verify # mode file-size block-size directory ioengine extra-args
 {
 	typeset mode=$1
 	typeset size=$2
 	typeset bs=$3
 	typeset mntpnt=$4
-	typeset extra_args=$5
+	typeset ioengine=$5
+	typeset extra_args=$6
 
 	# Invoke an fio workload via direct IO.
 	log_must fio --directory=$mntpnt --name=direct-$mode \
 	    --rw=$mode --size=$size --bs=$bs --direct=1 --numjobs=1 \
-	    --verify=sha1 --ioengine=sync --fallocate=none \
+	    --verify=sha1 --ioengine=$ioengine --fallocate=none \
 	    --group_reporting --minimal $extra_args
 
 	# Verify the files written using buffered IO.
@@ -105,7 +106,7 @@ function verify_dio_write_count #pool bs size mnpnt
 	log_note "Checking for $dio_wr_expected Direct IO writes"
 
 	prev_dio_wr=$(get_iostats_stat $pool direct_write_count)
-	dio_and_verify write $size $bs $mntpnt
+	dio_and_verify write $size $bs $mntpnt "sync"
 	curr_dio_wr=$(get_iostats_stat $pool direct_write_count)
 	dio_wr_actual=$((curr_dio_wr - prev_dio_wr))
 
