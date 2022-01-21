@@ -1441,6 +1441,7 @@ nobase_dist_datadir_zfs_tests_tests_SCRIPTS += \
 	functional/devices/setup.ksh \
 	functional/direct/dio_aligned_block.ksh \
 	functional/direct/dio_async_always.ksh \
+	functional/direct/dio_async_fio_ioengines.ksh \
 	functional/direct/dio_compression.ksh \
 	functional/direct/dio_dedup.ksh \
 	functional/direct/dio_encryption.ksh \
