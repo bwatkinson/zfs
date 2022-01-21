@@ -1,6 +1,6 @@
 #!/bin/ksh -p
 #
-# DDL HEADER START
+# CDDL HEADER START
 #
 # The contents of this file are subject to the terms of the
 # Common Development and Distribution License (the "License").
