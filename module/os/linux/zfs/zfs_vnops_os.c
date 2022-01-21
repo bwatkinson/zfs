@@ -296,13 +296,11 @@ mappedread(znode_t *zp, int nbytes, zfs_uio_t *uio)
 		pp = find_lock_page(mp, start >> PAGE_SHIFT);
 		if (pp) {
 			while (PageWriteback(pp)) {
-				unlock_page(pp);
 #ifdef HAVE_PAGEMAP_FOLIO_WAIT_BIT
 				folio_wait_bit(page_folio(pp), PG_writeback);
 #else
 				wait_on_page_bit(pp, PG_writeback);
 #endif
-				lock_page(pp);
 			}
 
 			unlock_page(pp);
@@ -4007,13 +4005,11 @@ zfs_fillpage(struct inode *ip, struct page *pl[], int nr_pages)
 			lock_page(pl[i]);
 
 			while (PageWriteback(pl[i])) {
-				unlock_page(pl[i]);
 #ifdef HAVE_PAGEMAP_FOLIO_WAIT_BIT
 				folio_wait_bit(page_folio(pl[i]), PG_writeback);
 #else
 				wait_on_page_bit(pl[i], PG_writeback);
 #endif
-				lock_page(pl[i]);
 			}
 
 			put_page(pl[i]);
