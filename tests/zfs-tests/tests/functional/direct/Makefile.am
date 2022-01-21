@@ -8,6 +8,7 @@ dist_pkgdata_SCRIPTS = \
 	dio_dedup.ksh \
 	dio_encryption.ksh \
 	dio_grow_block.ksh \
+	dio_max_recordsize.ksh \
 	dio_mixed.ksh \
 	dio_mmap.ksh \
 	dio_property.ksh \
