@@ -1,6 +1,6 @@
 #!/bin/ksh -p
 #
-# DDL HEADER START
+# CDDL HEADER START
 #
 # The contents of this file are subject to the terms of the
 # Common Development and Distribution License (the "License").
@@ -68,7 +68,8 @@ for type in "" "mirror" "raidz" "draid"; do;
 
 		mntpnt=$(get_prop mountpoint $TESTPOOL1/$TESTFS1)
 
-		verify_dio_write_count $TESTPOOL1 $recsize $((4 * recsize)) $mntpnt
+		verify_dio_write_count $TESTPOOL1 $recsize $((4 * recsize)) \
+		    $mntpnt
 
 		destroy_pool $TESTPOOL1
 	done
