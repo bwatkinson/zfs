@@ -4,6 +4,7 @@ dist_pkgdata_SCRIPTS = \
 	cleanup.ksh \
 	dio_aligned_block.ksh \
 	dio_async_always.ksh \
+	dio_async_fio_ioengines.ksh \
 	dio_compression.ksh \
 	dio_dedup.ksh \
 	dio_encryption.ksh \
