@@ -21,7 +21,7 @@
 #
 
 #
-# Copyright (c) 2021 by Lawrence Livermore National Security, LLC.
+# Copyright (c) 2022 by Triad National Security, LLC.
 #
 
 . $STF_SUITE/include/libtest.shlib
@@ -31,13 +31,12 @@
 
 #
 # DESCRIPTION:
-# 	Verify compression works using Direct IO.
+# 	Verify FIO async engines work using Direct IO.
 #
 # STRATEGY:
-#	1. Select a random compression algoritm
-#	2. Start sequential direct IO and verify with buffered IO
+#	1. Select a FIO async ioengine
+#	2. Start sequntial direct IO and verify with buffered IO
 #	3. Start mixed direct IO and verify with buffered IO
-#	4. Repeat from 2 for all compression algoritms
 #
 
 verify_runnable "global"
@@ -45,20 +44,30 @@ verify_runnable "global"
 function cleanup
 {
 	log_must rm -f "$mntpnt/direct-*"
-	log_must zfs set compression=off $TESTPOOL/$TESTFS
 }
 
-log_assert "Verify compression works using Direct IO."
+log_assert "Verify FIO async ioengines work using Direct IO."
 
 log_onexit cleanup
 
-mntpnt=$(get_prop mountpoint $TESTPOOL/$TESTFS)
-compress_args="--buffer_compress_percentage=50"
+typeset -a async_ioengine_args=("--iodepth=4" "--iodepth=4 --thread")
 
-for comp in "${compress_prop_vals[@]:1}"; do
-	log_must zfs set compression=$comp $TESTPOOL/$TESTFS
-	dio_and_verify rw $DIO_FILESIZE $DIO_BS $mntpnt "sync" $compress_args
-	dio_and_verify randrw $DIO_FILESIZE $DIO_BS $mntpnt "sync" $compress_args
+mntpnt=$(get_prop mountpoint $TESTPOOL/$TESTFS)
+fio_async_ioengines="posixaio"
+
+if is_linux; then
+	fio_async_ioengines+=" libaio"
+fi
+
+for ioengine in $fio_async_ioengines; do
+	for ioengine_args in "${async_ioengine_args[@]}"; do
+		log_note "Checking direct IO with FIO async ioengine" \
+		    " $ioengine with args $ioengine_args"
+		dio_and_verify rw $DIO_FILESIZE $DIO_BS $mntpnt "$ioengine" \
+		    "$ioengine_args"
+		dio_and_verify randrw $DIO_FILESIZE $DIO_BS $mntpnt \
+		    "$ioengine" "$ioengine_args"
+	done
 done
 
-log_pass "Verfied compression works using Direct IO"
+log_pass "Verfied FIO async ioengines work using Direct IO"
