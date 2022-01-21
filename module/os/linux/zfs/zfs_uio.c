@@ -52,6 +52,11 @@
 #include <linux/kmap_compat.h>
 #include <linux/uaccess.h>
 #include <linux/pagemap.h>
+#include <linux/mman.h>
+
+#if !defined(HAVE_MM_DO_MADVISE_MM_STRUCT) && !defined(HAVE_MM_DO_MADVISE)
+#include <linux/ksm.h>
+#endif
 
 /*
  * Move "n" bytes at byte address "p"; "rw" indicates the direction
@@ -483,9 +488,68 @@ zfs_uio_page_aligned(zfs_uio_t *uio)
 	return (B_TRUE);
 }
 
+/*
+ * Accounting for compound page (Transparent Huge Pages/Huge Pages)
+ */
+typedef struct {
+	unsigned compound_page_cnt;  /* # of pages compound page contains */
+	unsigned curr_compound_page; /* current offset into compound page */
+} zfs_uio_compound_page_cnts;
+
+static struct page *
+zfs_uio_dio_get_page(zfs_uio_t *uio, int curr_page,
+    zfs_uio_compound_page_cnts *cpc)
+{
+	struct page *p = uio->uio_dio.pages[curr_page];
+	unsigned int compound_page_order;
+
+	ASSERT3P(p, !=, NULL);
+
+	/*
+	 * If the processing of the previous compund page is done, reset the
+	 * counters for any future compound pages encountered.
+	 */
+	if (cpc->compound_page_cnt > 0 &&
+	    (cpc->compound_page_cnt == cpc->curr_compound_page)) {
+		cpc->compound_page_cnt = 0;
+		cpc->curr_compound_page = 0;
+	}
+
+	if (!PageCompound(p)) {
+		return (p);
+	} else {
+		/*
+		 * If the current page is a compound page, only the head page
+		 * bits need to be adjusted. All other pages attached to the
+		 * compound page use only the head page bits as they are shared
+		 * by all pages.
+		 */
+		if (cpc->compound_page_cnt == 0) {
+			ASSERT0(cpc->curr_compound_page);
+			p = compound_head(p);
+			compound_page_order = compound_order(p);
+			cpc->compound_page_cnt = 1 << compound_page_order;
+			cpc->curr_compound_page += 1;
+		} else {
+			/*
+			 * Do not adjust any bits in this page in the compound
+			 * page as those are handled in the head page returned
+			 * above.
+			 */
+			ASSERT3U(cpc->curr_compound_page, <,
+			    cpc->compound_page_cnt);
+			cpc->curr_compound_page += 1;
+			p = NULL;
+		}
+	}
+
+	return (p);
+}
+
 static void
 zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 {
+	zfs_uio_compound_page_cnts cpc = { 0, 0 };
 	/*
 	 * In order to make the pages stable, we need to lock each page and
 	 * check the PG_writeback bit. If the page is under writeback, we
@@ -493,21 +557,23 @@ zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 	 * by end_page_writeback() in zfs_uio_release_stable_pages().
 	 */
 	ASSERT3P(uio->uio_dio.pages, !=, NULL);
+
 	for (int i = 0; i < uio->uio_dio.npages; i++) {
-		struct page *p = uio->uio_dio.pages[i];
-		ASSERT3P(p, !=, NULL);
+		struct page *p = zfs_uio_dio_get_page(uio, i, &cpc);
+		if (p == NULL)
+			continue;
+
 		lock_page(p);
 
 		while (PageWriteback(p)) {
-			unlock_page(p);
 #ifdef HAVE_PAGEMAP_FOLIO_WAIT_BIT
 			folio_wait_bit(page_folio(p), PG_writeback);
 #else
 			wait_on_page_bit(p, PG_writeback);
 #endif
-			lock_page(p);
 		}
 
+		clear_page_dirty_for_io(p);
 		set_page_writeback(p);
 		unlock_page(p);
 	}
@@ -516,10 +582,15 @@ zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 static void
 zfs_uio_release_stable_pages(zfs_uio_t *uio)
 {
+	zfs_uio_compound_page_cnts cpc = { 0, 0 };
 	ASSERT3P(uio->uio_dio.pages, !=, NULL);
+
 	for (int i = 0; i < uio->uio_dio.npages; i++) {
-		struct page *p = uio->uio_dio.pages[i];
-		ASSERT3P(p, !=, NULL);
+		struct page *p = zfs_uio_dio_get_page(uio, i, &cpc);
+		if (p == NULL)
+			continue;
+
+		ASSERT(PageWriteback(p));
 		end_page_writeback(p);
 	}
 }
@@ -527,6 +598,8 @@ zfs_uio_release_stable_pages(zfs_uio_t *uio)
 void
 zfs_uio_free_dio_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
 {
+	zfs_uio_compound_page_cnts cpc = { 0, 0 };
+
 	ASSERT(uio->uio_extflg & UIO_DIRECT);
 	ASSERT3P(uio->uio_dio.pages, !=, NULL);
 
@@ -534,10 +607,11 @@ zfs_uio_free_dio_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
 		zfs_uio_release_stable_pages(uio);
 
 	for (int i = 0; i < uio->uio_dio.npages; i++) {
-		struct page *p = uio->uio_dio.pages[i];
-		if (p) {
-			put_page(p);
-		}
+		struct page *p = zfs_uio_dio_get_page(uio, i, &cpc);
+		if (p == NULL)
+			continue;
+
+		put_page(p);
 	}
 
 	vmem_free(uio->uio_dio.pages,
