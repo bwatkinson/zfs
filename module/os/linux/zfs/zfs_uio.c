@@ -447,15 +447,25 @@ zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 		if (p == NULL)
 			continue;
 
+		zfs_dbgmsg("i = %d, uio = %p, "
+		    "zfs_uio_offset(uio) = %lu, "
+		    "zfs_uio_resid(uio) = %lu, "
+		    "PageWriteback(p) = %d, PageCompound(p) = %d, "
+		    "PageTransHuge(p) = %d, p = %p",
+		    i, uio, (unsigned long)zfs_uio_offset(uio),
+		    (unsigned long)zfs_uio_resid(uio), PageWriteback(p),
+		    PageCompound(p), PageTransHuge(p), p);
+
+
 		lock_page(p);
 
-		while (PageWriteback(p)) {
+//		while (PageWriteback(p)) {
 #ifdef HAVE_PAGEMAP_FOLIO_WAIT_BIT
-			folio_wait_bit(page_folio(p), PG_writeback);
+//			folio_wait_bit(page_folio(p), PG_writeback);
 #else
-			wait_on_page_bit(p, PG_writeback);
+//			wait_on_page_bit(p, PG_writeback);
 #endif
-		}
+//		}
 
 		clear_page_dirty_for_io(p);
 		set_page_writeback(p);
@@ -474,8 +484,19 @@ zfs_uio_release_stable_pages(zfs_uio_t *uio)
 		if (p == NULL)
 			continue;
 
-		ASSERT(PageWriteback(p));
-		end_page_writeback(p);
+//		ASSERT(PageWriteback(p));
+		if (PageWriteback(p)) {
+			end_page_writeback(p);
+		} else {
+			zfs_dbgmsg("Not in writeback page = %d ,"
+			    "uio = %p, zfs_uio_offset(uio) = %lu, "
+			    "zfs_uio_resid(uio) = %lu, "
+			    "PageCompound(p) = %d, "
+			    "PageTransHuge(p) = %d, p = %p",
+			    i, uio, (unsigned long)zfs_uio_offset(uio),
+			    (unsigned long)zfs_uio_resid(uio),
+			    PageCompound(p), PageTransHuge(p), p);
+		}
 	}
 }
 
