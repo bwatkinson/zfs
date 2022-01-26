@@ -372,100 +372,110 @@ zfs_uio_page_aligned(zfs_uio_t *uio)
 	return (B_TRUE);
 }
 
-/*
- * Accounting for compound page (Transparent Huge Pages/Huge Pages)
- */
-typedef struct {
-	unsigned compound_page_cnt;  /* # of pages compound page contains */
-	unsigned curr_compound_page; /* current offset into compound page */
-} zfs_uio_compound_page_cnts;
+#define	ZFS_MARKED_PAGE ((unsigned long)0x5a465350414745) /* ASCII: ZFSPAGE */
+#define	IS_ZFS_MARKED_PAGE(_p) \
+	(page_private(_p) == (unsigned long)ZFS_MARKED_PAGE)
 
+
+/*
+ * There needs to be care when grabbing the page to either mark it in
+ * writeback and write protecting it for Direct IO writes or just calling
+ * put_page() for both Direct IO read and writes. A page may either be:
+ *  1. A compound page (transparent huge page/huge page)
+ *  2. A regular page
+ *  3. A regular page that is merged so all other pages are pointing at the
+ *     same page because all page contents are identical.
+ * In order to handle these cases the private page field is used to mark the
+ * once it has been seen. This is necessary for the following reasons:
+ *  1. If it is a compound page only the head page needs to used
+ *  2. If it is a regular merged page all pages point at the same page
+ * Handling of compound page and merged page make sure there is no deadlock by
+ * only handling a single page that may represent multiple pages.
+ */
 static struct page *
-zfs_uio_dio_get_page(zfs_uio_t *uio, int curr_page,
-    zfs_uio_compound_page_cnts *cpc)
+zfs_uio_dio_get_page(zfs_uio_t *uio, int curr_page, boolean_t releasing)
 {
 	struct page *p = uio->uio_dio.pages[curr_page];
-	unsigned int compound_page_order;
 
 	ASSERT3P(p, !=, NULL);
 
 	/*
-	 * If the processing of the previous compund page is done, reset the
-	 * counters for any future compound pages encountered.
+	 * If this is a compound page, only the head is needed.
 	 */
-	if (cpc->compound_page_cnt > 0 &&
-	    (cpc->compound_page_cnt == cpc->curr_compound_page)) {
-		cpc->compound_page_cnt = 0;
-		cpc->curr_compound_page = 0;
+	if (PageCompound(p)) {
+		p = compound_head(p);
 	}
 
-	if (!PageCompound(p)) {
-		return (p);
-	} else {
-		/*
-		 * If the current page is a compound page, only the head page
-		 * bits need to be adjusted. All other pages attached to the
-		 * compound page use only the head page bits as they are shared
-		 * by all pages.
-		 */
-		if (cpc->compound_page_cnt == 0) {
-			ASSERT0(cpc->curr_compound_page);
-			p = compound_head(p);
-			compound_page_order = compound_order(p);
-			cpc->compound_page_cnt = 1 << compound_page_order;
-			cpc->curr_compound_page += 1;
-		} else {
-			/*
-			 * Do not adjust any bits in this page in the compound
-			 * page as those are handled in the head page returned
-			 * above.
-			 */
-			ASSERT3U(cpc->curr_compound_page, <,
-			    cpc->compound_page_cnt);
-			cpc->curr_compound_page += 1;
-			p = NULL;
-		}
+	lock_page(p);
+
+	/*
+	 * If this page has already been marked and it is being not released
+	 * (see zfs_uio_free_dio_pages()) then the page has already been
+	 * set to writeback and write protected. If this is page is being
+	 * released but is no longer marked, then the page has already been
+	 * removed from writeback (if a write) and does not need to be put
+	 * for either read or writes.
+	 */
+	if ((IS_ZFS_MARKED_PAGE(p) && releasing == B_FALSE) ||
+	    (!IS_ZFS_MARKED_PAGE(p) && releasing == B_TRUE)) {
+		unlock_page(p);
+		return (NULL);
 	}
 
 	return (p);
 }
 
 static void
+zfs_uio_mark_pages(zfs_uio_t *uio)
+{
+	ASSERT3P(uio->uio_dio.pages, !=, NULL);
+
+	for (int i = 0; i < uio->uio_dio.npages; i++) {
+		struct page *p = zfs_uio_dio_get_page(uio, i, B_FALSE);
+		if (p == NULL)
+			continue;
+
+		ASSERT(PageLocked(p));
+		ASSERT(!IS_ZFS_MARKED_PAGE(p));
+		SetPagePrivate(p);
+		set_page_private(p, (unsigned long)ZFS_MARKED_PAGE);
+		unlock_page(p);
+	}
+}
+
+static void
 zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 {
-	zfs_uio_compound_page_cnts cpc = { 0, 0 };
 	/*
 	 * In order to make the pages stable, we need to lock each page and
 	 * check the PG_writeback bit. If the page is under writeback, we
 	 * wait till a prior write on the page has finished which is signaled
-	 * by end_page_writeback() in zfs_uio_release_stable_pages().
+	 * by end_page_writeback() in zfs_uio_release_stable_pages(). The
+	 * page's PTE must also be put under write protection with
+	 * clear_page_dirty_for_io().
 	 */
 	ASSERT3P(uio->uio_dio.pages, !=, NULL);
 
 	for (int i = 0; i < uio->uio_dio.npages; i++) {
-		struct page *p = zfs_uio_dio_get_page(uio, i, &cpc);
+		struct page *p = zfs_uio_dio_get_page(uio, i, B_FALSE);
 		if (p == NULL)
 			continue;
 
-		zfs_dbgmsg("i = %d, uio = %p, "
-		    "zfs_uio_offset(uio) = %lu, "
-		    "zfs_uio_resid(uio) = %lu, "
-		    "PageWriteback(p) = %d, PageCompound(p) = %d, "
-		    "PageTransHuge(p) = %d, p = %p",
-		    i, uio, (unsigned long)zfs_uio_offset(uio),
-		    (unsigned long)zfs_uio_resid(uio), PageWriteback(p),
-		    PageCompound(p), PageTransHuge(p), p);
+		/*
+		 * zfs_uio_dio_get_page() returns the page locked.
+		 */
+		ASSERT(PageLocked(p));
+		ASSERT(!IS_ZFS_MARKED_PAGE(p));
+		SetPagePrivate(p);
+		set_page_private(p, (unsigned long)ZFS_MARKED_PAGE);
 
-
-		lock_page(p);
-
-//		while (PageWriteback(p)) {
+		while (PageWriteback(p)) {
 #ifdef HAVE_PAGEMAP_FOLIO_WAIT_BIT
-//			folio_wait_bit(page_folio(p), PG_writeback);
+			folio_wait_bit(page_folio(p), PG_writeback);
 #else
-//			wait_on_page_bit(p, PG_writeback);
+			wait_on_page_bit(p, PG_writeback);
 #endif
-//		}
+		}
 
 		clear_page_dirty_for_io(p);
 		set_page_writeback(p);
@@ -473,49 +483,36 @@ zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 	}
 }
 
-static void
-zfs_uio_release_stable_pages(zfs_uio_t *uio)
-{
-	zfs_uio_compound_page_cnts cpc = { 0, 0 };
-	ASSERT3P(uio->uio_dio.pages, !=, NULL);
-
-	for (int i = 0; i < uio->uio_dio.npages; i++) {
-		struct page *p = zfs_uio_dio_get_page(uio, i, &cpc);
-		if (p == NULL)
-			continue;
-
-//		ASSERT(PageWriteback(p));
-		if (PageWriteback(p)) {
-			end_page_writeback(p);
-		} else {
-			zfs_dbgmsg("Not in writeback page = %d ,"
-			    "uio = %p, zfs_uio_offset(uio) = %lu, "
-			    "zfs_uio_resid(uio) = %lu, "
-			    "PageCompound(p) = %d, "
-			    "PageTransHuge(p) = %d, p = %p",
-			    i, uio, (unsigned long)zfs_uio_offset(uio),
-			    (unsigned long)zfs_uio_resid(uio),
-			    PageCompound(p), PageTransHuge(p), p);
-		}
-	}
-}
-
 void
 zfs_uio_free_dio_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
 {
-	zfs_uio_compound_page_cnts cpc = { 0, 0 };
-
 	ASSERT(uio->uio_extflg & UIO_DIRECT);
 	ASSERT3P(uio->uio_dio.pages, !=, NULL);
 
-	if (rw == UIO_WRITE)
-		zfs_uio_release_stable_pages(uio);
-
 	for (int i = 0; i < uio->uio_dio.npages; i++) {
-		struct page *p = zfs_uio_dio_get_page(uio, i, &cpc);
+		struct page *p = zfs_uio_dio_get_page(uio, i, B_TRUE);
 		if (p == NULL)
 			continue;
 
+		/*
+		 * zfs_uio_dio_get_page() returns the page locked.
+		 */
+		ASSERT(PageLocked(p));
+
+		ASSERT(IS_ZFS_MARKED_PAGE(p));
+		set_page_private(p, 0);
+		ClearPagePrivate(p);
+
+		/*
+		 * If this was a Direct IO write we must remove the page from
+		 * writeback as that is used to make the page stable
+		 * (see comment in zfs_uio_set_pages_to_stable()).
+		 */
+		if (rw == UIO_WRITE) {
+			ASSERT(PageWriteback(p));
+			end_page_writeback(p);
+		}
+		unlock_page(p);
 		put_page(p);
 	}
 
@@ -661,6 +658,8 @@ zfs_uio_get_dio_pages_alloc(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	 */
 	if (rw == UIO_WRITE)
 		zfs_uio_set_pages_to_stable(uio);
+	else
+		zfs_uio_mark_pages(uio);
 
 	uio->uio_extflg |= UIO_DIRECT;
 
