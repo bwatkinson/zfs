@@ -1496,6 +1496,12 @@ zfs_domount(struct super_block *sb, zfs_mnt_t *zm, int silent)
 	sb->s_bdi->capabilities |= BDI_CAP_STABLE_WRITES;
 #endif
 
+#if defined(BDI_CAP_WRITEBACK)
+	sb->s_bdi->capabilities |= BDI_CAP_WRITEBACK;
+#elif defined(BDI_CAP_NO_ACCT_DIRTY)
+	sb->s_bdi->capabilities &= ~(BDI_CAP_NO_ACCT_DIRTY);
+#endif
+
 	/* Set callback operations for the file system. */
 	sb->s_op = &zpl_super_operations;
 	sb->s_xattr = zpl_xattr_handlers;

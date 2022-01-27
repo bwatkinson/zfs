@@ -51,11 +51,8 @@
 #include <linux/kmap_compat.h>
 #include <linux/uaccess.h>
 #include <linux/pagemap.h>
-#include <linux/mman.h>
 
-#if !defined(HAVE_MM_DO_MADVISE_MM_STRUCT) && !defined(HAVE_MM_DO_MADVISE)
-#include <linux/ksm.h>
-#endif
+#include <sys/zfs_znode.h>
 
 /*
  * Move "n" bytes at byte address "p"; "rw" indicates the direction
@@ -408,6 +405,31 @@ zfs_uio_dio_get_page(zfs_uio_t *uio, int curr_page, boolean_t releasing)
 
 	lock_page(p);
 
+	if (releasing == B_FALSE && IS_ZFS_MARKED_PAGE(p)) {
+		zfs_dbgmsg("curr_page = %d, uio = %p, p = %p, "
+		    "zfs_uio_offset(uio) = %lu, "
+		    "zfs_uio_resid(uio) = %lu, "
+		    "PageKsm(p) = %d, "
+		    "p->mapping & PAGE_MAPPING_ANON = %d, "
+		    "p->mapping & PAGE_MAPPING_MOVABLE = %d, "
+		    "PageAnon(p) = %d, "
+		    "PageSwapCache(p) = %d, "
+		    "PageKsm(p) = %d, "
+		    "PageSlab(p) = %d, "
+		    "PageCompound(p) = %d",
+		    curr_page, uio, p,
+		    (unsigned long)zfs_uio_offset(uio),
+		    (unsigned long)zfs_uio_resid(uio),
+		    PageKsm(p),
+		    page_mapping(p) ? ((unsigned long)p->mapping & PAGE_MAPPING_ANON) != 0: -1,
+		    page_mapping(p) ? ((unsigned long)p->mapping & PAGE_MAPPING_MOVABLE) != 0: -1,
+		    PageAnon(p),
+		    PageSwapCache(p),
+		    PageKsm(p),
+		    PageSlab(p),
+		    PageCompound(p));	
+	}
+
 	/*
 	 * If this page has already been marked and it is being not released
 	 * (see zfs_uio_free_dio_pages()) then the page has already been
@@ -465,9 +487,6 @@ zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 		 * zfs_uio_dio_get_page() returns the page locked.
 		 */
 		ASSERT(PageLocked(p));
-		ASSERT(!IS_ZFS_MARKED_PAGE(p));
-		SetPagePrivate(p);
-		set_page_private(p, (unsigned long)ZFS_MARKED_PAGE);
 
 		while (PageWriteback(p)) {
 #ifdef HAVE_PAGEMAP_FOLIO_WAIT_BIT
@@ -477,8 +496,51 @@ zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 #endif
 		}
 
+		struct vm_area_struct *vma =
+		    find_vma(current->mm, page_to_phys(p));
+
+		zfs_dbgmsg("i = %d, uio = %p, p = %p, "
+		    "zfs_uio_offset(uio) = %lu, "
+		    "zfs_uio_resid(uio) = %lu, "
+		    "page_mapping(p) = %p, "
+		    "page_mapping(p) != NULL = %d, "
+		    "p->mapping = %p, "
+		    "p->mapping != NULL = %d, "
+		    "PageAnon(p) = %d, "
+		    "PageSwapCache(p) = %d, "
+		    "NULL = %p, "
+		    "PageKsm(p) = %d, "
+		    "PageSlab(p) = %d, "
+		    "PageCompound(p) = %d, "
+		    "vma->vm_flags & VM_MERGEABLE = %d",
+		    i, uio, p,
+		    (unsigned long)zfs_uio_offset(uio),
+		    (unsigned long)zfs_uio_resid(uio),
+		    page_mapping(p),
+		    page_mapping(p) != NULL,
+		    p->mapping,
+		    p->mapping != NULL,
+		    PageAnon(p),
+		    PageSwapCache(p),
+		    NULL,
+		    PageKsm(p),
+		    PageSlab(p),
+		    PageCompound(p),
+		    vma ? vma->vm_flags & VM_MERGEABLE ? 1 : 0 : -1);
+
+		if (page_mapping(p)) {
+			struct address_space *mapping = page_mapping(p);
+			zfs_dbgmsg("i = %d, uio = %p, p = %p, "
+			    "mapping->host = %p",
+			    i, uio, p, mapping->host);
+		}
+
 		clear_page_dirty_for_io(p);
 		set_page_writeback(p);
+
+		ASSERT(!IS_ZFS_MARKED_PAGE(p));
+		SetPagePrivate(p);
+		set_page_private(p, (unsigned long)ZFS_MARKED_PAGE);
 		unlock_page(p);
 	}
 }
