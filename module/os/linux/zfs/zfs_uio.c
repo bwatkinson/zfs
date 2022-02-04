@@ -512,7 +512,8 @@ zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 		    "PageKsm(p) = %d, "
 		    "PageSlab(p) = %d, "
 		    "PageCompound(p) = %d, "
-		    "vma->vm_flags & VM_MERGEABLE = %d",
+		    "vma->vm_flags & VM_MERGEABLE = %d, "
+		    "p == ZERO_PAGE(0) = %d",
 		    i, uio, p,
 		    (unsigned long)zfs_uio_offset(uio),
 		    (unsigned long)zfs_uio_resid(uio),
@@ -526,7 +527,8 @@ zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 		    PageKsm(p),
 		    PageSlab(p),
 		    PageCompound(p),
-		    vma ? vma->vm_flags & VM_MERGEABLE ? 1 : 0 : -1);
+		    vma ? vma->vm_flags & VM_MERGEABLE ? 1 : 0 : -1,
+		    p == ZERO_PAGE(0));
 
 		if (page_mapping(p)) {
 			struct address_space *mapping = page_mapping(p);
