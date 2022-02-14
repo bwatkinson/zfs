@@ -213,6 +213,19 @@ zfs_setup_direct(struct znode *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
 	objset_t *os = zfsvfs->z_os;
 	int ioflag = *ioflagp;
 
+#if defined(__linux__) && defined(HAVE_ZERO_PAGE)
+#if defined(HAVE_ZERO_PAGE_GPL_ONLY)
+	/*
+	 * Certain Linux architectures export empty_zero_page as a GPL
+	 * variable. Without being page to know if a page is pointed at by
+	 * ZERO_PAGE() we an not make pages stable for Direct IO writes.
+	 * In this case we only allow for Direct IO reads but not writes.
+	 */
+	if (rw == UIO_WRITE)
+		return (EAGAIN);
+#endif
+#endif
+
 	ZFS_ENTER(zfsvfs);
 	ZFS_VERIFY_ZP(zp);
 
