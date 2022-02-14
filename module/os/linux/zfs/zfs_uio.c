@@ -54,10 +54,6 @@
 #include <linux/pagemap.h>
 #include <linux/mman.h>
 
-#if !defined(HAVE_MM_DO_MADVISE_MM_STRUCT) && !defined(HAVE_MM_DO_MADVISE)
-#include <linux/ksm.h>
-#endif
-
 /*
  * Move "n" bytes at byte address "p"; "rw" indicates the direction
  * of the move, and the I/O parameters are provided in "uio", which is
