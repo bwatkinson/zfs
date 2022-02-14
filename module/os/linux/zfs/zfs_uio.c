@@ -488,6 +488,41 @@ zfs_uio_page_aligned(zfs_uio_t *uio)
 	return (B_TRUE);
 }
 
+
+#if defined(HAVE_ZERO_PAGE_GPL_ONLY)
+#define	ZFS_MARKEED_PAGE	0x0
+#define	IS_ZFS_MARKED_PAGE(_p)	0
+#define	zfs_mark_page(_p)
+#define	zfs_unmark_page(_p)
+
+#else
+/*
+ * Mark pages to know if they were allocated to replace ZERO_PAGE() for
+ * Direct IO writes.
+ */
+#define	ZFS_MARKED_PAGE		0x5a465350414745 /* ASCI: ZFSPAGE */
+#define	IS_ZFS_MARKED_PAGE(_p) \
+	(page_private(_p) == (unsigned long)ZFS_MARKED_PAGE)
+
+static inline void
+zfs_mark_page(struct page *page)
+{
+	ASSERT3P(page, !=, NULL);
+	get_page(page);
+	SetPagePrivate(page);
+	set_page_private(page, ZFS_MARKED_PAGE);
+}
+
+static inline void
+zfs_unmark_page(struct page *page)
+{
+	ASSERT3P(page, !=, NULL);
+	set_page_private(page, 0UL);
+	ClearPagePrivate(page);
+	put_page(page);
+}
+#endif /* HAVE_ZERO_PAGE_GPL_ONLY */
+
 /*
  * Accounting for compound page (Transparent Huge Pages/Huge Pages)
  */
@@ -516,6 +551,26 @@ zfs_uio_dio_get_page(zfs_uio_t *uio, int curr_page,
 	}
 
 	if (!PageCompound(p)) {
+#if !defined(HAVE_ZERO_PAGE_GPL_ONLY)
+
+
+		if (p == ZERO_PAGE(0)) {
+			/*
+			 * If the user page points the kernels ZERO_PAGE() a
+			 * new zero filled page will just be allocated so the
+			 * contents of the page can not be changed for stable
+			 * writes.
+			 */
+			gfp_t gfp_zero_page  = __GFP_NOWARN | GFP_NOIO |
+			    __GFP_ZERO | GFP_KERNEL;
+
+			ASSERT0(IS_ZFS_MARKED_PAGE(p));
+			put_page(p);
+
+			p = __page_cache_alloc(gfp_zero_page);
+			zfs_mark_page(p);
+		}
+#endif
 		return (p);
 	} else {
 		/*
@@ -560,7 +615,12 @@ zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 
 	for (int i = 0; i < uio->uio_dio.npages; i++) {
 		struct page *p = zfs_uio_dio_get_page(uio, i, &cpc);
-		if (p == NULL)
+		/*
+		 * In the event that page was allocated by ZFS (AKA the
+		 * original page was ZERO_PAGE()) we do not need to make the
+		 * page stable.
+		 */
+		if (p == NULL || IS_ZFS_MARKED_PAGE(p))
 			continue;
 
 		lock_page(p);
@@ -587,7 +647,7 @@ zfs_uio_release_stable_pages(zfs_uio_t *uio)
 
 	for (int i = 0; i < uio->uio_dio.npages; i++) {
 		struct page *p = zfs_uio_dio_get_page(uio, i, &cpc);
-		if (p == NULL)
+		if (p == NULL || IS_ZFS_MARKED_PAGE(p))
 			continue;
 
 		ASSERT(PageWriteback(p));
@@ -611,7 +671,12 @@ zfs_uio_free_dio_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
 		if (p == NULL)
 			continue;
 
-		put_page(p);
+		if (IS_ZFS_MARKED_PAGE(p)) {
+			zfs_unmark_page(p);
+			__free_page(p);
+		} else {
+			put_page(p);
+		}
 	}
 
 	vmem_free(uio->uio_dio.pages,
