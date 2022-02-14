@@ -194,9 +194,9 @@ abd_t *abd_zero_scatter = NULL;
 struct page;
 
 /*
- * _KERNEL   - Will point to ZERO_PAGE if it is available or it will be
- *             an allocated zero'd PAGESIZE buffer.
- * Userspace - Will be an allocated zero'ed PAGESIZE buffer.
+ * _KERNEL - Will point to ZERO_PAGE if it is available or it will be
+ *           an allocated zero'd PAGESIZE buffer.
+ * Userspace -> Will be an allocated zero'ed PAGESIZE buffer.
  *
  * abd_zero_page is assigned to each of the pages of abd_zero_scatter.
  */
