@@ -34,6 +34,7 @@
 #include <asm/uaccess.h>
 #include <sys/types.h>
 #include <sys/strings.h>
+#include <sys/list.h>
 
 /*
  * uio_extflg: extended flags
@@ -66,6 +67,7 @@ typedef enum zfs_uio_seg {
 typedef struct {
 	struct page	**pages;	/* Mapped pages */
 	int		npages;		/* Number of mapped pages */
+	list_t		ksm_pages;	/* KSM merged pages */
 } zfs_uio_dio_t;
 
 typedef struct zfs_uio {
