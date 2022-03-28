@@ -147,8 +147,9 @@ enum zio_stage {
 	ZIO_STAGE_VDEV_IO_ASSESS	= 1 << 22,	/* RW--I */
 
 	ZIO_STAGE_CHECKSUM_VERIFY	= 1 << 23,	/* R---- */
+	ZIO_STAGE_DIO_CHECKSUM_VERIFY	= 1 << 24,	/* -W--- */
 
-	ZIO_STAGE_DONE			= 1 << 24	/* RWFCI */
+	ZIO_STAGE_DONE			= 1 << 25	/* RWFCI */
 };
 
 #define	ZIO_INTERLOCK_STAGES			\
