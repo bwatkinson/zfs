@@ -976,6 +976,9 @@ This will smoothly handle between ten times and a tenth of this number.
 .Pp
 .Sy zfs_delay_scale No \(mu Sy zfs_dirty_data_max Em must No be smaller than Sy 2^64 .
 .
+.It Sy zfs_dio_write_verify_events_per_second Ns = Ns Sy 20 Ns /s Pq uint
+Rate limit Direct IO write verify events to this many per second.
+
 .It Sy zfs_disable_ivset_guid_check Ns = Ns Sy 0 Ns | Ns 1 Pq int
 Disables requirement for IVset GUIDs to be present and match when doing a raw
 receive of encrypted datasets.
@@ -2283,6 +2286,19 @@ This is meant to be used by developers to gain
 diagnostic information for hang conditions which don't involve a mutex
 or other locking primitive: typically conditions in which a thread in
 the zio pipeline is looping indefinitely.
+.
+.It Sy zio_direct_write_verify Ns = Ns Sy 0 Ns | Ns 1 Pq int
+If non-zero, then each Direct I/O writes checksum will be verified before it
+is committed to a VDEV. In the event the checksum is not valid then the IO
+operation will return EINVAL and the write will not be committed to any VDEV.
+This module parameter can be used to detect if a contents of the users buffer
+have changed in the process of doing a Direct I/O write. Each verify error
+causes a
+.Sy dio_verify
+.
+zevent.
+Direct Write I/O checkum verify errors can be seen with
+.Nm zpool Cm status Fl d .
 .
 .It Sy zio_slow_io_ms Ns = Ns Sy 30000 Ns ms Po 30 s Pc Pq int
 When an I/O operation takes more than this much time to complete,

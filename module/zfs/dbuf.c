@@ -2680,7 +2680,7 @@ dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx, dbuf_dirty_record_t *dr_p)
 		mutex_exit(&dn->dn_mtx);
 	}
 
-	if (db->db_state != DB_NOFILL && !brtwrite) {
+	if ((db->db_state != DB_NOFILL && !brtwrite) || dr_p != NULL) {
 		dbuf_unoverride(dr);
 
 		/*
@@ -2804,7 +2804,7 @@ dmu_buf_is_dirty(dmu_buf_t *db_fake, dmu_tx_t *tx)
  * Direct IO writes may need to remove dirty records.
  */
 dbuf_dirty_record_t *
-dmu_buf_undirty(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr)
+dmu_buf_undirty(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr, int io_error)
 {
 	ASSERT3P(dr, !=, NULL);
 	ASSERT3P(dr->dr_dbuf, ==, db);
@@ -2812,6 +2812,7 @@ dmu_buf_undirty(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr)
 
 	uint8_t db_dirtycnt = db->db_dirtycnt;
 	dbuf_dirty_record_t *dr_prev = list_prev(&db->db_dirty_records, dr);
+	dbuf_dirty_record_t *dr_wait = dr;
 	spa_t *spa = dmu_objset_spa(db->db_objset);
 
 	/*
@@ -2831,18 +2832,37 @@ dmu_buf_undirty(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr)
 	 * increasing. In the four decreasing cases we should only hit
 	 * dbuf_write_done() if we are syncing the data, which will signal
 	 * our db_changed with a decreased db_dirtycnt.
+	 *
+	 * If there was an IO error then we must check if the last dirty
+	 * record is currently syncing out. This is a consequence of possibly
+	 * this dirty record sharing the same ARC buf with the last dirty
+	 * record (they both point at db->db_buf). In this case we must wait
+	 * for the last dirty record to sync out before this dirty record
+	 * can be undirtied.
 	 */
+	if (io_error && dr != list_tail(&db->db_dirty_records)) {
+		dr_wait = list_tail(&db->db_dirty_records);
+	}
+
 	spa_config_enter(spa, SCL_CONFIG, FTAG, RW_READER);
-	if (dr->dr_txg == spa_syncing_txg(dmu_objset_spa(db->db_objset))) {
+	if (dr_wait->dr_txg == spa_syncing_txg(spa)) {
 		spa_config_exit(spa, SCL_CONFIG, FTAG);
 		while (db_dirtycnt == db->db_dirtycnt) {
 			DBUF_STAT_BUMP(direct_undirty_wait);
 			cv_wait(&db->db_changed, &db->db_mtx);
 		}
 
-		return (dr_prev);
+		/*
+		 * If there was an IO error we still want to undirty the
+		 * dirty record.
+		 */
+		if (io_error == 0)
+			return (dr_prev);
+		else
+			goto undirty;
 	}
 	spa_config_exit(spa, SCL_CONFIG, FTAG);
+undirty:
 
 	/*
 	 * If we are passing in a dbuf_dirty_record_t directly to
@@ -2851,7 +2871,8 @@ dmu_buf_undirty(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr)
 	 */
 	VERIFY3B(dbuf_undirty(db, NULL, dr), ==, B_FALSE);
 
-	ASSERT3U(db->db_dirtycnt, >, 0);
+	if (io_error == 0)
+		ASSERT3U(db->db_dirtycnt, >, 0);
 	DBUF_STAT_BUMP(direct_undirty);
 
 	return (dr_prev);
