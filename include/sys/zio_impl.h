@@ -157,8 +157,9 @@ enum zio_stage {
 	ZIO_STAGE_VDEV_IO_ASSESS	= 1 << 23,	/* RW--IT */
 
 	ZIO_STAGE_CHECKSUM_VERIFY	= 1 << 24,	/* R----- */
+	ZIO_STAGE_DIO_CHECKSUM_VERIFY	= 1 << 25,	/* -W---- */
 
-	ZIO_STAGE_DONE			= 1 << 25	/* RWFCIT */
+	ZIO_STAGE_DONE			= 1 << 26	/* RWFCIT */
 };
 
 #define	ZIO_ROOT_PIPELINE			\
