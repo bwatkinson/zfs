@@ -28,6 +28,7 @@
 #include <sys/zfs_racct.h>
 #include <sys/dsl_dataset.h>
 #include <sys/dmu_objset.h>
+#include <sys/zio_checksum.h>
 
 /*
  * Normally the db_blkptr points to the most recent on-disk content for the
@@ -124,54 +125,87 @@ dmu_write_direct_done(zio_t *zio)
 	abd_free(zio->io_abd);
 
 	if (zio->io_error == 0) {
+		mutex_enter(&db->db_mtx);
+		dr->dt.dl.dr_data = NULL;
+
 		/*
 		 * After a successful Direct IO write any stale contents in
 		 * the ARC must be cleaned up in order to force all future
 		 * reads down to the VDEVs.
+		 *
+		 * We must remove any dirty data that might attempt to
+		 * write out the contents of an associated ARC buf with
+		 * this dbuf.
+		 *
+		 * Since we only allow block aligned Direct IO writes
+		 * we can iterate through dirty record list of the dbuf
+		 * since the rangelocks will prevent another writer from
+		 * adding to the db_dirty_records.
 		 */
-		mutex_enter(&db->db_mtx);
+		dbuf_dirty_record_t *dr_next =
+		    list_tail(&db->db_dirty_records);
+		while (dr_next && dr_next != dr) {
+			dr_next = dmu_buf_undirty(db, dr_next,
+			    zio->io_error);
+		}
+
+		ASSERT3U(db->db_dirtycnt, ==, 1);
+
 		if (db->db_buf) {
-			dr->dt.dl.dr_data = NULL;
-
-			/*
-			 * We must remove any dirty data that might attempt to
-			 * write out the contents of an associated ARC buf with
-			 * this dbuf.
-			 *
-			 * Since we only allow block aligned Direct IO writes
-			 * we can iterate through dirty record list of the dbuf
-			 * since the rangelocks will prevent another writer from
-			 * adding to the db_dirty_records.
-			 */
-			dbuf_dirty_record_t *dr_next =
-			    list_tail(&db->db_dirty_records);
-			while (dr_next && dr_next != dr) {
-				dr_next = dmu_buf_undirty(db, dr_next);
-			}
-
-			/*
-			 * The current contents of the dbuf are now stale.
-			 */
 			arc_buf_destroy(db->db_buf, db);
 			db->db_buf = NULL;
 			db->db.db_data = NULL;
-			ASSERT3U(db->db_dirtycnt, ==, 1);
-		} else {
-			/*
-			 * Direct IO performed by dmu_assign_arcbuf_by_dnode()
-			 * for loaned arc_buf_t's do not set db->db_buf, they
-			 * are returned on success in
-			 * dmu_assign_arcbuf_by_dnode().
-			 */
 		}
 
+		/*
+		 * The current contents of the dbuf are now stale.
+		 */
 		ASSERT(db->db.db_data == NULL);
 		db->db_state = DB_UNCACHED;
 		mutex_exit(&db->db_mtx);
+	} else {
+		mutex_enter(&db->db_mtx);
+		/*
+		 * If there was an error with the Direct IO write the dirty
+		 * record is temporarily marked as overridden because
+		 * dbuf_undirty() will call dbuf_unoverride() to put this back
+		 * to DR_NOT_OVERRIDDEN.
+		 */
+		dr->dt.dl.dr_override_state = DR_OVERRIDDEN;
+
+		/*
+		 * If there is a valid ARC buffer assocatied with this dirty
+		 * record then the dbuf will just be dirtied again so future
+		 * reads will fetch from the ARC.
+		 *
+		 * If the current dirty record is only assocatied with a
+		 * Direct IO write then the dirty record just needs to be
+		 * removed.
+		 */
+		if (db->db_buf) {
+			ASSERT(!dmu_tx_is_syncing(dsa->dsa_tx));
+			ASSERT3P(db->db_buf, ==, dr->dt.dl.dr_data);
+			db->db_state = DB_CACHED;
+			dmu_buf_undirty(db, dr, zio->io_error);
+			ASSERT3U(dr->dt.dl.dr_override_state, ==,
+			    DR_NOT_OVERRIDDEN);
+			mutex_exit(&db->db_mtx);
+			dbuf_dirty(db, dsa->dsa_tx);
+		} else {
+			ASSERT3P(dr->dt.dl.dr_data, ==, NULL);
+			db->db_state = DB_UNCACHED;
+			dmu_buf_undirty(db, dr, zio->io_error);
+			mutex_exit(&db->db_mtx);
+		}
 	}
 
-	dmu_sync_done(zio, NULL, zio->io_private);
+	if (zio->io_error == 0)
+		dmu_sync_done(zio, NULL, zio->io_private);
+	else
+		kmem_free(dsa, sizeof (dmu_sync_arg_t));
+
 	kmem_free(zio->io_bp, sizeof (blkptr_t));
+	zio->io_bp = NULL;
 }
 
 int
@@ -227,6 +261,7 @@ dmu_write_direct(zio_t *pio, dmu_buf_impl_t *db, abd_t *data, dmu_tx_t *tx)
 
 	ASSERT3S(dr_head->dt.dl.dr_override_state, ==, DR_NOT_OVERRIDDEN);
 	dr_head->dt.dl.dr_override_state = DR_IN_DMU_SYNC;
+
 	mutex_exit(&db->db_mtx);
 
 	/*
@@ -237,6 +272,7 @@ dmu_write_direct(zio_t *pio, dmu_buf_impl_t *db, abd_t *data, dmu_tx_t *tx)
 
 	dmu_sync_arg_t *dsa = kmem_zalloc(sizeof (dmu_sync_arg_t), KM_SLEEP);
 	dsa->dsa_dr = dr_head;
+	dsa->dsa_tx = tx;
 
 	zio_t *zio = zio_write(pio, os->os_spa, txg, bp, data,
 	    db->db.db_size, db->db.db_size, &zp,
@@ -279,9 +315,15 @@ dmu_write_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 		ASSERT0(err);
 	}
 
+	err = zio_wait(pio);
+
+	/*
+	 * The dbuf must be held until the Direct IO write has completed in
+	 * the event there was any errors and dmu_buf_undirty() was called.
+	 */
 	dmu_buf_rele_array(dbp, numbufs, FTAG);
 
-	return (zio_wait(pio));
+	return (err);
 }
 
 int

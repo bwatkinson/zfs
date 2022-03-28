@@ -118,6 +118,11 @@ static unsigned int zfs_slow_io_events_per_second = 20;
 static unsigned int zfs_deadman_events_per_second = 1;
 
 /*
+ * Rate limit direct write IO verify failures to this many per scond.
+ */
+static unsigned int zfs_dio_write_verify_events_per_second = 20;
+
+/*
  * Rate limit checksum events after this many checksum errors per second.
  */
 static unsigned int zfs_checksum_events_per_second = 20;
@@ -673,6 +678,8 @@ vdev_alloc_common(spa_t *spa, uint_t id, uint64_t guid, vdev_ops_t *ops)
 	    1);
 	zfs_ratelimit_init(&vd->vdev_deadman_rl, &zfs_deadman_events_per_second,
 	    1);
+	zfs_ratelimit_init(&vd->vdev_dio_verify_rl,
+	    &zfs_dio_write_verify_events_per_second, 1);
 	zfs_ratelimit_init(&vd->vdev_checksum_rl,
 	    &zfs_checksum_events_per_second, 1);
 
@@ -1182,6 +1189,7 @@ vdev_free(vdev_t *vd)
 
 	zfs_ratelimit_fini(&vd->vdev_delay_rl);
 	zfs_ratelimit_fini(&vd->vdev_deadman_rl);
+	zfs_ratelimit_fini(&vd->vdev_dio_verify_rl);
 	zfs_ratelimit_fini(&vd->vdev_checksum_rl);
 
 	if (vd == spa->spa_root_vdev)
@@ -4474,6 +4482,7 @@ vdev_clear(spa_t *spa, vdev_t *vd)
 	vd->vdev_stat.vs_read_errors = 0;
 	vd->vdev_stat.vs_write_errors = 0;
 	vd->vdev_stat.vs_checksum_errors = 0;
+	vd->vdev_stat.vs_dio_verify_errors = 0;
 	vd->vdev_stat.vs_slow_ios = 0;
 
 	for (int c = 0; c < vd->vdev_children; c++)
@@ -6483,6 +6492,9 @@ ZFS_MODULE_PARAM(zfs, zfs_, slow_io_events_per_second, UINT, ZMOD_RW,
 
 ZFS_MODULE_PARAM(zfs, zfs_, deadman_events_per_second, UINT, ZMOD_RW,
 	"Rate limit hung IO (deadman) events to this many per second");
+
+ZFS_MODULE_PARAM(zfs, zfs_, dio_write_verify_events_per_second, UINT, ZMOD_RW,
+	"Rate Direct IO write verify events to this many per second");
 
 /* BEGIN CSTYLED */
 ZFS_MODULE_PARAM(zfs, zfs_, checksum_events_per_second, UINT, ZMOD_RW,
