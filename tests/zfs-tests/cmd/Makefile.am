@@ -60,6 +60,9 @@ scripts_zfs_tests_bin_PROGRAMS += %D%/libzfs_input_check
 	libzfs_core.la \
 	libnvpair.la
 
+pkgexec_PROGRAMS += manipulate_user_buffer
+manipulate_user_buffer_SOURCES = manipulate_user_buffer.c
+manipulate_user_buffer_LDADD = -lpthread
 
 scripts_zfs_tests_bin_PROGRAMS += %D%/mkbusy %D%/mkfile %D%/mkfiles %D%/mktree
 %C%_mkfile_LDADD = $(LTLIBINTL)
