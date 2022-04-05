@@ -14,6 +14,7 @@
 /getversion
 /largest_file
 /libzfs_input_check
+/manipulate_user_buffer
 /mkbusy
 /mkfile
 /mkfiles
