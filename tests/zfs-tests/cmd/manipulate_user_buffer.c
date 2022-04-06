@@ -33,6 +33,7 @@
 #include <string.h>
 #include <time.h>
 #include <pthread.h>
+#include <assert.h>
 
 #ifndef MIN
 #define	MIN(a, b)	((a) < (b)) ? (a) : (b)
@@ -47,7 +48,11 @@ static int print_usage = 0;
 static int randompattern = 0;
 static int ofd;
 char *buf = NULL;
-static int entire_file_written = 0;
+
+typedef struct {
+	int entire_file_written;
+	int done;
+} pthread_args_t;
 
 static void
 usage(void)
@@ -148,24 +153,21 @@ parse_options(int argc, char *argv[])
  * Continually write to the file using O_DIRECT from the range of 0 to
  * blocsize * numblocks for the requested runtime.
  */
-static __attribute__((optimize("O0"))) void *
+static void *
 write_thread(void *arg)
 {
-	time_t start;
 	size_t offset = 0;
 	int total_data = blocksize * numblocks;
 	int left = total_data;
-	(void) arg;
+	pthread_args_t *args = (pthread_args_t *)arg;
 
-	time(&start);
-	while (difftime(time(NULL), start) < runtime ||
-	    !entire_file_written) {
+	while (!args->done || !args->entire_file_written) {
 		pwrite(ofd, buf, blocksize, offset);
 		offset = ((offset + blocksize) % total_data);
 		if (left > 0)
 			left -= blocksize;
 		else
-			entire_file_written = 1;
+			args->entire_file_written = 1;
 	}
 
 	pthread_exit(NULL);
@@ -174,17 +176,14 @@ write_thread(void *arg)
 /*
  * Update the buffers contents with random data.
  */
-static __attribute__((optimize("O0"))) void *
+static void *
 manipulate_buf_thread(void *arg)
 {
-	time_t start;
 	size_t rand_offset;
 	char rand_char;
-	(void) arg;
+	pthread_args_t *args = (pthread_args_t *)arg;
 
-	time(&start);
-	while (difftime(time(NULL), start) < runtime ||
-	    !entire_file_written) {
+	while (!args->done || !args->entire_file_written) {
 		rand_offset = (rand() % blocksize);
 		rand_char = (rand() % (126 - 33) + 33);
 		buf[rand_offset] = rand_char;
@@ -208,6 +207,8 @@ main(int argc, char *argv[])
 	int ifd_flags = O_RDONLY;
 	char *output_buf = NULL;
 	struct stat st;
+	time_t start;
+	pthread_args_t args = { 0, 0};
 
 	parse_options(argc, argv);
 
@@ -247,21 +248,35 @@ main(int argc, char *argv[])
 			buf[i] = rand();
 	}
 
-	if ((rc = pthread_create(&write_thr, NULL, write_thread, NULL))) {
+	if ((rc = pthread_create(&write_thr, NULL, write_thread, &args))) {
 		fprintf(stderr, "error: pthreads_create, write_thr, "
 		    "rc: %d\n", rc);
 		exit(2);
 	}
 
 	if ((rc = pthread_create(&manipul_thr, NULL, manipulate_buf_thread,
-	    NULL))) {
+	    &args))) {
 		fprintf(stderr, "error: pthreads_create, manipul_thr, "
 		    "rc: %d\n", rc);
 		exit(2);
 	}
 
+	time(&start);
+
+	/*
+	 * Writing while manipulating the buffer conntents until either then
+	 * runtime is met or the entire file is written. In the event the
+	 * runtime takes less time than to write the entire file we will wait
+	 * for the entire file to be written.
+	 */
+	while (difftime(time(NULL), start) < runtime ||
+	    args.entire_file_written == 0) {}
+	args.done = 1;
+
 	pthread_join(write_thr, NULL);
 	pthread_join(manipul_thr, NULL);
+
+	assert(args.entire_file_written == 1);
 
 	(void) close(ofd);
 
