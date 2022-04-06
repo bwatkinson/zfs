@@ -148,7 +148,7 @@ parse_options(int argc, char *argv[])
  * Continually write to the file using O_DIRECT from the range of 0 to
  * blocsize * numblocks for the requested runtime.
  */
-static void *
+static __attribute__((optimize("O0"))) void *
 write_thread(void *arg)
 {
 	time_t start;
@@ -174,7 +174,7 @@ write_thread(void *arg)
 /*
  * Update the buffers contents with random data.
  */
-static void *
+static __attribute__((optimize("O0"))) void *
 manipulate_buf_thread(void *arg)
 {
 	time_t start;
