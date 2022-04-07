@@ -1547,7 +1547,7 @@ dmu_lightweight_write_by_dnode(dnode_t *dn, uint64_t offset, abd_t *abd,
  */
 int
 dmu_assign_arcbuf_by_dnode(dnode_t *dn, uint64_t offset, arc_buf_t *buf,
-    dmu_tx_t *tx, uint32_t flags)
+    dmu_tx_t *tx)
 {
 	dmu_buf_impl_t *db;
 	objset_t *os = dn->dn_objset;
@@ -1564,29 +1564,10 @@ dmu_assign_arcbuf_by_dnode(dnode_t *dn, uint64_t offset, arc_buf_t *buf,
 
 	/*
 	 * We can only assign if the offset is aligned and the arc buf is the
-	 * same size as the dbuf, and the dbuf is not metadata.
+	 * same size as the dbuf.
 	 */
 	if (offset == db->db.db_offset && blksz == db->db.db_size) {
-
-		/*
-		 * Allow Direct IO when requested and correctly aligned.
-		 * The data abd will be freed by dmu_write_direct_done().
-		 * Otherwise assign the loaned arc_buf_t to the dbuf.
-		 */
-		if ((flags & DMU_DIRECTIO) && zfs_dio_page_aligned(buf) &&
-		    zfs_dio_blksz_aligned(offset, blksz, dn->dn_datablksz)) {
-			abd_t *data = abd_get_from_buf(buf->b_data, blksz);
-			int error = dmu_write_direct(NULL, db, data, tx);
-
-			if (error == 0) {
-				zfs_racct_write(os->os_spa, blksz, 1, flags);
-				dmu_return_arcbuf(buf);
-				dbuf_rele(db, FTAG);
-				return (0);
-			}
-		}
-
-		zfs_racct_write(os->os_spa, blksz, 1, flags & ~DMU_DIRECTIO);
+		zfs_racct_write(os->os_spa, blksz, 1, 0);
 		dbuf_assign_arcbuf(db, buf, tx);
 		dbuf_rele(db, FTAG);
 	} else {
@@ -1610,7 +1591,7 @@ dmu_assign_arcbuf_by_dbuf(dmu_buf_t *handle, uint64_t offset, arc_buf_t *buf,
 	dmu_buf_impl_t *dbuf = (dmu_buf_impl_t *)handle;
 
 	DB_DNODE_ENTER(dbuf);
-	err = dmu_assign_arcbuf_by_dnode(DB_DNODE(dbuf), offset, buf, tx, 0);
+	err = dmu_assign_arcbuf_by_dnode(DB_DNODE(dbuf), offset, buf, tx);
 	DB_DNODE_EXIT(dbuf);
 
 	return (err);
