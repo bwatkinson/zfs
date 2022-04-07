@@ -897,7 +897,7 @@ int dmu_write_uio_dnode(dnode_t *dn, zfs_uio_t *uio, uint64_t size,
 struct arc_buf *dmu_request_arcbuf(dmu_buf_t *handle, int size);
 void dmu_return_arcbuf(struct arc_buf *buf);
 int dmu_assign_arcbuf_by_dnode(dnode_t *dn, uint64_t offset,
-    struct arc_buf *buf, dmu_tx_t *tx, uint32_t);
+    struct arc_buf *buf, dmu_tx_t *tx);
 int dmu_assign_arcbuf_by_dbuf(dmu_buf_t *handle, uint64_t offset,
     struct arc_buf *buf, dmu_tx_t *tx);
 #define	dmu_assign_arcbuf	dmu_assign_arcbuf_by_dbuf
