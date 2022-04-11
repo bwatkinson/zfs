@@ -51,6 +51,8 @@ function cleanup
 	log_must rm -f "$mntpnt/direct-write.iso"
 	# Clearing out DIO VERIFY counts for Zpool
 	log_must zpool clear $TESTPOOL
+	# Clearing out dio_verify from event logs
+	log_must zpool events -c
 	log_must eval "echo 0 > \
 	    /sys/module/zfs/parameters/zio_direct_write_verify"
 }
