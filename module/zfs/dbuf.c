@@ -2680,7 +2680,7 @@ dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx, dbuf_dirty_record_t *dr_p)
 		mutex_exit(&dn->dn_mtx);
 	}
 
-	if ((db->db_state != DB_NOFILL && !brtwrite) || dr_p != NULL) {
+	if (db->db_state != DB_NOFILL && !brtwrite) {
 		dbuf_unoverride(dr);
 
 		/*
@@ -2863,6 +2863,20 @@ dmu_buf_undirty(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr, int io_error)
 	}
 	spa_config_exit(spa, SCL_CONFIG, FTAG);
 undirty:
+
+	/*
+	 * dbuf_undirty() also does this check, but this needs to be done here
+	 * to make sure we clean up any allocated ARC buffers for this dirty
+	 * record. The db_state is still set to DB_NOFILL at this point and we
+	 * do not want to call dbuf_unoverride() in dbuf_undirty().
+	 *
+	 * In the event of an I/O error we will handle the metaslab clean up in
+	 * zio_done(). Also, the dirty record's dr_overridden_by BP is not
+	 * currently set so it must not be added the SPA's spa_free_bplist via
+	 * zio_free() in dbuf_unoverride().
+	 */
+	if (dr->dt.dl.dr_data && dr->dt.dl.dr_data != db->db_buf)
+		arc_buf_destroy(dr->dt.dl.dr_data, db);
 
 	/*
 	 * If we are passing in a dbuf_dirty_record_t directly to
