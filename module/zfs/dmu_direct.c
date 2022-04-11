@@ -165,13 +165,7 @@ dmu_write_direct_done(zio_t *zio)
 		mutex_exit(&db->db_mtx);
 	} else {
 		mutex_enter(&db->db_mtx);
-		/*
-		 * If there was an error with the Direct IO write the dirty
-		 * record is temporarily marked as overridden because
-		 * dbuf_undirty() will call dbuf_unoverride() to put this back
-		 * to DR_NOT_OVERRIDDEN.
-		 */
-		dr->dt.dl.dr_override_state = DR_OVERRIDDEN;
+		dr->dt.dl.dr_override_state = DR_NOT_OVERRIDDEN;
 
 		/*
 		 * If there is a valid ARC buffer assocatied with this dirty
@@ -183,18 +177,19 @@ dmu_write_direct_done(zio_t *zio)
 		 * removed.
 		 */
 		if (db->db_buf) {
+			/*
+			 * Direct I/O writes always happen in open-context.
+			 */
 			ASSERT(!dmu_tx_is_syncing(dsa->dsa_tx));
 			ASSERT3P(db->db_buf, ==, dr->dt.dl.dr_data);
-			db->db_state = DB_CACHED;
 			dmu_buf_undirty(db, dr, zio->io_error);
-			ASSERT3U(dr->dt.dl.dr_override_state, ==,
-			    DR_NOT_OVERRIDDEN);
+			db->db_state = DB_CACHED;
 			mutex_exit(&db->db_mtx);
 			dbuf_dirty(db, dsa->dsa_tx);
 		} else {
 			ASSERT3P(dr->dt.dl.dr_data, ==, NULL);
-			db->db_state = DB_UNCACHED;
 			dmu_buf_undirty(db, dr, zio->io_error);
+			db->db_state = DB_UNCACHED;
 			mutex_exit(&db->db_mtx);
 		}
 	}
