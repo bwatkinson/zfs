@@ -446,11 +446,8 @@ zpl_iter_write_buffered(struct kiocb *kiocb, struct iov_iter *from)
 	cred_t *cr = CRED();
 	struct file *filp = kiocb->ki_filp;
 	struct inode *ip = filp->f_mapping->host;
-	size_t wrote, count = 0;
-
-	ssize_t ret = zpl_generic_write_checks(kiocb, from, &count);
-	if (ret)
-		return (ret);
+	size_t wrote;
+	size_t count = iov_iter_count(from);
 
 	zfs_uio_t uio;
 	zpl_uio_init(&uio, kiocb, from, kiocb->ki_pos, count, from->iov_offset);
@@ -482,18 +479,15 @@ zpl_iter_write_direct(struct kiocb *kiocb, struct iov_iter *from)
 	cred_t *cr = CRED();
 	struct file *filp = kiocb->ki_filp;
 	struct inode *ip = filp->f_mapping->host;
-	size_t wrote, count = 0;
+	size_t wrote;
 	int flags = filp->f_flags | zfs_io_flags(kiocb);
-
-	ssize_t ret = zpl_generic_write_checks(kiocb, from, &count);
-	if (ret)
-		return (ret);
+	size_t count = iov_iter_count(from);
 
 	zfs_uio_t uio;
 	zpl_uio_init(&uio, kiocb, from, kiocb->ki_pos, count, from->iov_offset);
 
 	/* On error, return to fallback to the buffered path. */
-	ret = zfs_setup_direct(ITOZ(ip), &uio, UIO_WRITE, &flags);
+	ssize_t ret = zfs_setup_direct(ITOZ(ip), &uio, UIO_WRITE, &flags);
 	if (ret)
 		return (-ret);
 
@@ -513,7 +507,6 @@ zpl_iter_write_direct(struct kiocb *kiocb, struct iov_iter *from)
 		return (error);
 
 	wrote = count - uio.uio_resid;
-	kiocb->ki_pos += wrote;
 
 	return (wrote);
 }
@@ -524,6 +517,13 @@ zpl_iter_write(struct kiocb *kiocb, struct iov_iter *from)
 	struct inode *ip = kiocb->ki_filp->f_mapping->host;
 	struct file *filp = kiocb->ki_filp;
 	int flags = filp->f_flags | zfs_io_flags(kiocb);
+	size_t count;
+
+	ssize_t ret = zpl_generic_write_checks(kiocb, from, &count);
+	if (ret)
+		return (ret);
+
+	loff_t offset = kiocb->ki_pos;
 
 	boolean_t direct = zfs_check_direct_enabled(ITOZ(ip),
 	    flags);
@@ -537,13 +537,27 @@ zpl_iter_write(struct kiocb *kiocb, struct iov_iter *from)
 		 */
 		size_t wrote = zpl_generic_file_direct_write(kiocb, from,
 		    kiocb->ki_pos);
+
 		/*
 		 * In the event we get EAGAIN we are falling back to
 		 * buffered IO.
 		 */
 		if ((wrote == -EINVAL || !iov_iter_count(from)) &&
-		    wrote != -EAGAIN)
+		    wrote != -EAGAIN) {
+			/*
+			 * generic_file_direct_write() will update
+			 * kiocb->ki_pos on a successful Direct IO write.
+			 */
+			IMPLY(!iov_iter_count(from),
+			    (offset + count) == kiocb->ki_pos);
 			return (wrote);
+		} else {
+			/*
+			 * If we are falling back to a buffered write, then the
+			 * file position should not be updated at this point.
+			 */
+			ASSERT3U(offset, ==, kiocb->ki_pos);
+		}
 	}
 
 	return (zpl_iter_write_buffered(kiocb, from));
@@ -732,8 +746,6 @@ zpl_aio_write_direct(struct kiocb *kiocb, const struct iovec *iov,
 	if (ret)
 		return (ret);
 
-	kiocb->ki_pos = pos;
-
 	zfs_uio_t uio;
 	zfs_uio_iovec_init(&uio, iov, nr_segs, kiocb->ki_pos, UIO_USERSPACE,
 	    count, 0);
@@ -759,7 +771,6 @@ zpl_aio_write_direct(struct kiocb *kiocb, const struct iovec *iov,
 		return (error);
 
 	ssize_t wrote = count - uio.uio_resid;
-	kiocb->ki_pos += wrote;
 
 	return (wrote);
 }
@@ -785,12 +796,12 @@ zpl_aio_write(struct kiocb *kiocb, const struct iovec *iov,
 	if (ret)
 		return (ret);
 
+	kiocb->ki_pos = pos;
+
 	boolean_t direct = zfs_check_direct_enabled(ITOZ(ip),
 	    flags);
 
 	if (direct) {
-		loff_t pos = kiocb->ki_pos;
-
 		/*
 		 * zpl_generic_file_direct_write() will attempt to flush out any
 		 * pages in the page cahce and invalidate them. If this is
@@ -804,8 +815,14 @@ zpl_aio_write(struct kiocb *kiocb, const struct iovec *iov,
 		 * buffered IO.
 		 */
 		if ((wrote == -EINVAL || wrote == count) &&
-		    wrote != -EAGAIN)
+		    wrote != -EAGAIN) {
+			/*
+			 * generic_file_direct_write() will update
+			 * kiocb->ki_pos on a successful Direct IO write.
+			 */
+			IMPLY(wrote == count, (pos + count) == kiocb->ki_pos);
 			return (wrote);
+		}
 	}
 
 	return (zpl_aio_write_buffered(kiocb, iov, nr_segs, pos));
@@ -1146,12 +1163,6 @@ zpl_writepage(struct page *pp, struct writeback_control *wbc)
 	boolean_t for_sync = (wbc->sync_mode == WB_SYNC_ALL);
 
 	return (zpl_putpage(pp, wbc, &for_sync));
-}
-
-static int
-zpl_set_page_dirty(struct page *pp)
-{
-	return (__set_page_dirty_nobuffers(pp));
 }
 
 /*
@@ -1635,7 +1646,6 @@ const struct address_space_operations zpl_address_space_operations = {
 #endif
 	.writepage	= zpl_writepage,
 	.writepages	= zpl_writepages,
-	.set_page_dirty	= zpl_set_page_dirty,
 	.direct_IO	= zpl_direct_IO,
 #ifdef HAVE_VFS_SET_PAGE_DIRTY_NOBUFFERS
 	.set_page_dirty = __set_page_dirty_nobuffers,
