@@ -39,26 +39,11 @@
 
 verify_runnable "global"
 
-function set_max_recordsize
-{
-	typeset recsize=$1
-
-	if is_linux; then
-		log_must eval "echo $recsize > \
-		    /sys/module/zfs/parameters/zfs_max_recordsize"
-	else
-		log_must sysctl vfs.zfs.max_recordsize=$recsize
-	fi
-}
-
 log_assert "Verify max recordsizes are supported for Direct IO."
 
 log_onexit dio_cleanup
 
 log_must truncate -s $MINVDEVSIZE $DIO_VDEVS
-
-# Setting ZFS module parameter for max recordsize to 16m
-set_max_recordsize "16777216"
 
 for type in "" "mirror" "raidz" "draid"; do;
 	for recsize in "2097152" "8388608" "16777216"; do
@@ -74,8 +59,5 @@ for type in "" "mirror" "raidz" "draid"; do;
 		destroy_pool $TESTPOOL1
 	done
 done
-
-# Resetting ZFS module parameter for max recordsize back to 1m
-set_max_recordsize "1048576"
 
 log_pass "Verified max recordsizes are supported for Direct IO."
