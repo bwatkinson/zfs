@@ -159,10 +159,12 @@ write_thread(void *arg)
 	size_t offset = 0;
 	int total_data = blocksize * numblocks;
 	int left = total_data;
+	ssize_t wrote = 0;
 	pthread_args_t *args = (pthread_args_t *)arg;
 
 	while (!args->done || !args->entire_file_written) {
-		pwrite(ofd, buf, blocksize, offset);
+		wrote = pwrite(ofd, buf, blocksize, offset);
+		assert(wrote <= blocksize);
 		offset = ((offset + blocksize) % total_data);
 		if (left > 0)
 			left -= blocksize;
