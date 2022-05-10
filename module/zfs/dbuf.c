@@ -2811,6 +2811,7 @@ dmu_buf_undirty(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr, int io_error)
 	ASSERT(MUTEX_HELD(&db->db_mtx));
 
 	uint8_t db_dirtycnt = db->db_dirtycnt;
+	boolean_t spa_config_lock_held = B_TRUE;
 	dbuf_dirty_record_t *dr_prev = list_prev(&db->db_dirty_records, dr);
 	dbuf_dirty_record_t *dr_wait = dr;
 	spa_t *spa = dmu_objset_spa(db->db_objset);
@@ -2844,9 +2845,21 @@ dmu_buf_undirty(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr, int io_error)
 		dr_wait = list_tail(&db->db_dirty_records);
 	}
 
+	/*
+	 * We must hold the SPA config lock when checking if the dirty record
+	 * is currently syncing out and while undirtying the record. If the
+	 * dirty record is being undirited, the TXG associated with it can
+	 * not be moved to the sync phase before the dirty record is removed.
+	 *
+	 * The one exception to this is if there was an IO error. In that case
+	 * the db_dirty_records tail maybe be synced out, but the current dirty
+	 * record's TXG will not be moved to the sync phase as it currently
+	 * in open-context.
+	 */
 	spa_config_enter(spa, SCL_CONFIG, FTAG, RW_READER);
 	if (dr_wait->dr_txg == spa_syncing_txg(spa)) {
 		spa_config_exit(spa, SCL_CONFIG, FTAG);
+		spa_config_lock_held = B_FALSE;
 		while (db_dirtycnt == db->db_dirtycnt) {
 			DBUF_STAT_BUMP(direct_undirty_wait);
 			cv_wait(&db->db_changed, &db->db_mtx);
@@ -2858,11 +2871,7 @@ dmu_buf_undirty(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr, int io_error)
 		 */
 		if (io_error == 0)
 			return (dr_prev);
-		else
-			goto undirty;
 	}
-	spa_config_exit(spa, SCL_CONFIG, FTAG);
-undirty:
 
 	/*
 	 * dbuf_undirty() also does this check, but this needs to be done here
@@ -2887,7 +2896,11 @@ undirty:
 
 	if (io_error == 0)
 		ASSERT3U(db->db_dirtycnt, >, 0);
+
 	DBUF_STAT_BUMP(direct_undirty);
+
+	if (spa_config_lock_held == B_TRUE)
+		spa_config_exit(spa, SCL_CONFIG, FTAG);
 
 	return (dr_prev);
 }
