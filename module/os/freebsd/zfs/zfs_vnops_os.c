@@ -4529,12 +4529,11 @@ zfs_freebsd_write(struct vop_write_args *ap)
 		 * On error we will return unless the error is EAGAIN, which
 		 * just tells us to fallback to the buffered path.
 		 */
-		if (error) {
-			if (error != EAGAIN)
-				return (error);
-			else
-				ioflag &= ~O_DIRECT;
-		}
+		if (error != EAGAIN)
+			return (error);
+		else
+			ioflag &= ~O_DIRECT;
+
 	}
 
 
