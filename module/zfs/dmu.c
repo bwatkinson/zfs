@@ -2341,7 +2341,7 @@ dmu_brt_clone(objset_t *os, uint64_t object, uint64_t offset, uint64_t length,
 
 		mutex_enter(&db->db_mtx);
 
-		VERIFY(!dbuf_undirty(db, tx, NULL));
+		VERIFY(!dbuf_undirty(db, tx));
 		ASSERT(list_head(&db->db_dirty_records) == NULL);
 		if (db->db_buf != NULL) {
 			arc_buf_destroy(db->db_buf, db);
