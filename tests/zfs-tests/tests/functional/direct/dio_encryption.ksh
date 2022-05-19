@@ -48,7 +48,8 @@ log_must truncate -s $MINVDEVSIZE $DIO_VDEVS
 
 create_pool $TESTPOOL1 $DIO_VDEVS
 log_must eval "echo 'password' | zfs create -o encryption=on \
-    -o keyformat=passphrase -o keylocation=prompt $TESTPOOL1/$TESTFS1"
+    -o keyformat=passphrase -o keylocation=prompt -o compression=off \
+    $TESTPOOL1/$TESTFS1"
 
 mntpnt=$(get_prop mountpoint $TESTPOOL1/$TESTFS1)
 
