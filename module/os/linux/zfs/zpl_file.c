@@ -517,7 +517,7 @@ zpl_iter_write(struct kiocb *kiocb, struct iov_iter *from)
 	struct inode *ip = kiocb->ki_filp->f_mapping->host;
 	struct file *filp = kiocb->ki_filp;
 	int flags = filp->f_flags | zfs_io_flags(kiocb);
-	size_t count;
+	size_t count = 0;
 
 	ssize_t ret = zpl_generic_write_checks(kiocb, from, &count);
 	if (ret)
