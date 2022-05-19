@@ -49,7 +49,8 @@ for type in "" "mirror" "raidz" "draid"; do;
 	for recsize in "2097152" "8388608" "16777216"; do
 		create_pool $TESTPOOL1 $type $DIO_VDEVS
 		log_must eval "zfs create \
-		    -o recordsize=$recsize $TESTPOOL1/$TESTFS1"
+		    -o recordsize=$recsize -o compression=off \
+		    $TESTPOOL1/$TESTFS1"
 
 		mntpnt=$(get_prop mountpoint $TESTPOOL1/$TESTFS1)
 
