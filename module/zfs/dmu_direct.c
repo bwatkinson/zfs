@@ -28,37 +28,6 @@
 #include <sys/zfs_racct.h>
 #include <sys/dsl_dataset.h>
 #include <sys/dmu_objset.h>
-#include <sys/zio_checksum.h>
-
-/*
- * Normally the db_blkptr points to the most recent on-disk content for the
- * dbuf (and anything newer will be cached in the dbuf). However, a recent
- * Direct IO write could leave newer content on disk and the dbuf uncached.
- * In this case we must return the (as yet unsynced) pointer to the latest
- * on-disk content.
- */
-static blkptr_t *
-dmu_get_bp_from_dbuf(dmu_buf_impl_t *db)
-{
-	ASSERT(MUTEX_HELD(&db->db_mtx));
-
-	if (db->db_level != 0) {
-		return (db->db_blkptr);
-	}
-
-	blkptr_t *bp = db->db_blkptr;
-
-	dbuf_dirty_record_t *dr_dio = dbuf_get_dirty_direct(db);
-	if (dr_dio && dr_dio->dt.dl.dr_override_state == DR_OVERRIDDEN &&
-	    dr_dio->dt.dl.dr_data == NULL) {
-		/* We have a Direct IO write or cloned block, use it's bp */
-		ASSERT(db->db_state == DB_UNCAHED ||
-		    db->db_state == DB_NOFILL);
-		bp = &dr_dio->dt.dl.dr_overridden_by;
-	}
-
-	return (bp);
-}
 
 static abd_t *
 make_abd_for_dbuf(dmu_buf_impl_t *db, abd_t *data, uint64_t offset,
@@ -121,6 +90,7 @@ dmu_write_direct_done(zio_t *zio)
 	dmu_sync_arg_t *dsa = zio->io_private;
 	dbuf_dirty_record_t *dr = dsa->dsa_dr;
 	dmu_buf_impl_t *db = dr->dr_dbuf;
+	uint64_t txg = dsa->dsa_tx->tx_txg;
 
 	abd_free(zio->io_abd);
 
@@ -133,29 +103,33 @@ dmu_write_direct_done(zio_t *zio)
 		 * the ARC must be cleaned up in order to force all future
 		 * reads down to the VDEVs.
 		 *
-		 * We must remove any dirty data that might attempt to
-		 * write out the contents of an associated ARC buf with
-		 * this dbuf.
+		 * If a previous write operation to this dbuf was buffered
+		 * (in the ARC) we have to wait for the previous dirty records
+		 * associated with this dbuf to be synced out if they are in
+		 * the quiesce or sync phase for their TXG. This is done to
+		 * guarantee we are not racing to destroy the ARC buf that
+		 * is associated with the dbuf between this done callback and
+		 * spa_sync(). Outside of using a heavy handed approach of
+		 * locking down the spa_syncing_txg while it is being updated,
+		 * there is no way to synchronize when a dirty record's TXG
+		 * has moved over to the sync phase.
 		 *
-		 * Since we only allow block aligned Direct IO writes
-		 * we can iterate through dirty record list of the dbuf
-		 * since the rangelocks will prevent another writer from
-		 * adding to the db_dirty_records.
+		 * In order to make sure all TXG's are consistent we must
+		 * do this stall if there is an associated ARC buf with this
+		 * dbuf. It is because of this that a user should not really
+		 * be mixing buffered and Direct I/O writes. If they choose to
+		 * do so, there is an associated performance penalty for that
+		 * as we will not give up consistency with a TXG over
+		 * performance.
 		 */
-		dbuf_dirty_record_t *dr_next =
-		    list_tail(&db->db_dirty_records);
-		while (dr_next && dr_next != dr) {
-			dr_next = dmu_buf_undirty(db, dr_next,
-			    zio->io_error);
-		}
-
-		ASSERT3U(db->db_dirtycnt, ==, 1);
-
 		if (db->db_buf) {
+			dmu_buf_direct_mixed_io_wait(db, txg - 1, B_FALSE);
 			arc_buf_destroy(db->db_buf, db);
 			db->db_buf = NULL;
 			db->db.db_data = NULL;
+			ASSERT3U(db->db_dirtycnt, ==, 1);
 		}
+
 
 		/*
 		 * The current contents of the dbuf are now stale.
@@ -163,6 +137,8 @@ dmu_write_direct_done(zio_t *zio)
 		ASSERT(db->db.db_data == NULL);
 		db->db_state = DB_UNCACHED;
 		mutex_exit(&db->db_mtx);
+
+		dmu_sync_done(zio, NULL, zio->io_private);
 	} else {
 		mutex_enter(&db->db_mtx);
 		dr->dt.dl.dr_override_state = DR_NOT_OVERRIDDEN;
@@ -174,30 +150,23 @@ dmu_write_direct_done(zio_t *zio)
 		 *
 		 * If the current dirty record is only assocatied with a
 		 * Direct IO write then the dirty record just needs to be
-		 * removed.
+		 * undirtied.
 		 */
 		if (db->db_buf) {
-			/*
-			 * Direct I/O writes always happen in open-context.
-			 */
-			ASSERT(!dmu_tx_is_syncing(dsa->dsa_tx));
 			ASSERT3P(db->db_buf, ==, dr->dt.dl.dr_data);
-			dmu_buf_undirty(db, dr, zio->io_error);
+			dmu_buf_undirty(db, dsa->dsa_tx);
 			db->db_state = DB_CACHED;
 			mutex_exit(&db->db_mtx);
 			dbuf_dirty(db, dsa->dsa_tx);
 		} else {
 			ASSERT3P(dr->dt.dl.dr_data, ==, NULL);
-			dmu_buf_undirty(db, dr, zio->io_error);
+			dmu_buf_undirty(db, dsa->dsa_tx);
 			db->db_state = DB_UNCACHED;
 			mutex_exit(&db->db_mtx);
 		}
-	}
 
-	if (zio->io_error == 0)
-		dmu_sync_done(zio, NULL, zio->io_private);
-	else
 		kmem_free(dsa, sizeof (dmu_sync_arg_t));
+	}
 
 	kmem_free(zio->io_bp, sizeof (blkptr_t));
 	zio->io_bp = NULL;
@@ -348,11 +317,18 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 
 		SET_BOOKMARK(&zb, dmu_objset_ds(os)->ds_object,
 		    db->db.db_object, db->db_level, db->db_blkid);
-		blkptr_t *bp = dmu_get_bp_from_dbuf(db);
+
+		/*
+		 * If there is another buffered read for this dbuf, we will
+		 * wait for that to complete first.
+		 */
+		dmu_buf_direct_mixed_io_wait(db, 0, B_TRUE);
+
+		blkptr_t *bp = dmu_buf_get_bp_from_dbuf(db);
 
 		/*
 		 * There is no need to read if this is a hole or the data is
-		 * cached.  This will not be considered a direct read for IO
+		 * cached. This will not be considered a direct read for IO
 		 * accounting in the same way that an ARC hit is not counted.
 		 */
 		if (bp == NULL || BP_IS_HOLE(bp) || db->db_state == DB_CACHED) {
