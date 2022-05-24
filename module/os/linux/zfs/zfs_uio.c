@@ -520,121 +520,22 @@ zfs_unmark_page(struct page *page)
 }
 #endif /* HAVE_ZERO_PAGE_GPL_ONLY */
 
-/*
- * Accounting for KSM merged pages.
- */
-typedef struct
+static void
+zfs_uio_dio_check_for_zero_page(zfs_uio_t *uio)
 {
-	list_node_t	ksm_page_acct_link;
-	struct page 	*p;
-	zfs_refcount_t	ref_cnt;
-} ksm_page_acct_t;
+	ASSERT3P(uio->uio_dio.pages, !=, NULL);
 
-/*
- * Accounting for compound page (Transparent Huge Pages/Huge Pages)
- */
-typedef struct {
-	unsigned compound_page_cnt;  /* # of pages compound page contains */
-	unsigned curr_compound_page; /* current offset into compound page */
-} zfs_uio_compound_page_cnts;
-
-/*
- * For a KSM merged page, only the first page encountered needs to be put
- * under write protection. All other pages that reference the merged page
- * will have the write protection after the first page is marked.
- */
-static struct page *
-zfs_uio_dio_add_ksm_page(zfs_uio_t *uio, struct page *p)
-{
-	ksm_page_acct_t *ksm_acct = NULL;
-
-	for (ksm_acct = list_head(&uio->uio_dio.ksm_pages);
-	    ksm_acct != NULL;
-	    ksm_acct = list_next(&uio->uio_dio.ksm_pages, ksm_acct)) {
-		if (ksm_acct->p == p) {
-			zfs_refcount_add(&ksm_acct->ref_cnt, p);
-			unlock_page(p);
-			return (NULL);
-		}
-	}
-
-	ksm_acct = kmem_alloc(sizeof (ksm_page_acct_t), KM_SLEEP);
-	list_link_init(&ksm_acct->ksm_page_acct_link);
-	zfs_refcount_create(&ksm_acct->ref_cnt);
-	ksm_acct->p = p;
-	zfs_refcount_add(&ksm_acct->ref_cnt, p);
-	list_insert_tail(&uio->uio_dio.ksm_pages, ksm_acct);
-
-	return (p);
-}
-
-static struct page *
-zfs_uio_dio_remove_ksm_page(zfs_uio_t *uio, struct page *p)
-{
-	ksm_page_acct_t *ksm_acct = NULL;
-
-	for (ksm_acct = list_head(&uio->uio_dio.ksm_pages);
-	    ksm_acct != NULL;
-	    ksm_acct = list_next(&uio->uio_dio.ksm_pages, ksm_acct)) {
-		if (ksm_acct->p == p) {
-			zfs_refcount_remove(&ksm_acct->ref_cnt, p);
-			break;
-		}
-	}
-
-	ASSERT3P(ksm_acct, !=, NULL);
-
-	if (zfs_refcount_is_zero(&ksm_acct->ref_cnt)) {
-		list_remove(&uio->uio_dio.ksm_pages, ksm_acct);
-		zfs_refcount_destroy(&ksm_acct->ref_cnt);
-		kmem_free(ksm_acct, sizeof (ksm_page_acct_t));
-		return (p);
-	}
-
-	return (NULL);
-}
-
-static struct page *
-zfs_uio_dio_get_page(zfs_uio_t *uio, int curr_page,
-    zfs_uio_compound_page_cnts *cpc, boolean_t releasing)
-{
-	struct page *p = uio->uio_dio.pages[curr_page];
-	unsigned int compound_page_order;
-
-	ASSERT3P(p, !=, NULL);
-	if (PageCompound(p)) {
-		p = compound_head(p);
-	}
-
-	if (releasing == B_FALSE)
+#if !defined(HAVE_ZERO_PAGE_GPL_ONLY)
+	for (int i = 0; i < uio->uio_dio.npages; i++) {
+		struct page *p = uio->uio_dio.pages[i];
 		lock_page(p);
 
-	/*
-	 * If the processing of the previous compound page is done, reset the
-	 * counters for any future compound pages encountered.
-	 */
-	if (cpc->compound_page_cnt > 0 &&
-	    (cpc->compound_page_cnt == cpc->curr_compound_page)) {
-		cpc->compound_page_cnt = 0;
-		cpc->curr_compound_page = 0;
-	}
-
-	/*
-	 * Handling KSM merged pages.
-	 */
-	if (PageKsm(p)) {
-		if (releasing == B_FALSE)
-			p = zfs_uio_dio_add_ksm_page(uio, p);
-		else
-			p = zfs_uio_dio_remove_ksm_page(uio, p);
-	} else if (!PageCompound(p)) {
-#if !defined(HAVE_ZERO_PAGE_GPL_ONLY)
 		if (p == ZERO_PAGE(0)) {
 			/*
 			 * If the user page points the kernels ZERO_PAGE() a
 			 * new zero filled page will just be allocated so the
-			 * contents of the page can not be changed for stable
-			 * writes.
+			 * contents of the page can not be changed by the user
+			 * while a Direct I/O write is taking place.
 			 */
 			gfp_t gfp_zero_page  = __GFP_NOWARN | GFP_NOIO |
 			    __GFP_ZERO | GFP_KERNEL;
@@ -645,117 +546,31 @@ zfs_uio_dio_get_page(zfs_uio_t *uio, int curr_page,
 
 			p = __page_cache_alloc(gfp_zero_page);
 			zfs_mark_page(p);
-		}
-#endif
-	} else {
-		ASSERT(PageCompound(p));
-		/*
-		 * If the current page is a compound page, only the head page
-		 * bits need to be adjusted. All other pages attached to the
-		 * compound page use only the head page bits as they are shared
-		 * by all pages.
-		 */
-		if (cpc->compound_page_cnt == 0) {
-			ASSERT0(cpc->curr_compound_page);
-			compound_page_order = compound_order(p);
-			cpc->compound_page_cnt = 1 << compound_page_order;
-			cpc->curr_compound_page += 1;
 		} else {
-			/*
-			 * Do not adjust any bits in this page in the compound
-			 * page as those are handled in the head page returned
-			 * above.
-			 */
-			ASSERT3U(cpc->curr_compound_page, <,
-			    cpc->compound_page_cnt);
-			cpc->curr_compound_page += 1;
-			if (releasing == B_FALSE)
-				unlock_page(p);
-			p = NULL;
-		}
-	}
-
-	return (p);
-}
-
-static void
-zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
-{
-	zfs_uio_compound_page_cnts cpc = { 0, 0 };
-	/*
-	 * In order to make the pages stable, we need to lock each page and
-	 * check the PG_writeback bit. If the page is under writeback, we
-	 * wait till a prior write on the page has finished which is signaled
-	 * by end_page_writeback() in zfs_uio_release_stable_pages().
-	 */
-	ASSERT3P(uio->uio_dio.pages, !=, NULL);
-
-	for (int i = 0; i < uio->uio_dio.npages; i++) {
-		struct page *p = zfs_uio_dio_get_page(uio, i, &cpc, B_FALSE);
-
-		/*
-		 * In the event that page was allocated by ZFS (AKA the
-		 * original page was ZERO_PAGE()) we do not need to make the
-		 * page stable.
-		 */
-		if (p == NULL || IS_ZFS_MARKED_PAGE(p))
-			continue;
-
-		/*
-		 * For writes zfs_uio_dio_page_page() returns a locked page.
-		 */
-		ASSERT(PageLocked(p));
-
-		while (PageWriteback(p)) {
 			unlock_page(p);
-#ifdef HAVE_PAGEMAP_FOLIO_WAIT_BIT
-			folio_wait_bit(page_folio(p), PG_writeback);
-#else
-			wait_on_page_bit(p, PG_writeback);
-#endif
-			lock_page(p);
 		}
-
-		clear_page_dirty_for_io(p);
-		set_page_writeback(p);
-		unlock_page(p);
+		ASSERT(!PageLocked(p));
 	}
+#endif
 }
 
 void
 zfs_uio_free_dio_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
 {
-	zfs_uio_compound_page_cnts cpc = { 0, 0 };
 
 	ASSERT(uio->uio_extflg & UIO_DIRECT);
 	ASSERT3P(uio->uio_dio.pages, !=, NULL);
 
 	for (int i = 0; i < uio->uio_dio.npages; i++) {
-		struct page *p = zfs_uio_dio_get_page(uio, i, &cpc, B_TRUE);
+		struct page *p = uio->uio_dio.pages[i];
 
-		if (p == NULL) {
-			continue;
-		} else if (IS_ZFS_MARKED_PAGE(p)) {
+		if (IS_ZFS_MARKED_PAGE(p)) {
 			zfs_unmark_page(p);
 			__free_page(p);
 			continue;
 		}
 
-		ASSERT(!PageLocked(p));
-
-		if (rw == UIO_WRITE) {
-			/*
-			 * Releasing stable pages.
-			 */
-			ASSERT(PageWriteback(p));
-			end_page_writeback(p);
-		}
 		put_page(p);
-	}
-
-	if (rw == UIO_WRITE) {
-		ASSERT(list_is_empty(&uio->uio_dio.ksm_pages));
-		list_destroy(&uio->uio_dio.ksm_pages);
 	}
 
 	vmem_free(uio->uio_dio.pages,
@@ -892,16 +707,8 @@ zfs_uio_get_dio_pages_alloc(zfs_uio_t *uio, zfs_uio_rw_t rw)
 		return (error);
 	}
 
-	/*
-	 * Since we will be writing the user pages we must make sure that
-	 * they are stable. That way the contents of the pages can not change
-	 * while we are doing: compression, checksumming, encryption, parity
-	 * calculations or deduplication.
-	 */
 	if (rw == UIO_WRITE) {
-		list_create(&uio->uio_dio.ksm_pages, sizeof (ksm_page_acct_t),
-		    offsetof(ksm_page_acct_t, ksm_page_acct_link));
-		zfs_uio_set_pages_to_stable(uio);
+		zfs_uio_dio_check_for_zero_page(uio);
 	}
 
 	uio->uio_extflg |= UIO_DIRECT;
