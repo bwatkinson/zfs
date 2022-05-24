@@ -296,16 +296,6 @@ mappedread(znode_t *zp, int nbytes, zfs_uio_t *uio)
 		struct page *pp = find_lock_page(mp, start >> PAGE_SHIFT);
 		if (pp) {
 
-			while (PageWriteback(pp)) {
-				unlock_page(pp);
-#ifdef HAVE_PAGEMAP_FOLIO_WAIT_BIT
-				folio_wait_bit(page_folio(pp), PG_writeback);
-#else
-				wait_on_page_bit(pp, PG_writeback);
-#endif
-				lock_page(pp);
-			}
-
 			/*
 			 * If filemap_fault() retries there exists a window
 			 * where the page will be unlocked and not up to date.
@@ -4007,7 +3997,6 @@ zfs_inactive(struct inode *ip)
 static int
 zfs_fillpage(struct inode *ip, struct page *pp)
 {
-	znode_t *zp = ITOZ(ip);
 	zfsvfs_t *zfsvfs = ITOZSB(ip);
 	loff_t i_size = i_size_read(ip);
 	u_offset_t io_off = page_offset(pp);
@@ -4018,35 +4007,8 @@ zfs_fillpage(struct inode *ip, struct page *pp)
 	if (io_off + io_len > i_size)
 		io_len = i_size - io_off;
 
-	/*
-	 * See lock ordering comment in zfs_putpage().
-	 */
-	zfs_locked_range_t *lr = zfs_rangelock_tryenter(&zp->z_rangelock,
-	    io_off, io_len, RL_READER);
-	if (lr == NULL) {
-		get_page(pp);
-		unlock_page(pp);
-
-		lr = zfs_rangelock_enter(&zp->z_rangelock, io_off,
-		    io_len, RL_READER);
-
-		lock_page(pp);
-
-		while (PageWriteback(pp)) {
-			unlock_page(pp);
-#ifdef HAVE_PAGEMAP_FOLIO_WAIT_BIT
-			folio_wait_bit(page_folio(pp), PG_writeback);
-#else
-			wait_on_page_bit(pp, PG_writeback);
-#endif
-			lock_page(pp);
-		}
-
-		put_page(pp);
-	}
-
 	void *va = kmap(pp);
-	int error = dmu_read(zfsvfs->z_os, zp->z_id, io_off,
+	int error = dmu_read(zfsvfs->z_os, ITOZ(ip)->z_id, io_off,
 	    io_len, va, DMU_READ_PREFETCH);
 	if (io_len != PAGE_SIZE)
 		memset((char *)va + io_len, 0, PAGE_SIZE - io_len);
@@ -4063,8 +4025,6 @@ zfs_fillpage(struct inode *ip, struct page *pp)
 		ClearPageError(pp);
 		SetPageUptodate(pp);
 	}
-
-	zfs_rangelock_exit(lr);
 
 	return (error);
 }
