@@ -207,18 +207,6 @@ zfs_check_direct_enabled(znode_t *zp, int ioflags)
 {
 	boolean_t is_direct = B_FALSE;
 
-#if defined(__linux__) && defined(HAVE_ZERO_PAGE_GPL_ONLY)
-	/*
-	 * Certain Linux architectures export empty_zero_page as a GPL
-	 * variable. Without being able to know if a page is set to ZERO_PAGE()
-	 * we can not place pages in writeback for Direct IO writes. In this
-	 * case we do not allow any Direct IO for Linux architecture that do
-	 * not allow us to check for PAGE_ZERO().
-	 */
-	return (is_direct);
-#endif
-
-
 	zfsvfs_t *zfsvfs = ZTOZSB(zp);
 
 	ZFS_ENTER(zfsvfs);
