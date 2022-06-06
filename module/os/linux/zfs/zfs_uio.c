@@ -486,11 +486,12 @@ zfs_uio_page_aligned(zfs_uio_t *uio)
 }
 
 
-#if defined(HAVE_ZERO_PAGE_GPL_ONLY)
+#if defined(HAVE_ZERO_PAGE_GPL_ONLY) || !defined(_LP64)
 #define	ZFS_MARKEED_PAGE	0x0
 #define	IS_ZFS_MARKED_PAGE(_p)	0
 #define	zfs_mark_page(_p)
 #define	zfs_unmark_page(_p)
+#define	IS_ZERO_PAGE(_p)	0
 
 #else
 /*
@@ -500,6 +501,7 @@ zfs_uio_page_aligned(zfs_uio_t *uio)
 #define	ZFS_MARKED_PAGE		0x5a465350414745 /* ASCI: ZFSPAGE */
 #define	IS_ZFS_MARKED_PAGE(_p) \
 	(page_private(_p) == (unsigned long)ZFS_MARKED_PAGE)
+#define	IS_ZERO_PAGE(_p) ((_p) == ZERO_PAGE(0))
 
 static inline void
 zfs_mark_page(struct page *page)
@@ -518,19 +520,18 @@ zfs_unmark_page(struct page *page)
 	ClearPagePrivate(page);
 	put_page(page);
 }
-#endif /* HAVE_ZERO_PAGE_GPL_ONLY */
+#endif /* HAVE_ZERO_PAGE_GPL_ONLY || !_LP64 */
 
 static void
 zfs_uio_dio_check_for_zero_page(zfs_uio_t *uio)
 {
 	ASSERT3P(uio->uio_dio.pages, !=, NULL);
 
-#if !defined(HAVE_ZERO_PAGE_GPL_ONLY)
 	for (int i = 0; i < uio->uio_dio.npages; i++) {
 		struct page *p = uio->uio_dio.pages[i];
 		lock_page(p);
 
-		if (p == ZERO_PAGE(0)) {
+		if (IS_ZERO_PAGE(p)) {
 			/*
 			 * If the user page points the kernels ZERO_PAGE() a
 			 * new zero filled page will just be allocated so the
@@ -549,9 +550,7 @@ zfs_uio_dio_check_for_zero_page(zfs_uio_t *uio)
 		} else {
 			unlock_page(p);
 		}
-		ASSERT(!PageLocked(p));
 	}
-#endif
 }
 
 void
