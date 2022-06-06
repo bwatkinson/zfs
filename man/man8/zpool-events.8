@@ -100,10 +100,11 @@ The number of delay events is ratelimited by the
 module parameter.
 .It Sy dio_verify
 Issued when there was a checksum verify error after a Direct I/O write has been
-issued but not committed to VDEV. This event can only take place if the
-module parameter
+issued but not committed to a VDEV.
+This event can only take place if the module parameter
 .Sy zio_direct_write_verify
-is enabled. See
+is enabled.
+See
 .Xr zfs 4
 for more details on the
 .Sy zio_direct_write_verify
