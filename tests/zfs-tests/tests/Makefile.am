@@ -1454,6 +1454,7 @@ nobase_dist_datadir_zfs_tests_tests_SCRIPTS += \
 	functional/direct/dio_recordsize.ksh \
 	functional/direct/dio_unaligned_block.ksh \
 	functional/direct/dio_write_verify.ksh \
+	functional/direct/dio_write_stable_pages.ksh \
 	functional/direct/setup.ksh \
 	functional/direct/cleanup.ksh \
 	functional/dos_attributes/cleanup.ksh \
