@@ -60,7 +60,7 @@ function cleanup
 log_assert "Verify checksum verify works for Direct IO writes."
 
 if is_freebsd; then
-	log_unsupported "Currently experience issues on FeeBSD"
+	log_unsupported "FeeBSD is capable of stable pages for O_DIRECT writes"
 fi
 
 log_onexit cleanup
