@@ -29,3 +29,7 @@ tags = ['functional', 'cli_root', 'zfs_jail']
 [tests/functional/direct:FreeBSD]
 tests = ['dio_write_stable_pages']
 tags = ['functional', 'direct']
+
+[tests/functional/direct_freebsd:FreeBSD]
+tests = ['dio_read_fault']
+tags = ['direct_freebsd']

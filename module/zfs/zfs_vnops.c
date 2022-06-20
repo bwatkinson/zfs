@@ -246,6 +246,11 @@ zfs_setup_direct(struct znode *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
 
 		int error = zfs_uio_get_dio_pages_alloc(uio, rw);
 		if (error) {
+			printf("%s(%d) Direct IO read uio = %p, "
+			    "zfs_uio_offset(uio) = %lu, "
+			    "zfs_uio_resid(uio) = %lu, error == EFAULT = %d\n",
+			    __FUNCTION__, __LINE__, uio, zfs_uio_offset(uio),
+			    zfs_uio_resid(uio), error == EFAULT ? 1 : 0);
 			ZFS_EXIT(zfsvfs);
 			return (error);
 		}
@@ -378,6 +383,14 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		} else {
 			error = dmu_read_uio_dbuf(sa_get_db(zp->z_sa_hdl),
 			    uio, nbytes);
+		}
+
+		if (error && uio->uio_extflg & UIO_DIRECT) {
+			printf("%s(%d): Direct IO read uio = %p, "
+			    "zfs_uio_offset(uio) = %lu, "
+			    "zfs_uio_resid(uio) = %lu, error == EFAULT = %d\n",
+			    __FUNCTION__, __LINE__, uio, zfs_uio_offset(uio),
+			    zfs_uio_resid(uio), error == EFAULT ? 1 : 0);
 		}
 
 		if (error) {

@@ -4437,6 +4437,11 @@ zfs_freebsd_read(struct vop_read_args *ap)
 	boolean_t direct = zfs_check_direct_enabled(zp, ioflag);
 
 	if (direct) {
+		printf("%s(%d): Issuing Direct IO read uio = %p"
+		    "zfs_uio_offset(uio) = %lu, zfs_uio_resid(uio) = %lu\n",
+		    __FUNCTION__, __LINE__, &uio, zfs_uio_offset(&uio),
+		    zfs_uio_resid(&uio));
+
 		error =
 		    zfs_freebsd_read_direct(zp, &uio, UIO_READ, ioflag,
 		    ap->a_cred);
@@ -4452,18 +4457,14 @@ zfs_freebsd_read(struct vop_read_args *ap)
 		 * Direct IO request is broken up into two separate IO requests
 		 * and issued separately using Direct IO.
 		 */
-#ifdef ZFS_DEBUG
 		if (error == EFAULT) {
-#if 0
 			printf("%s(%d): Direct IO read returning EFAULT "
 			    "uio = %p, zfs_uio_offset(uio) = %lu "
 			    "zfs_uio_resid(uio) = %lu\n",
 			    __FUNCTION__, __LINE__, &uio, zfs_uio_offset(&uio),
 			    zfs_uio_resid(&uio));
-#endif
 		}
 
-#endif
 
 		/*
 		 * On error we will return unless the error is EAGAIN, which

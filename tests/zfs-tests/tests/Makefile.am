@@ -1372,6 +1372,9 @@ nobase_dist_datadir_zfs_tests_tests_SCRIPTS += \
 	functional/direct/dio_write_stable_pages.ksh \
 	functional/direct/setup.ksh \
 	functional/direct/cleanup.ksh \
+	functional/direct_freebsd/dio_read_fault.ksh \
+	functional/direct_freebsd/setup.ksh \
+	functional/direct_freebsd/cleanup.ksh \
 	functional/dos_attributes/cleanup.ksh \
 	functional/dos_attributes/read_dos_attrs_001.ksh \
 	functional/dos_attributes/setup.ksh \

@@ -220,6 +220,15 @@ zfs_uio_hold_pages(unsigned long start, size_t len, unsigned long nr_pages,
 	count = vm_fault_quick_hold_pages(map, start, len, prot, pages,
 	    nr_pages);
 
+	if (count != nr_pages) {
+		printf("%s(%d): Direct IO count != nr_pages from "
+		    "vm_fault_quick_hold_pages(), "
+		    "count = %d, nr_pages = %lu, start = %lu, "
+		    "len = %lu, rw == UIO_READ = %d\n",
+		    __FUNCTION__, __LINE__, count, nr_pages, start, len,
+		    rw == UIO_READ ? 1 : 0);
+
+	}
 	return (count);
 }
 
@@ -265,6 +274,10 @@ zfs_uio_get_user_pages(unsigned long start, unsigned long nr_pages,
 	count = zfs_uio_hold_pages(start, len, nr_pages, rw, pages);
 
 	if (count != nr_pages) {
+		printf("%s(%d): Direct IO count != nr_pages "
+		    "count = %d, nr_pages = %lu, start = %lu, "
+		    "len = %lu\n",
+		    __FUNCTION__, __LINE__, count, nr_pages, start, len);
 		if (count > 0)
 			vm_page_unhold_pages(pages, count);
 		return (count);
@@ -295,6 +308,13 @@ zfs_uio_iov_step(struct iovec v, zfs_uio_t *uio, int *numpages)
 	int res = zfs_uio_get_user_pages(P2ALIGN(addr, PAGE_SIZE), n, len,
 	    zfs_uio_rw(uio), &uio->uio_dio.pages[uio->uio_dio.npages]);
 	if (res != n) {
+		printf("%s(%d): Direct IO res != n after "
+		    "zfs_uio_get_user_pages(), uio = %p, "
+		    "zfs_uio_offset(uio) = %lu, zfs_uio_resid(uio) = %lu, "
+		    "n = %d, len = %lu, res = %d, addr = %lu, Returning "
+		    "EFAULT\n",
+		    __FUNCTION__, __LINE__, uio, zfs_uio_offset(uio),
+		    zfs_uio_resid(uio), n, len, res, addr);
 		*numpages = -1;
 		return (SET_ERROR(EFAULT));
 	}

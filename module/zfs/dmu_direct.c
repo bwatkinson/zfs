@@ -385,8 +385,15 @@ dmu_read_uio_direct(dnode_t *dn, zfs_uio_t *uio, uint64_t size)
 	err = dmu_read_abd(dn, offset, size, data, DMU_DIRECTIO);
 	abd_free(data);
 
-	if (err == 0)
+	if (err == 0) {
 		zfs_uioskip(uio, size);
+	} else {
+		printf("%s(%d): Direct IO read uio = %p, "
+		    "zfs_uio_offset(uio) = %lu, zfs_uio_resid(uio) = %lu, "
+		    "err == EFAULT = %d\n",
+		    __FUNCTION__, __LINE__, uio, zfs_uio_offset(uio),
+		    zfs_uio_resid(uio), err == EFAULT ? 1 : 0);
+	}
 
 	return (err);
 }
