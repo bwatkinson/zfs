@@ -835,9 +835,28 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 			zfs_uioskip(uio, nbytes);
 			tx_bytes = nbytes;
 		}
+
+		/*
+		 * There is a a window where a file's pages can be mmap'ed after
+		 * the write has started. We may have temporarily removed the
+		 * UIO_DIRECT flag as we are still growing the blocksize but
+		 * the O_DIRECT flag is still present. This check for the
+		 * O_DIRECT flag has always been present before calling
+		 * update_pages(). If we remove the check for O_DIRECT we can
+		 * wind up in a deadlock between update_pages() and
+		 * zpl_writepages() -> write_cache_pages().
+		 *
+		 * XXX - In reality, this can probably be fixed by adding a
+		 * rangelock to zfs_fillpage(). There has always been a window
+		 * where we can start a write, but the pages are not mmapp'ed
+		 * till later. Ideally we would want to only check using
+		 * zn_has_cached_data() while holding the rangelock to remove
+		 * this window and the addition of also grabbing a rangelock
+		 * in zfs_fillpage().
+		 */
 		if (tx_bytes &&
 		    zn_has_cached_data(zp, woff, woff + tx_bytes - 1) &&
-		    !(uio->uio_extflg & UIO_DIRECT)) {
+		    !(ioflag & O_DIRECT)) {
 			update_pages(zp, woff, tx_bytes, zfsvfs->z_os);
 		}
 
