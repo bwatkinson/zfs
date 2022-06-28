@@ -837,7 +837,7 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		 */
 		if (tx_bytes &&
 		    zn_has_cached_data(zp, woff, woff + tx_bytes - 1) &&
-		    !(uio->uio_extflg & UIO_DIRECT)) {
+		    !(ioflag & O_DIRECT)) {
 			update_pages(zp, woff, tx_bytes, zfsvfs->z_os);
 		}
 
