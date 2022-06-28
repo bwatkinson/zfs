@@ -153,6 +153,13 @@ int zfs_nocacheflush = 0;
 uint_t zfs_vdev_max_auto_ashift = 14;
 uint_t zfs_vdev_min_auto_ashift = ASHIFT_MIN;
 
+/*
+ * VDEV checksum verification count for Direct I/O writes. This is neccessary
+ * for Linux, because user pages can not be placed under write protection
+ * during Direct I/O writes.
+ */
+uint_t zfs_vdev_direct_write_verify_cnt = 100;
+
 void
 vdev_dbgmsg(vdev_t *vd, const char *fmt, ...)
 {
@@ -6510,4 +6517,8 @@ ZFS_MODULE_PARAM_CALL(zfs_vdev, zfs_vdev_, max_auto_ashift,
 	param_set_max_auto_ashift, param_get_uint, ZMOD_RW,
 	"Maximum ashift used when optimizing for logical -> physical sector "
 	"size on new top-level vdevs");
+
+ZFS_MODULE_PARAM(zfs, zfs_vdev_, direct_write_verify_cnt, UINT, ZMOD_RW,
+	"Count interval per top-level VDEV for checksum verification to be "
+	"performed for Direct I/O writes");
 /* END CSTYLED */
