@@ -126,12 +126,6 @@ static uint_t zfs_sync_pass_dont_compress = 8;
 static uint_t zfs_sync_pass_rewrite = 2;
 
 /*
- * Enables if a checksum verify should be performed before a Direct IO write
- * is committed to disk (the dbuf dirtry record BP is updated).
- */
-static int zio_direct_write_verify = B_FALSE;
-
-/*
  * An allocating zio is one that either currently has the DVA allocate
  * stage set or will have it later in its lifetime.
  */
@@ -1556,11 +1550,22 @@ zio_vdev_child_io(zio_t *pio, blkptr_t *bp, vdev_t *vd, uint64_t offset,
 		 */
 		pipeline |= ZIO_STAGE_CHECKSUM_VERIFY;
 		pio->io_pipeline &= ~ZIO_STAGE_CHECKSUM_VERIFY;
+#if defined(__linux__)
 	} else if (type == ZIO_TYPE_WRITE &&
 	    pio->io_prop.zp_direct_write == B_TRUE &&
-	    zio_direct_write_verify == B_TRUE) {
+	    zfs_vdev_direct_write_verify_cnt > 0) {
+		/*
+		 * We only will verify checksums for Direct I/O writes for
+		 * Linux. FreeBSD is able to place user pages under write
+		 * protection before issuing them to the ZIO pipeline.
+		 *
+		 * Checksum validation errors will only be reported through
+		 * the top-level VDEV, which is set by this child ZIO.
+		 */
 		ASSERT3P(bp, !=, NULL);
+		ASSERT3U(pio->io_child_type, ==, ZIO_CHILD_LOGICAL);
 		pipeline |= ZIO_STAGE_DIO_CHECKSUM_VERIFY;
+#endif
 	}
 
 	if (vd->vdev_ops->vdev_op_leaf) {
@@ -4527,21 +4532,40 @@ static zio_t *
 zio_dio_checksum_verify(zio_t *zio)
 {
 	int error;
+
+/*
+ * FreeBSD supports stable pages (AKA placing user pages under write
+ * protection) for Direct I/O writes. Because of this, there is never a reason
+ * the checksum should ever be validated again.
+ */
+#if defined(__FreeBSD__)
+	VERIFY(0);
+#endif
+
 	zio_t *pio = zio_unique_parent(zio);
+	boolean_t verify_checksum = B_FALSE;
 
 	ASSERT3P(zio->io_vd, !=, NULL);
 	ASSERT3P(zio->io_bp, !=, NULL);
 	ASSERT3U(zio->io_child_type, ==, ZIO_CHILD_VDEV);
 	ASSERT3U(zio->io_type, ==, ZIO_TYPE_WRITE);
-	IMPLY(pio != NULL, pio->io_prop.zp_direct_write == B_TRUE);
+	ASSERT3B(pio->io_prop.zp_direct_write, ==, B_TRUE);
 	ASSERT3U(pio->io_child_type, ==, ZIO_CHILD_LOGICAL);
 
-	if ((error = zio_checksum_error(zio, NULL)) != 0) {
+	mutex_enter(&zio->io_vd->vdev_stat_lock);
+	zio->io_vd->vdev_direct_write_verify_cnt += 1;
+	if ((zio->io_vd->vdev_direct_write_verify_cnt %
+	    zfs_vdev_direct_write_verify_cnt) == 0) {
+		verify_checksum = B_TRUE;
+	} else {
+		mutex_exit(&zio->io_vd->vdev_stat_lock);
+		return (zio);
+	}
+
+	if (verify_checksum && (error = zio_checksum_error(zio, NULL)) != 0) {
 		zio->io_error = error;
 		if (error == ECKSUM) {
-			mutex_enter(&zio->io_vd->vdev_stat_lock);
 			zio->io_vd->vdev_stat.vs_dio_verify_errors++;
-			mutex_exit(&zio->io_vd->vdev_stat_lock);
 			zio->io_error = SET_ERROR(EINVAL);
 			zio->io_prop.zp_direct_write_verify_error = B_TRUE;
 
@@ -4550,6 +4574,8 @@ zio_dio_checksum_verify(zio_t *zio)
 			    zio, 0);
 		}
 	}
+
+	mutex_exit(&zio->io_vd->vdev_stat_lock);
 
 	return (zio);
 }
@@ -5308,6 +5334,3 @@ ZFS_MODULE_PARAM(zfs_zio, zio_, dva_throttle_enabled, INT, ZMOD_RW,
 
 ZFS_MODULE_PARAM(zfs_zio, zio_, deadman_log_all, INT, ZMOD_RW,
 	"Log all slow ZIOs, not just those with vdevs");
-
-ZFS_MODULE_PARAM(zfs_zio, zio_, direct_write_verify, INT, ZMOD_RW,
-	"Verify checksum of direct IO write before committing to VDEV");

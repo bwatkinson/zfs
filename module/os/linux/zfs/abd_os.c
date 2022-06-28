@@ -1100,6 +1100,94 @@ abd_cache_reap_now(void)
 {
 }
 
+/*
+ * Borrow a raw buffer from an ABD without copying the contents of the ABD
+ * into the buffer. If the ABD is scattered, this will allocate a raw buffer
+ * whose contents are undefined. To copy over the existing data in the ABD, use
+ * abd_borrow_buf_copy() instead.
+ */
+void *
+abd_borrow_buf(abd_t *abd, size_t n)
+{
+	void *buf;
+	abd_verify(abd);
+
+	/*
+	 * In the event the ABD is composed of a single user page from Direct
+	 * I/O we can not direclty return the raw buffer. This is a consequence
+	 * of not being able to write protect the page and the contents of the
+	 * page can be changed at any time by the user.
+	 */
+	if (abd_is_from_pages(abd)) {
+		buf = zio_buf_alloc(n);
+	} else if (abd_is_linear(abd)) {
+		buf = abd_to_buf(abd);
+	} else {
+		buf = zio_buf_alloc(n);
+	}
+
+#ifdef ZFS_DEBUG
+	(void) zfs_refcount_add_many(&abd->abd_children, n, buf);
+#endif
+	return (buf);
+}
+
+void *
+abd_borrow_buf_copy(abd_t *abd, size_t n)
+{
+	void *buf = abd_borrow_buf(abd, n);
+
+	/*
+	 * In the event the ABD is composed of a single user page from Direct
+	 * I/O we must make sure copy the data over into the newly allocated
+	 * buffer. This is a consequence of the fact that we can not write
+	 * protect the user page and there is a risk the contents of the page
+	 * could be changed by the user at any moment.
+	 */
+	if (!abd_is_linear(abd) || abd_is_from_pages(abd)) {
+		abd_copy_to_buf(buf, abd, n);
+	}
+	return (buf);
+}
+
+/*
+ * Return a borrowed raw buffer to an ABD. If the ABD is scatterd, this will
+ * not change the contents of th ABD. If you want any changes you made to
+ * buf to be copied back to abd, use abd_return_buf_copy() instead. If the
+ * ABD is not constructed from user pages from Direct I/O than an ASSERT
+ * checks to make sure the contents of buffer have not changed since it was
+ * borrowed. We can not ASSERT that the contents of the buffer have not changed
+ * if it is composed of user pages because the pages can not be placed under
+ * write protection and the user could have possibly changed the contents in
+ * the pages at any time.
+ */
+void
+abd_return_buf(abd_t *abd, void *buf, size_t n)
+{
+	abd_verify(abd);
+	ASSERT3U(abd->abd_size, >=, n);
+#ifdef ZFS_DEBUG
+	(void) zfs_refcount_remove_many(&abd->abd_children, n, buf);
+#endif
+	if (abd_is_from_pages(abd)) {
+		zio_buf_free(buf, n);
+	} else if (abd_is_linear(abd)) {
+		ASSERT3P(buf, ==, abd_to_buf(abd));
+	} else {
+		ASSERT0(abd_cmp_buf(abd, buf, n));
+		zio_buf_free(buf, n);
+	}
+}
+
+void
+abd_return_buf_copy(abd_t *abd, void *buf, size_t n)
+{
+	if (!abd_is_linear(abd) || abd_is_from_pages(abd)) {
+		abd_copy_from_buf(abd, buf, n);
+	}
+	abd_return_buf(abd, buf, n);
+}
+
 #if defined(_KERNEL)
 /*
  * Yield the next page struct and data offset and size within it, without
