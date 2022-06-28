@@ -102,12 +102,12 @@ module parameter.
 Issued when there was a checksum verify error after a Direct I/O write has been
 issued but not committed to a VDEV.
 This event can only take place if the module parameter
-.Sy zio_direct_write_verify
-is enabled.
+.Sy zfs_vdev_direct_write_verify_cnt
+is not set to zero.
 See
 .Xr zfs 4
 for more details on the
-.Sy zio_direct_write_verify
+.Sy zfs_vdev_direct_write_verify_cnt
 module paramter.
 .It Sy config
 Issued every time a vdev change have been done to the pool.
