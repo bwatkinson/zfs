@@ -433,6 +433,8 @@ struct vdev {
 	uint64_t	vdev_mmp_kstat_id;	/* to find kstat entry */
 	uint64_t	vdev_expansion_time;	/* vdev's last expansion time */
 	list_node_t	vdev_leaf_node;		/* leaf vdev list */
+	/* Direct I/O write checksum verify count */
+	unsigned int	vdev_direct_write_verify_cnt;
 
 	/*
 	 * For DTrace to work in userland (libzpool) context, these fields must
@@ -653,6 +655,11 @@ extern uint_t zfs_vdev_min_auto_ashift;
 extern uint_t zfs_vdev_max_auto_ashift;
 int param_set_min_auto_ashift(ZFS_MODULE_PARAM_ARGS);
 int param_set_max_auto_ashift(ZFS_MODULE_PARAM_ARGS);
+
+/*
+ * VDEV checksum verification count for Direct I/O writes
+ */
+extern uint_t zfs_vdev_direct_write_verify_cnt;
 
 #ifdef	__cplusplus
 }
