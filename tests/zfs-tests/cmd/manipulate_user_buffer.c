@@ -205,10 +205,6 @@ main(int argc, char *argv[])
 	int left = blocksize;
 	int offset = 0;
 	int rc;
-	int ifd;
-	int ifd_flags = O_RDONLY;
-	char *output_buf = NULL;
-	struct stat st;
 	time_t start;
 	pthread_args_t args = { 0, 0};
 
@@ -226,13 +222,6 @@ main(int argc, char *argv[])
 	if (err != 0) {
 		(void) fprintf(stderr,
 		    "%s: %s\n", execname, strerror(err));
-		exit(2);
-	}
-
-	output_buf = (char *)malloc(sizeof (char) * blocksize * numblocks);
-	if (output_buf == NULL) {
-		(void) fprintf(stderr,
-		    "%s: failed to allocate output_buf\n", execname);
 		exit(2);
 	}
 
@@ -282,36 +271,7 @@ main(int argc, char *argv[])
 
 	(void) close(ofd);
 
-	/*
-	 * Now just going to read the contents of the file to check for
-	 * checksum errors.
-	 */
-	stat(outputfile, &st);
-	ssize_t outputfile_size = st.st_size;
-	ifd = open(outputfile, ifd_flags);
-	if (ifd == -1) {
-		(void) fprintf(stderr, "%s, %s\n", execname, outputfile);
-		perror("open");
-		exit(2);
-	}
-	int c = read(ifd, output_buf, outputfile_size);
-	if (c != outputfile_size) {
-		if (c < 0) {
-			perror("read");
-		} else {
-			(void) fprintf(stderr,
-			    "%s: unexpected short read, read %d "
-			    "bytes, expepted %d\n", execname,
-			    c, blocksize * numblocks);
-		}
-		exit(2);
-	}
-
-	(void) close(ifd);
-
-
 	free(buf);
-	free(output_buf);
 
 	return (0);
 }
