@@ -197,7 +197,7 @@ manipulate_buf_thread(void *arg)
 int
 main(int argc, char *argv[])
 {
-	char *datapattern = "0xdeadbeef";
+	const char *datapattern = "0xdeadbeef";
 	int ofd_flags = O_WRONLY | O_CREAT | O_DIRECT;
 	mode_t mode = S_IRUSR | S_IWUSR;
 	pthread_t write_thr;
