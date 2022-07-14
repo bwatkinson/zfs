@@ -33,7 +33,7 @@
 # 	Verify mixed direct IO and mmap IO.
 #
 # STRATEGY:
-#	1. Create an empty.
+#	1. Create an empty file.
 #	2. Start a background fio randomly direct writing to the file.
 #	3. Start a background fio randomly mmap writing to the file.
 #
