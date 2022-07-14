@@ -57,8 +57,7 @@ function cleanup
 	log_must zpool clear $TESTPOOL
 	# Clearing out dio_verify from event logs
 	log_must zpool events -c
-	log_must eval "echo 100 > \
-	    /sys/module/zfs/parameters/zfs_vdev_direct_write_verify_cnt"
+	log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_CNT 100
 }
 
 log_assert "Verify checksum verify works for Direct I/O writes."
@@ -95,7 +94,7 @@ log_must rm -f "$mntpnt/direct-write.iso"
 # manipulating the contents of the user pages by setting a higher value for
 # the verify cnt.
 log_must zfs set compression=off $TESTPOOL/$TESTFS
-log_must eval "echo 10 > /sys/module/zfs/parameters/zfs_vdev_direct_write_verify_cnt"
+log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_CNT 10
 
 # Clearing out DIO VERIFY counts for Zpool
 log_must zpool clear $TESTPOOL
@@ -125,7 +124,7 @@ log_must rm -f "$mntpnt/direct-write.iso"
 
 # Finally we will verfiy that with checking every Direct I/O write we have no
 # errors at all.
-log_must eval "echo 1 > /sys/module/zfs/parameters/zfs_vdev_direct_write_verify_cnt"
+log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_CNT 1
 
 # Clearing out DIO VERIFY counts for Zpool
 log_must zpool clear $TESTPOOL
