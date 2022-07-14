@@ -6518,7 +6518,7 @@ ZFS_MODULE_PARAM_CALL(zfs_vdev, zfs_vdev_, max_auto_ashift,
 	"Maximum ashift used when optimizing for logical -> physical sector "
 	"size on new top-level vdevs");
 
-ZFS_MODULE_PARAM(zfs, zfs_vdev_, direct_write_verify_cnt, UINT, ZMOD_RW,
+ZFS_MODULE_PARAM(zfs_vdev, zfs_vdev_, direct_write_verify_cnt, UINT, ZMOD_RW,
 	"Count interval per top-level VDEV for checksum verification to be "
 	"performed for Direct I/O writes");
 /* END CSTYLED */
