@@ -157,7 +157,11 @@ uint64_t zfs_vdev_min_auto_ashift = ASHIFT_MIN;
  * for Linux, because user pages can not be placed under write protection
  * during Direct I/O writes.
  */
+#if !defined(__FreeBSD__)
 unsigned int zfs_vdev_direct_write_verify_cnt = 100;
+#else
+unsigned int zfs_vdev_direct_write_verify_cnt = 0;
+#endif
 
 void
 vdev_dbgmsg(vdev_t *vd, const char *fmt, ...)
