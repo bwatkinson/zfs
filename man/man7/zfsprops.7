@@ -1041,21 +1041,20 @@ section of
 .It Xo
 .Sy direct Ns = Ns Sy disabled Ns | Ns Sy standard Ns | Ns Sy always
 .Xc
-Controls the behavior of direct requests (e.g.
-.Sx O_DIRECT Ns
-). The
+Controls the behavior of Direct I/O requests
+.Pq e.g. Dv O_DIRECT .
+The
 .Sy standard
-behavior for direct requests is to bypass the ARC when possible.
+behavior for Direct I/O requests is to bypass the ARC when possible.
 These requests will not be cached and performance will be limited by the
-raw speed of the underlying disks (this is the default).
+raw speed of the underlying disks
+.Pq Dv this is the default .
 .Sy always
 causes every properly aligned read or write to be treated as a direct request.
 .Sy disabled
-causes the
-.Sx O_DIRECT
-flag to be silently ignored and all direct requests will
+causes the O_DIRECT flag to be silently ignored and all direct requests will
 be handled by the ARC.
-This is the default behavior for OpenZFS 2.0 and prior releases.
+This is the default behavior for OpenZFS 2.1 and prior releases.
 .Pp
 Bypassing the ARC requires that a direct request be correctly aligned.
 For write requests the starting offset and size of the request must be
