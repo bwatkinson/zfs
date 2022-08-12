@@ -53,7 +53,7 @@ verify_runnable "global"
 
 function cleanup
 {
-	# Clearing out DIO VERIFY counts for Zpool
+	# Clearing out DIO counts for Zpool
 	log_must zpool clear $TESTPOOL
 	# Clearing out dio_verify from event logs
 	log_must zpool events -c
@@ -96,7 +96,7 @@ log_must rm -f "$mntpnt/direct-write.iso"
 log_must zfs set compression=off $TESTPOOL/$TESTFS
 log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_CNT 10
 
-# Clearing out DIO VERIFY counts for Zpool
+# Clearing out DIO counts for Zpool
 log_must zpool clear $TESTPOOL
 # Clearing out dio_verify from event logs
 log_must zpool events -c
@@ -126,7 +126,7 @@ log_must rm -f "$mntpnt/direct-write.iso"
 # errors at all.
 log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_CNT 1
 
-# Clearing out DIO VERIFY counts for Zpool
+# Clearing out DIO counts for Zpool
 log_must zpool clear $TESTPOOL
 # Clearing out dio_verify from event logs
 log_must zpool events -c
