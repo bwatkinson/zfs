@@ -82,7 +82,7 @@ typedef struct zfs_uio {
 	zfs_uio_seg_t	uio_segflg;	/* Segment type */
 	boolean_t	uio_fault_disable;
 	uint16_t	uio_fmode;	/* Access mode (unused) */
-	uint16_t	uio_extflg;	/* Extra flags (UIO_DIREC) */
+	uint16_t	uio_extflg;	/* Extra flags (UIO_DIRECT) */
 	ssize_t		uio_resid;	/* Residual unprocessed bytes */
 	size_t		uio_skip;	/* Skipped bytes in current iovec */
 	zfs_uio_dio_t	uio_dio;	/* Direct IO user pages */

@@ -130,7 +130,6 @@ dmu_write_direct_done(zio_t *zio)
 			ASSERT3U(db->db_dirtycnt, ==, 1);
 		}
 
-
 		/*
 		 * The current contents of the dbuf are now stale.
 		 */
