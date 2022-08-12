@@ -1550,7 +1550,6 @@ zio_vdev_child_io(zio_t *pio, blkptr_t *bp, vdev_t *vd, uint64_t offset,
 		 */
 		pipeline |= ZIO_STAGE_CHECKSUM_VERIFY;
 		pio->io_pipeline &= ~ZIO_STAGE_CHECKSUM_VERIFY;
-#if defined(__linux__)
 	} else if (type == ZIO_TYPE_WRITE &&
 	    pio->io_prop.zp_direct_write == B_TRUE &&
 	    zfs_vdev_direct_write_verify_cnt > 0) {
@@ -1565,7 +1564,6 @@ zio_vdev_child_io(zio_t *pio, blkptr_t *bp, vdev_t *vd, uint64_t offset,
 		ASSERT3P(bp, !=, NULL);
 		ASSERT3U(pio->io_child_type, ==, ZIO_CHILD_LOGICAL);
 		pipeline |= ZIO_STAGE_DIO_CHECKSUM_VERIFY;
-#endif
 	}
 
 	if (vd->vdev_ops->vdev_op_leaf) {
@@ -4532,15 +4530,6 @@ static zio_t *
 zio_dio_checksum_verify(zio_t *zio)
 {
 	int error;
-
-/*
- * FreeBSD supports stable pages (AKA placing user pages under write
- * protection) for Direct I/O writes. Because of this, there is never a reason
- * the checksum should ever be validated again.
- */
-#if defined(__FreeBSD__)
-	VERIFY(0);
-#endif
 
 	zio_t *pio = zio_unique_parent(zio);
 	boolean_t verify_checksum = B_FALSE;

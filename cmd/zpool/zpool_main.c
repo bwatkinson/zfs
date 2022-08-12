@@ -2563,10 +2563,10 @@ print_status_config(zpool_handle_t *zhp, status_cbdata_t *cb, const char *name,
 			    sizeof (dbuf));
 
 			if (cb->cb_literal)
-				printf(" %11llu",
+				printf(" %5llu",
 				    (u_longlong_t)vs->vs_dio_verify_errors);
 			else
-				printf(" %11s", dbuf);
+				printf(" %5s", dbuf);
 		}
 	}
 
@@ -9181,7 +9181,7 @@ status_callback(zpool_handle_t *zhp, void *data)
 		}
 
 		if (cbp->cb_print_dio_verify) {
-			printf_color(ANSI_BOLD, " %11s", gettext("DIO VERIFY"));
+			printf_color(ANSI_BOLD, " %5s", gettext("DIO"));
 		}
 
 		if (cbp->vcdl != NULL)
