@@ -498,7 +498,7 @@ zfs_uio_page_aligned(zfs_uio_t *uio)
  * Mark pages to know if they were allocated to replace ZERO_PAGE() for
  * Direct IO writes.
  */
-#define	ZFS_MARKED_PAGE		0x5a465350414745 /* ASCI: ZFSPAGE */
+#define	ZFS_MARKED_PAGE		0x5a465350414745 /* ASCII: ZFSPAGE */
 #define	IS_ZFS_MARKED_PAGE(_p) \
 	(page_private(_p) == (unsigned long)ZFS_MARKED_PAGE)
 #define	IS_ZERO_PAGE(_p) ((_p) == ZERO_PAGE(0))
@@ -575,7 +575,6 @@ zfs_uio_free_dio_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	vmem_free(uio->uio_dio.pages,
 	    uio->uio_dio.npages * sizeof (struct page *));
 }
-EXPORT_SYMBOL(zfs_uio_free_dio_pages);
 
 /*
  * zfs_uio_iov_step() is just a modified version of the STEP function of Linux's
