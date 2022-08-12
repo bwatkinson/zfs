@@ -872,7 +872,7 @@ abd_alloc_from_pages(struct page **pages, unsigned long offset, uint64_t size)
 	ASSERT3P(pages, !=, NULL);
 
 	/*
-	 * Even if this buf is filesystem metadata, we only track that if we
+	 * Even if this buf is filesystem metadata, we only track that we
 	 * own the underlying data buffer, which is not true in this case.
 	 * Therefore, we don't ever use ABD_FLAG_META here.
 	 */
@@ -1152,9 +1152,9 @@ abd_borrow_buf_copy(abd_t *abd, size_t n)
 
 /*
  * Return a borrowed raw buffer to an ABD. If the ABD is scatterd, this will
- * not change the contents of th ABD. If you want any changes you made to
+ * not change the contents of the ABD. If you want any changes you made to
  * buf to be copied back to abd, use abd_return_buf_copy() instead. If the
- * ABD is not constructed from user pages from Direct I/O than an ASSERT
+ * ABD is not constructed from user pages for Direct I/O then an ASSERT
  * checks to make sure the contents of buffer have not changed since it was
  * borrowed. We can not ASSERT that the contents of the buffer have not changed
  * if it is composed of user pages because the pages can not be placed under
