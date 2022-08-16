@@ -54,8 +54,9 @@ log_must eval "echo 'password' | zfs create -o encryption=on \
 mntpnt=$(get_prop mountpoint $TESTPOOL1/$TESTFS1)
 
 for bs in "4k" "128k" "1m"; do
-	dio_and_verify rw $DIO_FILESIZE $bs $mntpnt "sync"
-	dio_and_verify randrw $DIO_FILESIZE $bs $mntpnt "sync"
+	for op in "rw" "randrw" "write"; do
+		dio_and_verify $op $DIO_FILESIZE $bs $mntpnt "sync"
+	done
 done
 
 log_pass "Verified encryption works using Direct IO"
