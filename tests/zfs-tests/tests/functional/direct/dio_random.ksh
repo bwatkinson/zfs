@@ -30,7 +30,7 @@
 
 #
 # DESCRIPTION:
-# 	Verify mixed direct IO and buffered IO.  A workload of random
+# 	Verify mixed direct IO and buffered IO. A workload of random
 #	but correctly aligned direct read/writes is mixed with a
 #	concurrent workload of entirely unaligned buffered read/writes.
 #
