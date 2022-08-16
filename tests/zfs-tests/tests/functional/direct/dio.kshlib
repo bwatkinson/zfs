@@ -41,16 +41,17 @@ function dio_and_verify # mode file-size block-size directory ioengine extra-arg
 	typeset ioengine=$5
 	typeset extra_args=$6
 
-	# Invoke an fio workload via direct IO.
+	# Invoke an fio workload via direct IO and verify with direct IO.
 	log_must fio --directory=$mntpnt --name=direct-$mode \
 	    --rw=$mode --size=$size --bs=$bs --direct=1 --numjobs=1 \
 	    --verify=sha1 --ioengine=$ioengine --fallocate=none \
-	    --group_reporting --minimal $extra_args
+	    --group_reporting --minimal --do_verify=1 $extra_args
 
-	# Verify the files written using buffered IO.
-	log_must fio --directory=$mntpnt --name=direct-verify \
+	# Now just read back the file without direct IO into the ARC as an additional
+	# verfication step.
+	log_must fio --directory=$mntpnt --name=direct-$mode \
 	    --rw=read --size=$size --bs=$bs --direct=0 --numjobs=1 \
-	    --verify_only --group_reporting --minimal
+		--ioengine=$ioengine --group_reporting --minimal
 
 	log_must rm -f "$mntpnt/direct-*"
 }
