@@ -62,7 +62,7 @@ log_must truncate -s $file_size $tmp_file
 
 log_must fio --filename=$tmp_file --name=always-randrw \
         --rw=randwrite --bs=$page_size --size=$file_size --numjobs=1 \
-	--ioengine=posixaio --fallocate=none --iodepth=4 --verify=sha1 \
+	    --ioengine=posixaio --fallocate=none --iodepth=4 --verify=sha1 \
         --group_reporting --minimal --runtime=$runtime --time_based
 
 log_pass "Verify direct=always mixed small async requests"
