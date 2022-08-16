@@ -61,12 +61,12 @@ fi
 
 for ioengine in $fio_async_ioengines; do
 	for ioengine_args in "${async_ioengine_args[@]}"; do
-		log_note "Checking direct IO with FIO async ioengine" \
-		    " $ioengine with args $ioengine_args"
-		dio_and_verify rw $DIO_FILESIZE $DIO_BS $mntpnt "$ioengine" \
-		    "$ioengine_args"
-		dio_and_verify randrw $DIO_FILESIZE $DIO_BS $mntpnt \
-		    "$ioengine" "$ioengine_args"
+		for op in "rw" "randrw" "write"; do
+			log_note "Checking direct IO with FIO async ioengine" \
+			    " $ioengine with args $ioengine_args"
+			dio_and_verify $op $DIO_FILESIZE $DIO_BS $mntpnt "$ioengine" \
+			    "$ioengine_args"
+		done
 	done
 done
 
