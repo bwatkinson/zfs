@@ -57,8 +57,9 @@ compress_args="--buffer_compress_percentage=50"
 
 for comp in "${compress_prop_vals[@]:1}"; do
 	log_must zfs set compression=$comp $TESTPOOL/$TESTFS
-	dio_and_verify rw $DIO_FILESIZE $DIO_BS $mntpnt "sync" $compress_args
-	dio_and_verify randrw $DIO_FILESIZE $DIO_BS $mntpnt "sync" $compress_args
+	for op in "rw" "randrw" "write"; do
+		dio_and_verify $op $DIO_FILESIZE $DIO_BS $mntpnt "sync" $compress_args
+	done
 done
 
 log_pass "Verfied compression works using Direct IO"
