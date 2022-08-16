@@ -55,7 +55,8 @@ mntpnt=$(get_prop mountpoint $TESTPOOL/$TESTFS)
 dedup_args="--dedupe_percentage=50"
 
 log_must zfs set dedup=on $TESTPOOL/$TESTFS
-dio_and_verify rw $DIO_FILESIZE $DIO_BS $mntpnt "sync" $dedup_args
-dio_and_verify randrw $DIO_FILESIZE $DIO_BS $mntpnt "sync" $dedup_args
+for op in "rw" "randrw" "write"; do
+	dio_and_verify $op $DIO_FILESIZE $DIO_BS $mntpnt "sync" $dedup_args
+done
 
 log_pass "Verfied deduplication works using Direct IO"
