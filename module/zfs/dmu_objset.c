@@ -1601,16 +1601,30 @@ dmu_objset_write_done(zio_t *zio, arc_buf_t *abuf, void *arg)
 	blkptr_t *bp = zio->io_bp;
 	blkptr_t *bp_orig = &zio->io_bp_orig;
 	objset_t *os = arg;
+	dsl_dataset_t *ds = os->os_dsl_dataset;
+	dmu_tx_t *tx = os->os_synctx;
+
 
 	if (zio->io_flags & ZIO_FLAG_IO_REWRITE) {
 		ASSERT(BP_EQUAL(bp, bp_orig));
 	} else {
-		dsl_dataset_t *ds = os->os_dsl_dataset;
-		dmu_tx_t *tx = os->os_synctx;
-
 		(void) dsl_dataset_block_kill(ds, bp_orig, tx, B_TRUE);
 		dsl_dataset_block_born(ds, bp, tx);
 	}
+
+	if (ds != NULL) {
+		for (spa_feature_t f = 0; f < SPA_FEATURES; f++) {
+			if (dsl_dataset_feature_activation_is_active(ds, f)) {
+				if (dsl_dataset_feature_is_active(ds, f))
+					continue;
+				dsl_dataset_activate_feature(ds->ds_object, f,
+				    ds->ds_feature_activation[f], tx);
+				ds->ds_feature[f] =
+				    ds->ds_feature_activation[f];
+			}
+		}
+	}
+
 	kmem_free(bp, sizeof (*bp));
 }
 

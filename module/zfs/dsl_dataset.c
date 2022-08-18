@@ -1066,6 +1066,12 @@ dsl_dataset_feature_is_active(dsl_dataset_t *ds, spa_feature_t f)
 	return (zfeature_active(f, ds->ds_feature[f]));
 }
 
+boolean_t
+dsl_dataset_feature_activation_is_active(dsl_dataset_t *ds, spa_feature_t f)
+{
+	return (zfeature_active(f, ds->ds_feature_activation[f]));
+}
+
 /*
  * The buffers passed out by this function are references to internal buffers;
  * they should not be freed by callers of this function, and they should not be
@@ -2102,16 +2108,6 @@ dsl_dataset_sync(dsl_dataset_t *ds, zio_t *zio, dmu_tx_t *tx)
 	}
 
 	dmu_objset_sync(ds->ds_objset, zio, tx);
-
-	for (spa_feature_t f = 0; f < SPA_FEATURES; f++) {
-		if (zfeature_active(f, ds->ds_feature_activation[f])) {
-			if (zfeature_active(f, ds->ds_feature[f]))
-				continue;
-			dsl_dataset_activate_feature(ds->ds_object, f,
-			    ds->ds_feature_activation[f], tx);
-			ds->ds_feature[f] = ds->ds_feature_activation[f];
-		}
-	}
 }
 
 /*

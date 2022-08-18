@@ -484,6 +484,8 @@ void dsl_dataset_activate_feature(uint64_t dsobj, spa_feature_t f, void *arg,
 void dsl_dataset_deactivate_feature(dsl_dataset_t *ds, spa_feature_t f,
     dmu_tx_t *tx);
 boolean_t dsl_dataset_feature_is_active(dsl_dataset_t *ds, spa_feature_t f);
+boolean_t dsl_dataset_feature_activation_is_active(dsl_dataset_t *ds,
+    spa_feature_t f);
 boolean_t dsl_dataset_get_uint64_array_feature(dsl_dataset_t *ds,
     spa_feature_t f, uint64_t *outlength, uint64_t **outp);
 
