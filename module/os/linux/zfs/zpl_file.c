@@ -1286,7 +1286,7 @@ zpl_fadvise(struct file *filp, loff_t offset, loff_t len, int advice)
 	case POSIX_FADV_SEQUENTIAL:
 	case POSIX_FADV_WILLNEED:
 #ifdef HAVE_GENERIC_FADVISE
-		if (zn_has_cached_data(zp))
+		if (zn_has_cached_data(zp, offset, offset + len - 1))
 			error = generic_fadvise(filp, offset, len, advice);
 #endif
 		/*
