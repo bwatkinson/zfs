@@ -202,23 +202,23 @@ zfs_access(znode_t *zp, int mode, int flag, cred_t *cr)
 	return (error);
 }
 
-boolean_t
-zfs_check_direct_enabled(znode_t *zp, int ioflags)
+zfs_direct_enabled_t
+zfs_check_direct_enabled(znode_t *zp, int ioflags, int *error)
 {
-	boolean_t is_direct = B_FALSE;
-
+	zfs_direct_enabled_t is_direct = ZFS_DIRECT_IO_DISABLED;
 	zfsvfs_t *zfsvfs = ZTOZSB(zp);
 
-	ZFS_ENTER(zfsvfs);
+	if ((*error = zfs_enter(zfsvfs, FTAG)) != 0)
+		return (ZFS_DIRECT_IO_ERR);
 
 	if (ioflags & O_DIRECT &&
 	    zfsvfs->z_os->os_direct != ZFS_DIRECT_DISABLED) {
-		is_direct = B_TRUE;
+		is_direct = ZFS_DIRECT_IO_ENABLED;
 	} else if (zfsvfs->z_os->os_direct == ZFS_DIRECT_ALWAYS) {
-		is_direct = B_TRUE;
+		is_direct = ZFS_DIRECT_IO_ENABLED;
 	}
 
-	ZFS_EXIT(zfsvfs);
+	zfs_exit(zfsvfs, FTAG);
 
 	return (is_direct);
 }
@@ -240,13 +240,14 @@ zfs_setup_direct(struct znode *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
 	zfsvfs_t *zfsvfs = ZTOZSB(zp);
 	objset_t *os = zfsvfs->z_os;
 	int ioflag = *ioflagp;
+	int error = 0;
 
-	ZFS_ENTER(zfsvfs);
-	ZFS_VERIFY_ZP(zp);
+	if ((error = zfs_enter_verify_zp(zfsvfs, zp, FTAG)) != 0)
+		return (error);
 
 	if (os->os_direct == ZFS_DIRECT_DISABLED) {
-		ZFS_EXIT(zfsvfs);
-		return (EAGAIN);
+		error = EAGAIN;
+		goto out;
 
 	} else if (os->os_direct == ZFS_DIRECT_ALWAYS &&
 	    zfs_uio_page_aligned(uio) &&
@@ -260,33 +261,31 @@ zfs_setup_direct(struct znode *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
 	if (ioflag & O_DIRECT) {
 		if (!zfs_uio_page_aligned(uio) ||
 		    !zfs_uio_blksz_aligned(uio, SPA_MINBLOCKSIZE)) {
-			ZFS_EXIT(zfsvfs);
-			return (SET_ERROR(EINVAL));
+			error = SET_ERROR(EINVAL);
+			goto out;
 		}
 
 		if (zn_has_cached_data(zp, zfs_uio_offset(uio),
 		    zfs_uio_offset(uio) + zfs_uio_resid(uio) - 1)) {
-			ZFS_EXIT(zfsvfs);
-			return (SET_ERROR(EAGAIN));
+			error = SET_ERROR(EAGAIN);
+			goto out;
 		}
 
-		int error = zfs_uio_get_dio_pages_alloc(uio, rw);
-		if (error) {
-			ZFS_EXIT(zfsvfs);
-			return (error);
-		}
+		error = zfs_uio_get_dio_pages_alloc(uio, rw);
+		if (error)
+			goto out;
 	} else {
-		ZFS_EXIT(zfsvfs);
-		return (EAGAIN);
+		error = EAGAIN;
+		goto out;
 	}
 
 	IMPLY(ioflag & O_DIRECT, uio->uio_extflg & UIO_DIRECT);
-
-	ZFS_EXIT(zfsvfs);
+	ASSERT0(error);
 
 	*ioflagp = ioflag;
-
-	return (0);
+out:
+	zfs_exit(zfsvfs, FTAG);
+	return (error);
 }
 
 /*
