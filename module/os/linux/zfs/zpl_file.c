@@ -402,11 +402,14 @@ zpl_iter_read(struct kiocb *kiocb, struct iov_iter *to)
 	struct inode *ip = kiocb->ki_filp->f_mapping->host;
 	struct file *filp = kiocb->ki_filp;
 	int flags = filp->f_flags | zfs_io_flags(kiocb);
+	int error = 0;
 
-	boolean_t direct = zfs_check_direct_enabled(ITOZ(ip),
-	    flags);
+	zfs_direct_enabled_t direct =
+	    zfs_check_direct_enabled(ITOZ(ip), flags, &error);
 
-	if (direct) {
+	if (direct == ZFS_DIRECT_IO_ERR) {
+		return (-error);
+	} else if (direct == ZFS_DIRECT_IO_ENABLED) {
 		ssize_t read = zpl_iter_read_direct(kiocb, to);
 		/*
 		 * In the event we get EAGAIN we are falling back to
@@ -523,6 +526,7 @@ zpl_iter_write(struct kiocb *kiocb, struct iov_iter *from)
 	struct file *filp = kiocb->ki_filp;
 	int flags = filp->f_flags | zfs_io_flags(kiocb);
 	size_t count = 0;
+	int error = 0;
 
 	ssize_t ret = zpl_generic_write_checks(kiocb, from, &count);
 	if (ret)
@@ -530,17 +534,19 @@ zpl_iter_write(struct kiocb *kiocb, struct iov_iter *from)
 
 	loff_t offset = kiocb->ki_pos;
 
-	boolean_t direct = zfs_check_direct_enabled(ITOZ(ip),
-	    flags);
+	zfs_direct_enabled_t direct =
+	    zfs_check_direct_enabled(ITOZ(ip), flags, &error);
 
-	if (direct) {
+	if (direct == ZFS_DIRECT_IO_ERR) {
+		return (-error);
+	} else if (direct == ZFS_DIRECT_IO_ENABLED) {
 		/*
 		 * zpl_generic_file_direct_write() will attempt to flush out any
 		 * pages in the page cache and invalidate them. If this is
 		 * successful it will cal the direct_IO
 		 * address_space_operation (zpl_iter_write_direct()).
 		 */
-		size_t wrote = zpl_generic_file_direct_write(kiocb, from,
+		ssize_t wrote = zpl_generic_file_direct_write(kiocb, from,
 		    kiocb->ki_pos);
 
 		/*
@@ -676,15 +682,18 @@ zpl_aio_read(struct kiocb *kiocb, const struct iovec *iov,
 	int flags = filp->f_flags | zfs_io_flags(kiocb);
 	size_t count;
 	ssize_t ret;
+	int error = 0;
 
 	ret = generic_segment_checks(iov, &nr_segs, &count, VERIFY_WRITE);
 	if (ret)
 		return (ret);
 
-	boolean_t direct = zfs_check_direct_enabled(ITOZ(ip),
-	    flags);
+	zfs_direct_enabled_t direct =
+	    zfs_check_direct_enabled(ITOZ(ip), flags, &error);
 
-	if (direct) {
+	if (direct == ZFS_DIRECT_IO_ERR) {
+		return (-error);
+	} else if (direct == ZFS_DIRECT_IO_ENABLED) {
 		/*
 		 * In the event we get EAGAIN we are falling back to
 		 * buffered IO.
@@ -790,6 +799,7 @@ zpl_aio_write(struct kiocb *kiocb, const struct iovec *iov,
 	size_t ocount;
 	size_t count;
 	ssize_t ret;
+	int error = 0;
 
 	ret = generic_segment_checks(iov, &nr_segs, &ocount, VERIFY_READ);
 	if (ret)
@@ -803,10 +813,12 @@ zpl_aio_write(struct kiocb *kiocb, const struct iovec *iov,
 
 	kiocb->ki_pos = pos;
 
-	boolean_t direct = zfs_check_direct_enabled(ITOZ(ip),
-	    flags);
+	zfs_direct_enabled_t direct =
+	    zfs_check_direct_enabled(ITOZ(ip), flags, &error);
 
-	if (direct) {
+	if (direct == ZFS_DIRECT_IO_ERR) {
+		return (-error);
+	} else if (direct == ZFS_DIRECT_IO_ENABLED) {
 		/*
 		 * zpl_generic_file_direct_write() will attempt to flush out any
 		 * pages in the page cahce and invalidate them. If this is
@@ -827,6 +839,12 @@ zpl_aio_write(struct kiocb *kiocb, const struct iovec *iov,
 			 */
 			IMPLY(wrote == count, (pos + count) == kiocb->ki_pos);
 			return (wrote);
+		} else {
+			/*
+			 * If we are falling back to a buffered write, then the
+			 * file position should not be updated at this point.
+			 */
+			ASSERT3U(pos, ==, kiocb->ki_pos);
 		}
 	}
 
