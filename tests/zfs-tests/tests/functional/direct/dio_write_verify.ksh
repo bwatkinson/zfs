@@ -33,20 +33,22 @@
 # 	Verify checksum verify works for Direct I/O writes.
 #
 # STRATEGY:
-#	1. Check that manipulating the user buffer while Direct I/O writes are
-#      taking place does not cause any panics with compression turned on.
-#	2. Set the module parameter zfs_vdev_direct_write_verify_cnt to 10.
+#	1. Set the module parameter zfs_vdev_direct_write_verify_cnt to 100.
+#	2. Check that manipulating the user buffer while Direct I/O writes are
+#	   taking place does not cause any panics with compression turned on.
 #	3. Start a Direct IO write workload while manipulating the user buffer
-#      without compression.
+#	   without compression.
 #	4. Verify there are Direct I/O write verify failures using
-#      zpool status -d and checking for zevents. We also make sure there
-#      are reported data errors when reading the file back.
-#	5. Set zfs_vdev_direct_write_verify_cnt set to 1 and repeat 3.
-#	6. Verify there are Direct I/O write verify failures using
-#      zpool status -d and checking for zevents. We also make sure there
-#      here are no reported data errors when reading the file back because
-#      with us checking every Direct I/O write and on checksum validation
-#      failure those writes will not be committed to a VDEV.
+#	   zpool status -d and checking for zevents. We also make sure there
+#	   are reported data errors when reading the file back.
+#	5. Repeat steps 3 and 4 for 3 iterations.
+#	6. Set zfs_vdev_direct_write_verify_cnt set to 1 and repeat 3.
+#	7. Verify there are Direct I/O write verify failures using
+#	   zpool status -d and checking for zevents. We also make sure there
+#	   there are no reported data errors when reading the file back because
+#	   with us checking every Direct I/O write and on checksum validation
+#	   failure those writes will not be committed to a VDEV.
+#	8. Repeat step 6 for for 3 iterations.
 #
 
 verify_runnable "global"
@@ -68,6 +70,8 @@ fi
 
 log_onexit cleanup
 
+ITERATIONS=3
+NUMBLOCKS=8
 mntpnt=$(get_prop mountpoint $TESTPOOL/$TESTFS)
 
 # Get a list of vdevs in our pool
@@ -77,11 +81,13 @@ set -A array $(get_disklist_fullpath $TESTPOOL)
 firstvdev=${array[0]}
 
 log_must zfs set recordsize=128k $TESTPOOL/$TESTFS
+log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_CNT 100
 
 # First we will verify there are no panics while manipulating the contents of
 # the user buffer during Direct I/O writes with compression. The contents
 # will always be copied out of the ABD and there should never be any ABD ASSERT
 # failures
+log_note "Verifying no panics for Direct I/O writes with compression"
 log_must zfs set compression=on $TESTPOOL/$TESTFS
 prev_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
 log_must manipulate_user_buffer -o "$mntpnt/direct-write.iso" -r 5
@@ -91,62 +97,73 @@ log_must rm -f "$mntpnt/direct-write.iso"
 
 
 # Next we will verify there are checksum errors for Direct I/O writes while
-# manipulating the contents of the user pages by setting a higher value for
-# the verify cnt.
+# manipulating the contents of the user pages.
 log_must zfs set compression=off $TESTPOOL/$TESTFS
-log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_CNT 10
 
-# Clearing out DIO counts for Zpool
-log_must zpool clear $TESTPOOL
-# Clearing out dio_verify from event logs
-log_must zpool events -c
+for i in $(seq 1 $ITERATIONS); do
+	log_note "Verifying every 100th Direct I/O write checksum iteration \
+	    $i of $ITERATIONS"
 
-prev_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
-log_must manipulate_user_buffer -o "$mntpnt/direct-write.iso" -r 5
-log_mustnot eval "cat $mntpnt/direct-write.iso > /dev/null"
+	# Clearing out DIO counts for Zpool
+	log_must zpool clear $TESTPOOL
+	# Clearing out dio_verify from event logs
+	log_must zpool events -c
 
-# Getting new Direct I/O write count, Direct I/O write checksum verify
-# errors and zevents.
-curr_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
-DIO_VERIFIES=$(zpool status -dp | awk -v d="raidz" '$0 ~ d {print $6}')
-DIO_VERIFY_EVENTS=$(zpool events | grep -c dio_verify)
+	prev_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
+	log_must manipulate_user_buffer -o "$mntpnt/direct-write.iso" -r 5 \
+	    -n $NUMBLOCKS
+	log_mustnot dd if=$mntpnt/direct-write.iso of=/dev/null bs=128k \
+	    count=$NUMBLOCKS
 
-log_must [ $DIO_VERIFIES -gt 0 ]
-log_must [ $DIO_VERIFY_EVENTS -gt 0 ]
-log_must [ $curr_dio_wr -gt $prev_dio_wr ]
+	# Getting new Direct I/O write count, Direct I/O write checksum verify
+	# errors and zevents.
+	curr_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
+	DIO_VERIFIES=$(zpool status -dp | awk -v d="raidz" '$0 ~ d {print $6}')
+	DIO_VERIFY_EVENTS=$(zpool events | grep -c dio_verify)
 
-# Verifying there are checksum errors
-cksum=$(zpool status -P -v $TESTPOOL | awk -v v="$firstvdev" '$0 ~ v {print $5}')
-log_must [ $cksum -ne 0 ]
+	log_must [ $DIO_VERIFIES -gt 0 ]
+	log_must [ $DIO_VERIFY_EVENTS -gt 0 ]
+	log_must [ $curr_dio_wr -gt $prev_dio_wr ]
 
-log_must rm -f "$mntpnt/direct-write.iso"
+	# Verifying there are checksum errors
+	cksum=$(zpool status -P -v $TESTPOOL | awk -v v="$firstvdev" '$0 ~ v \
+	    {print $5}')
+	log_must [ $cksum -ne 0 ]
 
+	log_must rm -f "$mntpnt/direct-write.iso"
+done
 
 # Finally we will verfiy that with checking every Direct I/O write we have no
 # errors at all.
 log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_CNT 1
 
-# Clearing out DIO counts for Zpool
-log_must zpool clear $TESTPOOL
-# Clearing out dio_verify from event logs
-log_must zpool events -c
+for i in $(seq 1 $ITERATIONS); do
+	log_note "Verifying every Direct I/O write checksums iteration $i of \
+	    $ITERATIONS"
 
-prev_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
-log_must manipulate_user_buffer -o "$mntpnt/direct-write.iso" -r 5
-log_must eval "cat $mntpnt/direct-write.iso > /dev/null"
+	# Clearing out DIO counts for Zpool
+	log_must zpool clear $TESTPOOL
+	# Clearing out dio_verify from event logs
+	log_must zpool events -c
 
-# Getting new Direct I/O write count, Direct I/O write checksum verify
-# errors and zevents.
-curr_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
-DIO_VERIFIES=$(zpool status -dp | awk -v d="raidz" '$0 ~ d {print $6}')
-DIO_VERIFY_EVENTS=$(zpool events | grep -c dio_verify)
+	prev_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
+	log_must manipulate_user_buffer -o "$mntpnt/direct-write.iso" -r 5 \
+	    -n $NUMBLOCKS
+	log_must dd if=$mntpnt/direct-write.iso of=/dev/null bs=128k \
+	    count=$NUMBLOCKS
 
-log_must [ $DIO_VERIFIES -gt 0 ]
-log_must [ $DIO_VERIFY_EVENTS -gt 0 ]
-log_must [ $curr_dio_wr -gt $prev_dio_wr ]
+	# Getting new Direct I/O write count, Direct I/O write checksum verify
+	# errors and zevents.
+	curr_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
+	DIO_VERIFIES=$(zpool status -dp | awk -v d="raidz" '$0 ~ d {print $6}')
+	DIO_VERIFY_EVENTS=$(zpool events | grep -c dio_verify)
 
-log_must check_pool_status $TESTPOOL "errors" "No known data errors"
-log_must rm -f "$mntpnt/direct-write.iso"
+	log_must [ $DIO_VERIFIES -gt 0 ]
+	log_must [ $DIO_VERIFY_EVENTS -gt 0 ]
+	log_must [ $curr_dio_wr -gt $prev_dio_wr ]
 
+	log_must check_pool_status $TESTPOOL "errors" "No known data errors"
+	log_must rm -f "$mntpnt/direct-write.iso"
+done
 
 log_pass "Verified checksum verify works for Direct I/O writes." 
