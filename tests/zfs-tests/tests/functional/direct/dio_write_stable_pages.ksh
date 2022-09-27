@@ -33,9 +33,12 @@
 # 	Verify stable pages work for O_DIRECT writes.
 #
 # STRATEGY:
-#	1. Start a Direct IO write workload while manipulating the user buffer.
-#	2. Verify there is no checksum errors reported from zpool status.
-#	3. Repeat 1 and 2 but with compression disabled.
+#	1. Start a Direct I/O write workload while manipulating the user
+#	   buffer.
+#	2. Verify we can Read the contents of the file using buffered reads.
+#	3. Verify there is no checksum errors reported from zpool status.
+#	4. Repeat steps 1 and 2 for 3 iterations.
+#	5. Repeat 1-3 but with compression disabled.
 #
 
 verify_runnable "global"
@@ -45,7 +48,7 @@ function cleanup
 	log_must rm -f "$mntpnt/direct-write.iso"
 }
 
-log_assert "Verify stable pages work for Direct IO writes."
+log_assert "Verify stable pages work for Direct I/O writes."
 
 if is_linux; then
 	log_unsupported "Linux does not support stable pages for O_DIRECT \
@@ -54,18 +57,33 @@ fi
 
 log_onexit cleanup
 
+ITERATIONS=3
+NUMBLOCKS=8
 mntpnt=$(get_prop mountpoint $TESTPOOL/$TESTFS)
 log_must zfs set recordsize=128k $TESTPOOL/$TESTFS
 
 for compress in "on" "off";
 do
 	log_must zfs set compression=$compress $TESTPOOL/$TESTFS
-	# Manipulate the user's buffer while running O_DIRECT write worload
-	# with the buffer.
-	log_must manipulate_user_buffer -o "$mntpnt/direct-write.iso" -r 5
 
-	# Making sure there are no data errors for the zpool
-	log_must check_pool_status $TESTPOOL "errors" "No known data errors"
+	for i in $(seq 1 $ITERATIONS); do
+		log_not "Verifying stable pages for Direct I/O writes \
+		    iteration $i of $ITERATIONS"
+		# Manipulate the user's buffer while running O_DIRECT write
+		# workload with the buffer.
+		log_must manipulate_user_buffer -o "$mntpnt/direct-write.iso" \
+		    -r 5 -n $NUMBLOCKS
+
+		# Reading back the contents of the file
+		log_must dd if=$mntpnt/direct-write.iso of=/dev/null bs=128k \
+		    count=$NUMBLOCKS
+
+		# Making sure there are no data errors for the zpool
+		log_must check_pool_status $TESTPOOL "errors" \
+		    "No known data errors"
+
+		log_must rm -f "$mntpnt/direct-write.iso"
+	done
 done
 
 log_pass "Verified stable pages work for Direct IO writes."
