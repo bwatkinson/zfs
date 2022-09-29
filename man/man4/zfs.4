@@ -399,7 +399,7 @@ May be increased up to
 .Sy ASHIFT_MAX Po 16 Pc ,
 but this may negatively impact pool space efficiency.
 .
-.It Sy zfs_vdev_direct_write_verify_cnt Ns = Ns Sy Linux 100 | FreeBSD 0 Pq int
+.It Sy zfs_vdev_direct_write_verify_cnt Ns = Ns Sy Linux 100 | FreeBSD 0 Pq uint
 If non-zero, then a Direct I/O write's checksum will be verified every cnt
 intervals for a top-level VDEV before it is committed and the block pointer is
 updated.
