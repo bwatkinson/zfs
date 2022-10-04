@@ -522,6 +522,21 @@ abd_get_offset_impl(abd_t *abd, abd_t *sabd, size_t off, size_t size)
 		 */
 		abd->abd_flags |= ABD_FLAG_LINEAR;
 
+		/*
+		 * User pages from Direct I/O requests may be in a single page
+		 * (ABD_FLAG_LINEAR_PAGE), and we must make sure to still flag
+		 * that here for abd. This is required because we have to be
+		 * careful when borrowing the buffer from the ABD because we
+		 * can not place user pages under write protection on Linux.
+		 * See the comments in abd_os.c for abd_borrow_buf(),
+		 * abd_borrow_buf_copy(), abd_return_buf() and
+		 * abd_return_buf_copy().
+		 */
+		if (abd_is_from_pages(sabd)) {
+			abd->abd_flags |= ABD_FLAG_FROM_PAGES |
+			    ABD_FLAG_LINEAR_PAGE;
+		}
+
 		ABD_LINEAR_BUF(abd) = (char *)ABD_LINEAR_BUF(sabd) + off;
 	} else if (abd_is_gang(sabd)) {
 		size_t left = size;
