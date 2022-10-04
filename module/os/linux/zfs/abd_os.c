@@ -1173,6 +1173,27 @@ abd_return_buf(abd_t *abd, void *buf, size_t n)
 		zio_buf_free(buf, n);
 	} else if (abd_is_linear(abd)) {
 		ASSERT3P(buf, ==, abd_to_buf(abd));
+	} else if (abd_is_gang(abd)) {
+#ifdef ZFS_DEBUG
+		/*
+		 * We have to be careful with gang ABD's that we do not ASSERT0
+		 * for any ABD's that contain user pages from Direct I/O. In
+		 * order to handle this, we just iterate through the gang ABD
+		 * and only verify ABDs that are not from user pages.
+		 */
+		void *cmp_buf = buf;
+
+		for (abd_t *cabd = list_head(&ABD_GANG(abd).abd_gang_chain);
+		    cabd != NULL;
+		    cabd = list_next(&ABD_GANG(abd).abd_gang_chain, cabd)) {
+			if (!abd_is_from_pages(cabd)) {
+				ASSERT0(abd_cmp_buf(cabd, cmp_buf,
+				    cabd->abd_size));
+			}
+			cmp_buf = (char *)cmp_buf + cabd->abd_size;
+		}
+#endif
+		zio_buf_free(buf, n);
 	} else {
 		ASSERT0(abd_cmp_buf(abd, buf, n));
 		zio_buf_free(buf, n);
