@@ -362,7 +362,7 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 	 * there's no compelling reason to handle this uio is smaller chunks.
 	 */
 	if (uio->uio_extflg & UIO_DIRECT)
-		chunk_size = DMU_MAX_ACCESS;
+		chunk_size = SPA_MAXBLOCKSIZE;
 
 	while (n > 0) {
 		ssize_t nbytes = MIN(n, chunk_size -

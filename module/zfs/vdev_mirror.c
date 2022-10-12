@@ -756,8 +756,21 @@ vdev_mirror_io_done(zio_t *zio)
 			 * to be able to detach it -- which requires all
 			 * writes to the old device to have succeeded.
 			 */
-			if (good_copies == 0 || zio->io_vd == NULL)
+			zio_t *pio = zio_unique_parent(zio);
+			if (good_copies == 0 || zio->io_vd == NULL) {
 				zio->io_error = vdev_mirror_worst_error(mm);
+				zfs_dbgmsg("zio = %p, "
+				    "zio->io_prop.zp_direct_write_verify_error"
+				    "= %d, "
+				    "zio->io_error = %d, "
+				    "zio_unique_parent(zio)/pio = %p, "
+				    "pio->io_prop.zp_direct_verify_error = %d",
+				    zio,
+				    zio->io_prop.zp_direct_write_verify_error,
+				    zio->io_error,
+				    pio,
+				    pio->io_prop.zp_direct_write_verify_error);
+			}
 		}
 		return;
 	}

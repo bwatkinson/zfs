@@ -44,6 +44,7 @@ static int blocksize = 131072; /* 128K */
 static int numblocks = 8;
 static double runtime = 10; /* 10 seconds */
 static char *execname = NULL;
+static int verify_wr_err = 0;
 static int print_usage = 0;
 static int randompattern = 0;
 static int ofd;
@@ -59,7 +60,8 @@ usage(void)
 {
 	(void) fprintf(stderr,
 	    "usage %s -o outputfile [-b blocksize] [-n numblocks]\n"
-	    "         [-p randpattern] [-r runtime] [-h help]\n"
+	    "         [-p randpattern] [-r runtime] [-v verify_wr_err]\n"
+	    "         [-h help]\n"
 	    "\n"
 	    "Testing whether checksum verify works correctly for O_DIRECT.\n"
 	    "when manipulating the contents of a userspace buffer.\n"
@@ -74,6 +76,8 @@ usage(void)
 	    "    runtime:     Total amount of time to run test in seconds.\n"
 	    "                 Test will run till the specified runtime or\n"
 	    "                 when blocksize * numblocks data is written.\n"
+	    "    verify_wr_err: Check that pwrite() returns EINVAL at least "
+	    "                   once\n"
 	    "    help:        Print usage information and exit.\n"
 	    "\n"
 	    "    Required parameters:\n"
@@ -83,7 +87,8 @@ usage(void)
 	    "    blocksize   -> 131072\n"
 	    "    numblocks   -> 8\n"
 	    "    randpattern -> false\n"
-	    "    runtime     -> 10 seconds\n",
+	    "    runtime     -> 10 seconds\n"
+	    "    verify_wr_err -> false\n",
 	    execname);
 	(void) exit(1);
 }
@@ -97,7 +102,7 @@ parse_options(int argc, char *argv[])
 	extern int optind, optopt;
 	execname = argv[0];
 
-	while ((c = getopt(argc, argv, "b:hn:o:pr:")) != -1) {
+	while ((c = getopt(argc, argv, "b:hn:o:pr:v")) != -1) {
 		switch (c) {
 			case 'b':
 				blocksize = atoi(optarg);
@@ -121,6 +126,10 @@ parse_options(int argc, char *argv[])
 
 			case 'r':
 				runtime = (double)atoi(optarg);
+				break;
+
+			case 'v':
+				verify_wr_err = 1;
 				break;
 
 			case ':':
@@ -160,17 +169,33 @@ write_thread(void *arg)
 	int total_data = blocksize * numblocks;
 	int left = total_data;
 	ssize_t wrote = 0;
+	unsigned int total_errors = 0;
 	pthread_args_t *args = (pthread_args_t *)arg;
 
 	while (!args->done || !args->entire_file_written) {
 		wrote = pwrite(ofd, buf, blocksize, offset);
-		assert(wrote <= blocksize);
+		if (wrote == -1) {
+			assert(errno == EINVAL);
+			total_errors += 1;
+		} else {
+			assert(wrote == blocksize);
+		}
+		/*
+		 * if (wrote != -EINVAL && wrote != blocksize) {
+		 * 	fprintf(stderr, "We wrote = %ld\n", wrote);
+		 * }
+		 * assert(wrote == -EINVAL || wrote == blocksize);
+		 */
 		offset = ((offset + blocksize) % total_data);
 		if (left > 0)
 			left -= blocksize;
 		else
 			args->entire_file_written = 1;
 	}
+
+	if (verify_wr_err)
+		assert(total_errors > 0);
+	fprintf(stderr, "Total errors: %d\n", total_errors);
 
 	pthread_exit(NULL);
 }

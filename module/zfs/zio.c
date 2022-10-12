@@ -707,12 +707,36 @@ zio_notify_parent(zio_t *pio, zio_t *zio, enum zio_wait_type wait,
 	int *errorp = &pio->io_child_error[zio->io_child_type];
 
 	mutex_enter(&pio->io_lock);
-	if (zio->io_error && !(zio->io_flags & ZIO_FLAG_DONT_PROPAGATE))
+	if (zio->io_error && (!(zio->io_flags & ZIO_FLAG_DONT_PROPAGATE)))
 		*errorp = zio_worst_error(*errorp, zio->io_error);
+
 	pio->io_reexecute |= zio->io_reexecute;
-	pio->io_prop.zp_direct_write_verify_error =
-	    zio->io_prop.zp_direct_write_verify_error;
+
+	if (zio->io_prop.zp_direct_write_verify_error) {
+		ASSERT3U(zio->io_error, ==, EINVAL);
+		ASSERT3U(pio->io_child_type, ==, ZIO_CHILD_LOGICAL);
+		pio->io_prop.zp_direct_write_verify_error = B_TRUE;
+		pio->io_flags |= ZIO_FLAG_DONT_RETRY;
+	}
+
 	ASSERT3U(*countp, >, 0);
+
+	if (zio->io_prop.zp_direct_write_verify_error) {
+		zfs_dbgmsg("EINVAL = %d, zio = %p, zio->io_error = %d, "
+		    "zio->io_child_type = %d, pio = %p, *errorp = %d, "
+		    "pio->io_child_type = %d, "
+		    "pio->io_prop.zp_direct_write_verify_error = %d, "
+		    "*countp = %d, "
+		    "!(zio->io_flags & ZIO_FLAG_DONT_PROPAGATE) = %d",
+		    EINVAL, zio, zio->io_error, zio->io_child_type,
+		    pio, *errorp, pio->io_child_type,
+		    pio->io_prop.zp_direct_write_verify_error,
+		    (int)(*countp),
+		    !(zio->io_flags & ZIO_FLAG_DONT_PROPAGATE));
+#ifdef _KERNEL
+		spl_dumpstack();
+#endif
+	}
 
 	(*countp)--;
 
@@ -757,8 +781,18 @@ zio_notify_parent(zio_t *pio, zio_t *zio, enum zio_wait_type wait,
 static void
 zio_inherit_child_errors(zio_t *zio, enum zio_child c)
 {
-	if (zio->io_child_error[c] != 0 && zio->io_error == 0)
+	if (zio->io_child_error[c] != 0 && zio->io_error == 0) {
 		zio->io_error = zio->io_child_error[c];
+		zfs_dbgmsg("zio = %p, zio_unique_parent(zio) = %p, "
+		    "zio->io_error = %d, "
+		    "zio->io_prop.zp_direct_write_verify_error = %d, "
+		    "zio_child_type(c) = %d",
+		    zio,
+		    zio_unique_parent(zio),
+		    zio->io_error,
+		    zio->io_prop.zp_direct_write_verify_error,
+		    c);
+	}
 }
 
 int
@@ -1484,6 +1518,13 @@ zio_vdev_child_io(zio_t *pio, blkptr_t *bp, vdev_t *vd, uint64_t offset,
 	zio->io_physdone = pio->io_physdone;
 	if (vd->vdev_ops->vdev_op_leaf && zio->io_logical != NULL)
 		zio->io_logical->io_phys_children++;
+
+	if (zio->io_pipeline &  ZIO_STAGE_DIO_CHECKSUM_VERIFY) {
+		zfs_dbgmsg("zio = %p, pio = %p, "
+		    "zio->io_pipeline & ZIO_STAGE_VDEV_IO_ASSESS = %d",
+		    zio, pio,
+		    zio->io_pipeline & ZIO_STAGE_VDEV_IO_ASSESS ? 1 : 0);
+	}
 
 	return (zio);
 }
@@ -2322,6 +2363,8 @@ zio_reexecute(void *arg)
 {
 	zio_t *pio = arg;
 	zio_t *cio, *cio_next;
+
+	zfs_dbgmsg("Calling zio_reexecute() with pio = %p", pio);
 
 	ASSERT(pio->io_child_type == ZIO_CHILD_LOGICAL);
 	ASSERT(pio->io_orig_stage == ZIO_STAGE_OPEN);
@@ -3751,6 +3794,14 @@ zio_vdev_io_start(zio_t *zio)
 	zio->io_delay = 0;
 
 	ASSERT(zio->io_error == 0);
+	if (zio->io_child_error[ZIO_CHILD_VDEV] != 0) {
+		zfs_dbgmsg("zio = %p, zio_unigue_parent(zio) = %p, "
+		    "zio->io_child_error[ZIO_CHILD_VDEV] = %d, "
+		    "zio->io_prop.zp_direct_write_verify_error = %d",
+		    zio, zio_unique_parent(zio),
+		    zio->io_child_error[ZIO_CHILD_VDEV],
+		    zio->io_prop.zp_direct_write_verify_error);
+	}
 	ASSERT(zio->io_child_error[ZIO_CHILD_VDEV] == 0);
 
 	if (vd == NULL) {
@@ -3999,6 +4050,16 @@ zio_vdev_io_assess(zio_t *zio)
 {
 	vdev_t *vd = zio->io_vd;
 
+	if (zio->io_prop.zp_direct_write_verify_error) {
+		zio_t *pio = zio_unique_parent(zio);
+		zfs_dbgmsg("zio = %p, zio_unique_parent(zio)/(pio) = %p, "
+		    "zio->io_prop.zp_direct_write_verify_error = %d "
+		    "pio->io_prop.zp_direct_write_verify_error = %d",
+		    zio, pio,
+		    zio->io_prop.zp_direct_write_verify_error,
+		    pio->io_prop.zp_direct_write_verify_error);
+	}
+
 	if (zio_wait_for_children(zio, ZIO_CHILD_VDEV_BIT, ZIO_WAIT_DONE)) {
 		return (NULL);
 	}
@@ -4028,6 +4089,17 @@ zio_vdev_io_assess(zio_t *zio)
 		zio->io_flags |= ZIO_FLAG_IO_RETRY |
 		    ZIO_FLAG_DONT_CACHE | ZIO_FLAG_DONT_AGGREGATE;
 		zio->io_stage = ZIO_STAGE_VDEV_IO_START >> 1;
+		if (zio->io_prop.zp_direct_write_verify_error) {
+			zio_t *pio = zio_unique_parent(zio);
+			zfs_dbgmsg("zio = %p, "
+			    "zio_unique_parent(zio)/(pio) = %p, "
+			    "zio->io_prop.zp_direct_write_verify_error = %d, "
+			    "pio->io_prop.zp_direct_write_verify_error = %d, "
+			    "RETRYING!",
+			    zio, pio,
+			    zio->io_prop.zp_direct_write_verify_error,
+			    pio->io_prop.zp_direct_write_verify_error);
+		}
 		zio_taskq_dispatch(zio, ZIO_TASKQ_ISSUE,
 		    zio_requeue_io_start_cut_in_line);
 		return (NULL);
@@ -4350,6 +4422,10 @@ zio_dio_checksum_verify(zio_t *zio)
 
 	mutex_enter(&zio->io_vd->vdev_stat_lock);
 	zio->io_vd->vdev_direct_write_verify_cnt += 1;
+	zfs_dbgmsg("zio = %p, zio->io_vd->vdev_direct_write_verify_cnt = %d, "
+	    "zfs_vdev_direct_write_verify_cnt = %d, pio = %p",
+	    zio, zio->io_vd->vdev_direct_write_verify_cnt,
+	    zfs_vdev_direct_write_verify_cnt, pio);
 	if ((zio->io_vd->vdev_direct_write_verify_cnt %
 	    zfs_vdev_direct_write_verify_cnt) == 0) {
 		verify_checksum = B_TRUE;
@@ -4358,16 +4434,31 @@ zio_dio_checksum_verify(zio_t *zio)
 		return (zio);
 	}
 
+	zfs_dbgmsg("zio = %p, verify_checksum = %d, "
+	    "zio_checksum_error(zio, NULL) = %d, pio = %p",
+	    zio, verify_checksum, zio_checksum_error(zio, NULL), pio);
+
 	if (verify_checksum && (error = zio_checksum_error(zio, NULL)) != 0) {
-		zio->io_error = error;
+		zfs_dbgmsg("zio = %p, After checking checksum we got "
+		    "error = %d ECKSUM = %d, pio = %p",
+		    zio, error, ECKSUM, pio);
 		if (error == ECKSUM) {
 			zio->io_vd->vdev_stat.vs_dio_verify_errors++;
+			zfs_dbgmsg("Setting error to EINVAL zio = %p, "
+			    "pio = %p ,"
+			    "zio->io_pipeline & ZIO_STAGE_VDEV_IO_ASSSES = %d",
+			    zio, pio,
+			    zio->io_pipeline & ZIO_STAGE_VDEV_IO_ASSESS
+			    ? 1 : 0);
 			zio->io_error = SET_ERROR(EINVAL);
+			zio->io_flags &= ~ZIO_FLAG_DONT_PROPAGATE;
 			zio->io_prop.zp_direct_write_verify_error = B_TRUE;
 
 			(void) zfs_ereport_post(FM_EREPORT_ZFS_DIO_VERIFY,
 			    zio->io_spa, zio->io_vd, &zio->io_bookmark,
 			    zio, 0);
+		} else {
+			zio->io_error = error;
 		}
 	}
 
@@ -4409,6 +4500,8 @@ zio_worst_error(int e1, int e2)
 		if (e2 == zio_error_rank[r2])
 			break;
 
+	zfs_dbgmsg("r1 = %d, r2 = %d, e1 = %d, e2 = %d, r1 > r2 = %d",
+	    r1, r2, e1, e2, r1 > r2 ? e1 : e2);
 	return (r1 > r2 ? e1 : e2);
 }
 
@@ -4574,6 +4667,18 @@ zio_done(zio_t *zio)
 	if (zio_wait_for_children(zio, ZIO_CHILD_ALL_BITS, ZIO_WAIT_DONE)) {
 		return (NULL);
 	}
+
+	if (zio->io_prop.zp_direct_write_verify_error) {
+		zfs_dbgmsg("Here with zio = %p, "
+		    "zio->io_prop.zp_direct_write_verify_error  = %d, "
+		    "zio_unique_parent(zio) = %p, "
+		    "zio->io_pipeline & ZIO_STAGE_VDEV_IO_ASSESS = %d",
+		    zio,
+		    zio->io_prop.zp_direct_write_verify_error,
+		    zio_unique_parent(zio),
+		    zio->io_pipeline & ZIO_STAGE_VDEV_IO_ASSESS ? 1 : 0);
+	}
+
 
 	/*
 	 * If the allocation throttle is enabled, then update the accounting.
@@ -4789,6 +4894,7 @@ zio_done(zio_t *zio)
 		zio->io_reexecute &= ~ZIO_REEXECUTE_SUSPEND;
 
 	if (zio->io_reexecute) {
+		zfs_dbgmsg("zio = %p is about to reexecute", zio);
 		/*
 		 * This is a logical I/O that wants to reexecute.
 		 *

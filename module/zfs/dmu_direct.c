@@ -157,6 +157,10 @@ dmu_write_direct_done(zio_t *zio)
 			db->db_state = DB_CACHED;
 			mutex_exit(&db->db_mtx);
 			dbuf_dirty(db, dsa->dsa_tx);
+			/*
+			 * XXX - Come back to this.
+			 * dbuf_assign_arcbuf(db, db->db_buf, dsa->dsa_tx);
+			 */
 		} else {
 			ASSERT3P(dr->dt.dl.dr_data, ==, NULL);
 			dmu_buf_undirty(db, dsa->dsa_tx);
@@ -242,6 +246,7 @@ dmu_write_direct(zio_t *pio, dmu_buf_impl_t *db, abd_t *data, dmu_tx_t *tx)
 	    dmu_write_direct_ready, NULL, NULL, dmu_write_direct_done, dsa,
 	    ZIO_PRIORITY_SYNC_WRITE, ZIO_FLAG_CANFAIL, &zb);
 
+	zfs_dbgmsg("About to issue zio = %p with pio = %p", zio, pio);
 	if (pio == NULL)
 		return (zio_wait(zio));
 
@@ -279,6 +284,10 @@ dmu_write_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 	}
 
 	err = zio_wait(pio);
+
+	if (err == EINVAL) {
+		zfs_dbgmsg("pio = %p, and we got EINVAL here.", pio);
+	}
 
 	/*
 	 * The dbuf must be held until the Direct IO write has completed in
@@ -360,7 +369,8 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 
 		zfs_racct_read(spa, db->db.db_size, 1, flags);
 		zio_nowait(zio_read(rio, spa, bp, mbuf, db->db.db_size,
-		    dmu_read_abd_done, NULL, ZIO_PRIORITY_SYNC_READ, 0, &zb));
+		    dmu_read_abd_done, NULL, ZIO_PRIORITY_SYNC_READ,
+		    ZIO_FLAG_CANFAIL, &zb));
 	}
 
 	dmu_buf_rele_array(dbp, numbufs, FTAG);
