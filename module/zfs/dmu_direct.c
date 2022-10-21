@@ -360,7 +360,8 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 
 		zfs_racct_read(spa, db->db.db_size, 1, flags);
 		zio_nowait(zio_read(rio, spa, bp, mbuf, db->db.db_size,
-		    dmu_read_abd_done, NULL, ZIO_PRIORITY_SYNC_READ, 0, &zb));
+		    dmu_read_abd_done, NULL, ZIO_PRIORITY_SYNC_READ,
+		    ZIO_FLAG_CANFAIL, &zb));
 	}
 
 	dmu_buf_rele_array(dbp, numbufs, FTAG);
