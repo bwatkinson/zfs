@@ -4529,7 +4529,7 @@ zio_checksum_verify(zio_t *zio)
 static zio_t *
 zio_dio_checksum_verify(zio_t *zio)
 {
-	int error;
+	int error = 0;
 
 	zio_t *pio = zio_unique_parent(zio);
 	boolean_t verify_checksum = B_FALSE;
@@ -4552,7 +4552,6 @@ zio_dio_checksum_verify(zio_t *zio)
 	}
 
 	if (verify_checksum && (error = zio_checksum_error(zio, NULL)) != 0) {
-		zio->io_error = error;
 		if (error == ECKSUM) {
 			zio->io_vd->vdev_stat.vs_dio_verify_errors++;
 			zio->io_error = SET_ERROR(EINVAL);
@@ -4562,6 +4561,8 @@ zio_dio_checksum_verify(zio_t *zio)
 			    zio->io_spa, zio->io_vd, &zio->io_bookmark,
 			    zio, 0);
 		}
+	} else {
+		zio->io_error = error;
 	}
 
 	mutex_exit(&zio->io_vd->vdev_stat_lock);
