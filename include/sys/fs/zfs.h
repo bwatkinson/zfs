@@ -1242,7 +1242,6 @@ typedef struct vdev_stat {
 	uint64_t	vs_read_errors;		/* read errors		*/
 	uint64_t	vs_write_errors;	/* write errors		*/
 	uint64_t	vs_checksum_errors;	/* checksum errors	*/
-	uint64_t	vs_dio_verify_errors;	/* DIO write verify errors */
 	uint64_t	vs_initialize_errors;	/* initializing errors	*/
 	uint64_t	vs_self_healed;		/* self-healed bytes	*/
 	uint64_t	vs_scan_removing;	/* removing?	*/
@@ -1267,6 +1266,7 @@ typedef struct vdev_stat {
 	uint64_t	vs_physical_ashift;	/* vdev_physical_ashift */
 	uint64_t	vs_noalloc;		/* allocations halted?	*/
 	uint64_t	vs_pspace;		/* physical capacity */
+	uint64_t	vs_dio_verify_errors;	/* DIO write verify errors */
 } vdev_stat_t;
 
 #define	VDEV_STAT_VALID(field, uint64_t_field_count) \
