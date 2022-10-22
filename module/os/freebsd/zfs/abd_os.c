@@ -469,7 +469,7 @@ abd_get_offset_scatter(abd_t *abd, abd_t *sabd, size_t off,
 abd_t *
 abd_alloc_from_pages(vm_page_t *pages, unsigned long offset, uint64_t size)
 {
-	VERIFY3U(size, <=, SPA_MAXBLOCKSIZE);
+	VERIFY3U(size, <=, DMU_MAX_ACCESS);
 	ASSERT3U(offset, <, PAGE_SIZE);
 	ASSERT3P(pages, !=, NULL);
 
