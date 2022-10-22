@@ -111,7 +111,7 @@ for i in $(seq 1 $ITERATIONS); do
 
 	prev_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
 	log_must manipulate_user_buffer -o "$mntpnt/direct-write.iso" -r 5 \
-	    -n $NUMBLOCKS
+	    -n $NUMBLOCKS -v
 	log_mustnot dd if=$mntpnt/direct-write.iso of=/dev/null bs=128k \
 	    count=$NUMBLOCKS
 
@@ -148,7 +148,7 @@ for i in $(seq 1 $ITERATIONS); do
 
 	prev_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
 	log_must manipulate_user_buffer -o "$mntpnt/direct-write.iso" -r 5 \
-	    -n $NUMBLOCKS
+	    -n $NUMBLOCKS -v
 	log_must dd if=$mntpnt/direct-write.iso of=/dev/null bs=128k \
 	    count=$NUMBLOCKS
 
