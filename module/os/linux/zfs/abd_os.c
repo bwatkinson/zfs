@@ -867,7 +867,7 @@ abd_alloc_from_pages(struct page **pages, unsigned long offset, uint64_t size)
 	uint_t npages = DIV_ROUND_UP(size, PAGE_SIZE);
 	struct sg_table table;
 
-	VERIFY3U(size, <=, SPA_MAXBLOCKSIZE);
+	VERIFY3U(size, <=, DMU_MAX_ACCESS);
 	ASSERT3U(offset, <, PAGE_SIZE);
 	ASSERT3P(pages, !=, NULL);
 
