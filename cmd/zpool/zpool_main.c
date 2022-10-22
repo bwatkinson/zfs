@@ -2361,7 +2361,8 @@ print_status_config(zpool_handle_t *zhp, status_cbdata_t *cb, const char *name,
 			else
 				printf(" %5s", rbuf);
 		}
-		if (cb->cb_print_dio_verify) {
+		if (VDEV_STAT_VALID(vs_dio_verify_errors, vsc) &&
+		    cb->cb_print_dio_verify) {
 			zfs_nicenum(vs->vs_dio_verify_errors, dbuf,
 			    sizeof (dbuf));
 
