@@ -109,7 +109,11 @@ void
 abd_verify(abd_t *abd)
 {
 #ifdef ZFS_DEBUG
-	ASSERT3U(abd->abd_size, <=, SPA_MAXBLOCKSIZE);
+	if (abd_is_from_pages(abd)) {
+		ASSERT3U(abd->abd_size, <=, DMU_MAX_ACCESS);
+	} else {
+		ASSERT3U(abd->abd_size, <=, SPA_MAXBLOCKSIZE);
+	}
 	ASSERT3U(abd->abd_flags, ==, abd->abd_flags & (ABD_FLAG_LINEAR |
 	    ABD_FLAG_OWNER | ABD_FLAG_META | ABD_FLAG_MULTI_ZONE |
 	    ABD_FLAG_MULTI_CHUNK | ABD_FLAG_LINEAR_PAGE | ABD_FLAG_GANG |
