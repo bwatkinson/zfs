@@ -794,6 +794,18 @@ zio_notify_parent(zio_t *pio, zio_t *zio, enum zio_wait_type wait,
 	    zio->io_prop.zp_direct_write_verify_error;
 	ASSERT3U(*countp, >, 0);
 
+	/*
+	 * If a Direct I/O write checksum verify error has occurred then
+	 * this I/O should not attempt to be issued again in
+	 * zio_vdev_io_assess(). Instead the EINVAL error should just be
+	 * propagated up through parents and returned.
+	 */
+	if (pio->io_prop.zp_direct_write_verify_error) {
+		ASSERT3U(*errorp, ==, EINVAL);
+		ASSERT3U(pio->io_child_type, ==, ZIO_CHILD_LOGICAL);
+		pio->io_flags |= ZIO_FLAG_DONT_RETRY;
+	}
+
 	(*countp)--;
 
 	if (*countp == 0 && pio->io_stall == countp) {
@@ -1603,6 +1615,11 @@ zio_vdev_child_io(zio_t *pio, blkptr_t *bp, vdev_t *vd, uint64_t offset,
 	    done, private, type, priority, flags, vd, offset, &pio->io_bookmark,
 	    ZIO_STAGE_VDEV_IO_START >> 1, pipeline);
 	ASSERT3U(zio->io_child_type, ==, ZIO_CHILD_VDEV);
+
+	if (zio->io_pipeline & ZIO_STAGE_DIO_CHECKSUM_VERIFY) {
+		ASSERT3U(zio->io_type, ==, ZIO_TYPE_WRITE);
+		zio->io_prop.zp_direct_write_verify_error = B_FALSE;
+	}
 
 	return (zio);
 }
@@ -4556,6 +4573,13 @@ zio_dio_checksum_verify(zio_t *zio)
 			zio->io_vd->vdev_stat.vs_dio_verify_errors++;
 			zio->io_error = SET_ERROR(EINVAL);
 			zio->io_prop.zp_direct_write_verify_error = B_TRUE;
+
+			/*
+			 * The EINVAL error must be propagated up to the
+			 * logical parent ZIO in zio_notify_parent() so it can
+			 * be returned to dmu_write_abd().
+			 */
+			zio->io_flags &= ~ZIO_FLAG_DONT_PROPAGATE;
 
 			(void) zfs_ereport_post(FM_EREPORT_ZFS_DIO_VERIFY,
 			    zio->io_spa, zio->io_vd, &zio->io_bookmark,
