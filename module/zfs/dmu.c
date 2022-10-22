@@ -511,7 +511,7 @@ dmu_buf_hold_array_by_dnode(dnode_t *dn, uint64_t offset, uint64_t length,
 	zio_t *zio = NULL;
 	boolean_t missed = B_FALSE;
 
-	ASSERT(length <= DMU_MAX_ACCESS);
+	ASSERT3U(length, <=, DMU_MAX_ACCESS);
 
 	/*
 	 * Note: We directly notify the prefetch code of this read, so that
@@ -1250,7 +1250,7 @@ dmu_read_uio_dnode(dnode_t *dn, zfs_uio_t *uio, uint64_t size)
 	int numbufs, i, err;
 
 	if (uio->uio_extflg & UIO_DIRECT)
-		return (dmu_read_uio_direct(dn, uio,  size));
+		return (dmu_read_uio_direct(dn, uio, size));
 
 	/*
 	 * NB: we could do this block-at-a-time, but it's nice
