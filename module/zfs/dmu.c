@@ -1295,7 +1295,7 @@ dmu_read_uio_dnode(dnode_t *dn, zfs_uio_t *uio, uint64_t size)
 	int numbufs, i, err;
 
 	if (uio->uio_extflg & UIO_DIRECT)
-		return (dmu_read_uio_direct(dn, uio,  size));
+		return (dmu_read_uio_direct(dn, uio, size));
 
 	/*
 	 * NB: we could do this block-at-a-time, but it's nice
