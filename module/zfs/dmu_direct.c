@@ -139,7 +139,7 @@ dmu_write_direct_done(zio_t *zio)
 
 		dmu_sync_done(zio, NULL, zio->io_private);
 	} else {
-		if (zio->io_prop.zp_direct_write_verify_error)
+		if (zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR)
 			ASSERT3U(zio->io_error, ==, EINVAL);
 
 		mutex_enter(&db->db_mtx);
