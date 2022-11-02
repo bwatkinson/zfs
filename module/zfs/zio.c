@@ -790,20 +790,12 @@ zio_notify_parent(zio_t *pio, zio_t *zio, enum zio_wait_type wait,
 	if (zio->io_error && !(zio->io_flags & ZIO_FLAG_DONT_PROPAGATE))
 		*errorp = zio_worst_error(*errorp, zio->io_error);
 	pio->io_reexecute |= zio->io_reexecute;
-	pio->io_prop.zp_direct_write_verify_error =
-	    zio->io_prop.zp_direct_write_verify_error;
 	ASSERT3U(*countp, >, 0);
 
-	/*
-	 * If a Direct I/O write checksum verify error has occurred then
-	 * this I/O should not attempt to be issued again in
-	 * zio_vdev_io_assess(). Instead the EINVAL error should just be
-	 * propagated up through parents and returned.
-	 */
-	if (pio->io_prop.zp_direct_write_verify_error) {
+	if (zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR) {
 		ASSERT3U(*errorp, ==, EINVAL);
 		ASSERT3U(pio->io_child_type, ==, ZIO_CHILD_LOGICAL);
-		pio->io_flags |= ZIO_FLAG_DONT_RETRY;
+		pio->io_flags |= ZIO_FLAG_DIO_CHKSUM_ERR;
 	}
 
 	(*countp)--;
@@ -1615,11 +1607,6 @@ zio_vdev_child_io(zio_t *pio, blkptr_t *bp, vdev_t *vd, uint64_t offset,
 	    done, private, type, priority, flags, vd, offset, &pio->io_bookmark,
 	    ZIO_STAGE_VDEV_IO_START >> 1, pipeline);
 	ASSERT3U(zio->io_child_type, ==, ZIO_CHILD_VDEV);
-
-	if (zio->io_pipeline & ZIO_STAGE_DIO_CHECKSUM_VERIFY) {
-		ASSERT3U(zio->io_type, ==, ZIO_TYPE_WRITE);
-		zio->io_prop.zp_direct_write_verify_error = B_FALSE;
-	}
 
 	return (zio);
 }
@@ -4230,6 +4217,19 @@ zio_vdev_io_assess(zio_t *zio)
 		zio->io_vsd = NULL;
 	}
 
+	/*
+	 * If a Direct I/O write checksum verify error has occurred then this
+	 * I/O should not attempt to be issued again. Instead the EINVAL error
+	 * error should just be propagated up through parents and returned.
+	 */
+	if (zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR) {
+		ASSERT3U(zio->io_child_type, ==, ZIO_CHILD_LOGICAL);
+		ASSERT3U(zio->io_error, ==, EINVAL);
+		zio->io_pipeline = ZIO_INTERLOCK_PIPELINE;
+		return (zio);
+	}
+
+
 	if (zio_injection_enabled && zio->io_error == 0)
 		zio->io_error = zio_handle_fault_injection(zio, EIO);
 
@@ -4572,7 +4572,7 @@ zio_dio_checksum_verify(zio_t *zio)
 		if (error == ECKSUM) {
 			zio->io_vd->vdev_stat.vs_dio_verify_errors++;
 			zio->io_error = SET_ERROR(EINVAL);
-			zio->io_prop.zp_direct_write_verify_error = B_TRUE;
+			zio->io_flags |= ZIO_FLAG_DIO_CHKSUM_ERR;
 
 			/*
 			 * The EINVAL error must be propagated up to the
@@ -4926,7 +4926,7 @@ zio_done(zio_t *zio)
 		 */
 		if (zio->io_error != ECKSUM && zio->io_vd != NULL &&
 		    !vdev_is_dead(zio->io_vd) &&
-		    zio->io_prop.zp_direct_write_verify_error == B_FALSE) {
+		    !(zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR)) {
 			int ret = zfs_ereport_post(FM_EREPORT_ZFS_IO,
 			    zio->io_spa, zio->io_vd, &zio->io_bookmark, zio, 0);
 			if (ret != EALREADY) {
@@ -4940,9 +4940,9 @@ zio_done(zio_t *zio)
 		}
 
 		if ((zio->io_error == EIO || !(zio->io_flags &
-		    (ZIO_FLAG_SPECULATIVE | ZIO_FLAG_DONT_PROPAGATE))) &&
-		    zio == zio->io_logical &&
-		    zio->io_prop.zp_direct_write_verify_error == B_FALSE) {
+		    (ZIO_FLAG_SPECULATIVE | ZIO_FLAG_DONT_PROPAGATE |
+		    ZIO_FLAG_DIO_CHKSUM_ERR))) &&
+		    zio == zio->io_logical) {
 			/*
 			 * For logical I/O requests, tell the SPA to log the
 			 * error and generate a logical data ereport.
