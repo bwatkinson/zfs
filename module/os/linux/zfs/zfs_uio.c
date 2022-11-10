@@ -652,9 +652,15 @@ zfs_uio_get_dio_pages_iov_iter(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	size_t maxpages = DIV_ROUND_UP(wanted, PAGE_SIZE);
 
 	while (wanted) {
+#if defined(HAVE_IOV_ITER_GET_PAGES2)
+		cnt = iov_iter_get_pages2(uio->uio_iter,
+		    &uio->uio_dio.pages[uio->uio_dio.npages],
+		    wanted, maxpages, &skip);
+#else
 		cnt = iov_iter_get_pages(uio->uio_iter,
 		    &uio->uio_dio.pages[uio->uio_dio.npages],
 		    wanted, maxpages, &skip);
+#endif
 		if (cnt < 0) {
 			iov_iter_revert(uio->uio_iter, rollback);
 			return (SET_ERROR(-cnt));
@@ -663,7 +669,12 @@ zfs_uio_get_dio_pages_iov_iter(zfs_uio_t *uio, zfs_uio_rw_t rw)
 		rollback += cnt;
 		wanted -= cnt;
 		skip = 0;
+#if !defined(HAVE_IOV_ITER_GET_PAGES2)
+		/*
+		 * iov_iter_get_pages2() advances the iov_iter on success.
+		 */
 		iov_iter_advance(uio->uio_iter, cnt);
+#endif
 
 	}
 	ASSERT3U(rollback, ==, uio->uio_resid - uio->uio_skip);
