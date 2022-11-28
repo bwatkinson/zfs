@@ -41,8 +41,7 @@
 
 static char *outputfile = NULL;
 static int blocksize = 131072; /* 128K */
-static int numblocks = 8;
-static double runtime = 10; /* 10 seconds */
+static int numblocks = 100;
 static char *execname = NULL;
 static int print_usage = 0;
 static int randompattern = 0;
@@ -52,7 +51,6 @@ char *buf = NULL;
 
 typedef struct {
 	int entire_file_written;
-	int done;
 	int total_errors;
 } pthread_args_t;
 
@@ -61,8 +59,7 @@ usage(void)
 {
 	(void) fprintf(stderr,
 	    "usage %s -o outputfile [-b blocksize] [-n numblocks]\n"
-	    "         [-p randpattern] [-r runtime] [-v verify_wr_error]\n"
-	    "         [-h help]\n"
+	    "         [-p randpattern] [-v verify_wr_error] [-h help]\n"
 	    "\n"
 	    "Testing whether checksum verify works correctly for O_DIRECT.\n"
 	    "when manipulating the contents of a userspace buffer.\n"
@@ -74,9 +71,6 @@ usage(void)
 	    "    randpattern:   Fill data buffer with random data. Default \n"
 	    "                   behavior is to fill the buffer with the \n"
 	    "                   known data pattern (0xdeadbeef).\n"
-	    "    runtime:       Total amount of time to run test in seconds.\n"
-	    "                   Test will run till the specified runtime or\n"
-	    "                   when blocksize * numblocks data is written.\n"
 	    "    verify_wr_err: Check that pwrite() returns EINVAL at least \n"
 	    "                   once\n"
 	    "    help:          Print usage information and exit.\n"
@@ -86,9 +80,8 @@ usage(void)
 	    "\n"
 	    "    Default Values:\n"
 	    "    blocksize     -> 131072\n"
-	    "    numblocks     -> 8\n"
+	    "    numblocks     -> 100\n"
 	    "    randpattern   -> false\n"
-	    "    runtime       -> 10 seconds\n"
 	    "    verify_wr_err -> false\n",
 	    execname);
 	(void) exit(1);
@@ -103,7 +96,7 @@ parse_options(int argc, char *argv[])
 	extern int optind, optopt;
 	execname = argv[0];
 
-	while ((c = getopt(argc, argv, "b:hn:o:pr:v")) != -1) {
+	while ((c = getopt(argc, argv, "b:hn:o:pv")) != -1) {
 		switch (c) {
 			case 'b':
 				blocksize = atoi(optarg);
@@ -123,10 +116,6 @@ parse_options(int argc, char *argv[])
 
 			case 'p':
 				randompattern = 1;
-				break;
-
-			case 'r':
-				runtime = (double)atoi(optarg);
 				break;
 
 			case 'v':
@@ -151,8 +140,7 @@ parse_options(int argc, char *argv[])
 	if (errflag || print_usage == 1)
 		(void) usage();
 
-	if (blocksize < 512 || outputfile == NULL || runtime <= 0 ||
-	    numblocks <= 0) {
+	if (blocksize < 512 || outputfile == NULL || numblocks <= 0) {
 		(void) fprintf(stderr,
 		    "Required paramater(s) missing or invalid.\n");
 		(void) usage();
@@ -160,8 +148,7 @@ parse_options(int argc, char *argv[])
 }
 
 /*
- * Continually write to the file using O_DIRECT from the range of 0 to
- * blocksize * numblocks for the requested runtime.
+ * Write blocksize * numblocks to the file using O_DIRECT.
  */
 static void *
 write_thread(void *arg)
@@ -172,7 +159,7 @@ write_thread(void *arg)
 	ssize_t wrote = 0;
 	pthread_args_t *args = (pthread_args_t *)arg;
 
-	while (!args->done || !args->entire_file_written) {
+	while (!args->entire_file_written) {
 		wrote = pwrite(ofd, buf, blocksize, offset);
 		if (wrote < 0) {
 			assert(errno == EINVAL);
@@ -183,9 +170,9 @@ write_thread(void *arg)
 		}
 
 		offset = ((offset + blocksize) % total_data);
-		if (left > 0)
-			left -= blocksize;
-		else
+		left -= blocksize;
+
+		if (left == 0)
 			args->entire_file_written = 1;
 	}
 
@@ -202,7 +189,7 @@ manipulate_buf_thread(void *arg)
 	char rand_char;
 	pthread_args_t *args = (pthread_args_t *)arg;
 
-	while (!args->done || !args->entire_file_written) {
+	while (!args->entire_file_written) {
 		rand_offset = (rand() % blocksize);
 		rand_char = (rand() % (126 - 33) + 33);
 		buf[rand_offset] = rand_char;
@@ -222,8 +209,7 @@ main(int argc, char *argv[])
 	int left = blocksize;
 	int offset = 0;
 	int rc;
-	time_t start;
-	pthread_args_t args = { 0, 0, 0};
+	pthread_args_t args = { 0, 0};
 
 	parse_options(argc, argv);
 
@@ -256,12 +242,10 @@ main(int argc, char *argv[])
 			buf[i] = rand();
 	}
 
-	if ((rc = pthread_create(&write_thr, NULL, write_thread, &args))) {
-		fprintf(stderr, "error: pthreads_create, write_thr, "
-		    "rc: %d\n", rc);
-		exit(2);
-	}
-
+	/*
+	 * Writing using O_DIRECT while manipulating the buffer conntents until
+	 * the entire file is written.
+	 */
 	if ((rc = pthread_create(&manipul_thr, NULL, manipulate_buf_thread,
 	    &args))) {
 		fprintf(stderr, "error: pthreads_create, manipul_thr, "
@@ -269,17 +253,11 @@ main(int argc, char *argv[])
 		exit(2);
 	}
 
-	time(&start);
-
-	/*
-	 * Writing while manipulating the buffer conntents until either then
-	 * runtime is met or the entire file is written. In the event the
-	 * runtime takes less time than to write the entire file we will wait
-	 * for the entire file to be written.
-	 */
-	while (difftime(time(NULL), start) < runtime ||
-	    args.entire_file_written == 0) {}
-	args.done = 1;
+	if ((rc = pthread_create(&write_thr, NULL, write_thread, &args))) {
+		fprintf(stderr, "error: pthreads_create, write_thr, "
+		    "rc: %d\n", rc);
+		exit(2);
+	}
 
 	pthread_join(write_thr, NULL);
 	pthread_join(manipul_thr, NULL);
