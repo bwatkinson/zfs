@@ -33,7 +33,7 @@
 # 	Verify checksum verify works for Direct I/O writes.
 #
 # STRATEGY:
-#	1. Set the module parameter zfs_vdev_direct_write_verify_cnt to 100.
+#	1. Set the module parameter zfs_vdev_direct_write_verify_cnt to 20.
 #	2. Check that manipulating the user buffer while Direct I/O writes are
 #	   taking place does not cause any panics with compression turned on.
 #	3. Start a Direct IO write workload while manipulating the user buffer
@@ -48,7 +48,6 @@
 #	   there are no reported data errors when reading the file back because
 #	   with us checking every Direct I/O write and on checksum validation
 #	   failure those writes will not be committed to a VDEV.
-#	8. Repeat step 6 for for 3 iterations.
 #
 
 verify_runnable "global"
@@ -62,6 +61,14 @@ function cleanup
 	log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_CNT 100
 }
 
+function get_file_size
+{
+	typeset filename="$1"
+	typeset filesize=$(stat -c %s $filename)
+
+	echo $filesize
+}
+
 log_assert "Verify checksum verify works for Direct I/O writes."
 
 if is_freebsd; then
@@ -71,7 +78,8 @@ fi
 log_onexit cleanup
 
 ITERATIONS=3
-NUMBLOCKS=8
+NUMBLOCKS=300
+BS=$((128 * 1024)) # 128k
 mntpnt=$(get_prop mountpoint $TESTPOOL/$TESTFS)
 
 # Get a list of vdevs in our pool
@@ -81,7 +89,7 @@ set -A array $(get_disklist_fullpath $TESTPOOL)
 firstvdev=${array[0]}
 
 log_must zfs set recordsize=128k $TESTPOOL/$TESTFS
-log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_CNT 100
+log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_CNT 20
 
 # First we will verify there are no panics while manipulating the contents of
 # the user buffer during Direct I/O writes with compression. The contents
@@ -90,7 +98,8 @@ log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_CNT 100
 log_note "Verifying no panics for Direct I/O writes with compression"
 log_must zfs set compression=on $TESTPOOL/$TESTFS
 prev_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
-log_must manipulate_user_buffer -o "$mntpnt/direct-write.iso" -r 5
+log_must manipulate_user_buffer -o "$mntpnt/direct-write.iso" -n $NUMBLOCKS \
+    -b $BS
 curr_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
 log_must [ $curr_dio_wr -gt $prev_dio_wr ]
 log_must rm -f "$mntpnt/direct-write.iso"
@@ -110,10 +119,14 @@ for i in $(seq 1 $ITERATIONS); do
 	log_must zpool events -c
 
 	prev_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
-	log_must manipulate_user_buffer -o "$mntpnt/direct-write.iso" -r 5 \
-	    -n $NUMBLOCKS -v
-	log_mustnot dd if=$mntpnt/direct-write.iso of=/dev/null bs=128k \
-	    count=$NUMBLOCKS
+	log_must manipulate_user_buffer -o "$mntpnt/direct-write.iso" \
+	    -n $NUMBLOCKS -b $BS -v
+
+	# Reading file back to verify checksum errors
+	filesize=$(get_file_size "$mntpnt/direct-write.iso")
+	num_blocks=$((filesize / BS))
+	log_mustnot stride_dd -i "$mntpnt/direct-write.iso" -o /dev/null -b $BS \
+	    -c $num_blocks
 
 	# Getting new Direct I/O write count, Direct I/O write checksum verify
 	# errors and zevents.
@@ -147,10 +160,14 @@ for i in $(seq 1 $ITERATIONS); do
 	log_must zpool events -c
 
 	prev_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
-	log_must manipulate_user_buffer -o "$mntpnt/direct-write.iso" -r 5 \
-	    -n $NUMBLOCKS -v
-	log_must dd if=$mntpnt/direct-write.iso of=/dev/null bs=128k \
-	    count=$NUMBLOCKS
+	log_must manipulate_user_buffer -o "$mntpnt/direct-write.iso" \
+	    -n $NUMBLOCKS -b $BS -v
+
+	# Reading file back to verify there no are checksum errors
+	filesize=$(get_file_size "$mntpnt/direct-write.iso")
+	num_blocks=$((filesize / BS))
+	log_must stride_dd -i "$mntpnt/direct-write.iso" -o /dev/null -b $BS \
+	    -c $num_blocks
 
 	# Getting new Direct I/O write count, Direct I/O write checksum verify
 	# errors and zevents.
