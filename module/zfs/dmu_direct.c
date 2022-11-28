@@ -137,7 +137,7 @@ dmu_write_direct_done(zio_t *zio)
 		db->db_state = DB_UNCACHED;
 	} else {
 		if (zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR)
-			ASSERT3U(zio->io_error, ==, EINVAL);
+			ASSERT3U(zio->io_error, ==, EAGAIN);
 
 		/*
 		 * If there is a valid ARC buffer assocatied with this dirty
