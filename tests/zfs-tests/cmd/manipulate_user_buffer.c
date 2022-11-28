@@ -46,12 +46,10 @@ static char *execname = NULL;
 static int print_usage = 0;
 static int randompattern = 0;
 static int ofd;
-static int verify_wr_err = 0;
 char *buf = NULL;
 
 typedef struct {
 	int entire_file_written;
-	int total_errors;
 } pthread_args_t;
 
 static void
@@ -59,7 +57,7 @@ usage(void)
 {
 	(void) fprintf(stderr,
 	    "usage %s -o outputfile [-b blocksize] [-n numblocks]\n"
-	    "         [-p randpattern] [-v verify_wr_error] [-h help]\n"
+	    "         [-p randpattern] [-h help]\n"
 	    "\n"
 	    "Testing whether checksum verify works correctly for O_DIRECT.\n"
 	    "when manipulating the contents of a userspace buffer.\n"
@@ -71,8 +69,6 @@ usage(void)
 	    "    randpattern:   Fill data buffer with random data. Default \n"
 	    "                   behavior is to fill the buffer with the \n"
 	    "                   known data pattern (0xdeadbeef).\n"
-	    "    verify_wr_err: Check that pwrite() returns EINVAL at least \n"
-	    "                   once\n"
 	    "    help:          Print usage information and exit.\n"
 	    "\n"
 	    "    Required parameters:\n"
@@ -81,8 +77,7 @@ usage(void)
 	    "    Default Values:\n"
 	    "    blocksize     -> 131072\n"
 	    "    numblocks     -> 100\n"
-	    "    randpattern   -> false\n"
-	    "    verify_wr_err -> false\n",
+	    "    randpattern   -> false\n",
 	    execname);
 	(void) exit(1);
 }
@@ -96,7 +91,7 @@ parse_options(int argc, char *argv[])
 	extern int optind, optopt;
 	execname = argv[0];
 
-	while ((c = getopt(argc, argv, "b:hn:o:pv")) != -1) {
+	while ((c = getopt(argc, argv, "b:hn:o:p")) != -1) {
 		switch (c) {
 			case 'b':
 				blocksize = atoi(optarg);
@@ -116,10 +111,6 @@ parse_options(int argc, char *argv[])
 
 			case 'p':
 				randompattern = 1;
-				break;
-
-			case 'v':
-				verify_wr_err = 1;
 				break;
 
 			case ':':
@@ -161,13 +152,7 @@ write_thread(void *arg)
 
 	while (!args->entire_file_written) {
 		wrote = pwrite(ofd, buf, blocksize, offset);
-		if (wrote < 0) {
-			assert(errno == EINVAL);
-			assert(wrote == -1);
-			args->total_errors += -(wrote);
-		} else {
-			assert(wrote == blocksize);
-		}
+		assert(wrote == blocksize);
 
 		offset = ((offset + blocksize) % total_data);
 		left -= blocksize;
@@ -209,7 +194,7 @@ main(int argc, char *argv[])
 	int left = blocksize;
 	int offset = 0;
 	int rc;
-	pthread_args_t args = { 0, 0};
+	pthread_args_t args = { 0 };
 
 	parse_options(argc, argv);
 
@@ -263,9 +248,6 @@ main(int argc, char *argv[])
 	pthread_join(manipul_thr, NULL);
 
 	assert(args.entire_file_written == 1);
-
-	if (verify_wr_err)
-		assert(args.total_errors > 0);
 
 	(void) close(ofd);
 
