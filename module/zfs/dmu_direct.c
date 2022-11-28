@@ -93,13 +93,13 @@ dmu_write_direct_done(zio_t *zio)
 	uint64_t txg = dsa->dsa_tx->tx_txg;
 
 	abd_free(zio->io_abd);
+	mutex_enter(&db->db_mtx);
 
 	if (zio->io_error == 0) {
-		mutex_enter(&db->db_mtx);
 		dr->dt.dl.dr_data = NULL;
 
 		/*
-		 * After a successful Direct IO write any stale contents in
+		 * After a successful Direct I/O write any stale contents in
 		 * the ARC must be cleaned up in order to force all future
 		 * reads down to the VDEVs.
 		 *
@@ -135,41 +135,32 @@ dmu_write_direct_done(zio_t *zio)
 		 */
 		ASSERT(db->db.db_data == NULL);
 		db->db_state = DB_UNCACHED;
-		mutex_exit(&db->db_mtx);
-
-		dmu_sync_done(zio, NULL, zio->io_private);
 	} else {
 		if (zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR)
 			ASSERT3U(zio->io_error, ==, EINVAL);
 
-		mutex_enter(&db->db_mtx);
-		dr->dt.dl.dr_override_state = DR_NOT_OVERRIDDEN;
-
 		/*
 		 * If there is a valid ARC buffer assocatied with this dirty
-		 * record then the dbuf will just be dirtied again so future
-		 * reads will fetch from the ARC.
-		 *
-		 * If the current dirty record is only assocatied with a
-		 * Direct IO write then the dirty record just needs to be
-		 * undirtied.
+		 * record we will stall just like on a successful Direct I/O
+		 * write to make sure all TXG's are consistent. See comment
+		 * above.
 		 */
 		if (db->db_buf) {
 			ASSERT3P(db->db_buf, ==, dr->dt.dl.dr_data);
+			dmu_buf_direct_mixed_io_wait(db, txg - 1, B_FALSE);
 			dmu_buf_undirty(db, dsa->dsa_tx);
 			db->db_state = DB_CACHED;
-			mutex_exit(&db->db_mtx);
-			dbuf_dirty(db, dsa->dsa_tx);
 		} else {
 			ASSERT3P(dr->dt.dl.dr_data, ==, NULL);
 			dmu_buf_undirty(db, dsa->dsa_tx);
 			db->db_state = DB_UNCACHED;
-			mutex_exit(&db->db_mtx);
 		}
 
-		kmem_free(dsa, sizeof (dmu_sync_arg_t));
+		ASSERT0(db->db_dirtycnt);
 	}
 
+	mutex_exit(&db->db_mtx);
+	dmu_sync_done(zio, NULL, zio->io_private);
 	kmem_free(zio->io_bp, sizeof (blkptr_t));
 	zio->io_bp = NULL;
 }
