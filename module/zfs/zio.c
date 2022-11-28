@@ -793,7 +793,7 @@ zio_notify_parent(zio_t *pio, zio_t *zio, enum zio_wait_type wait,
 	ASSERT3U(*countp, >, 0);
 
 	if (zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR) {
-		ASSERT3U(*errorp, ==, EINVAL);
+		ASSERT3U(*errorp, ==, EAGAIN);
 		ASSERT3U(pio->io_child_type, ==, ZIO_CHILD_LOGICAL);
 		pio->io_flags |= ZIO_FLAG_DIO_CHKSUM_ERR;
 	}
@@ -4219,12 +4219,13 @@ zio_vdev_io_assess(zio_t *zio)
 
 	/*
 	 * If a Direct I/O write checksum verify error has occurred then this
-	 * I/O should not attempt to be issued again. Instead the EINVAL error
-	 * error should just be propagated up through parents and returned.
+	 * I/O should not attempt to be issued again. Instead the EAGAIN will
+	 * be returned and this write will attempt to be issued through the
+	 * ARC instead.
 	 */
 	if (zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR) {
 		ASSERT3U(zio->io_child_type, ==, ZIO_CHILD_LOGICAL);
-		ASSERT3U(zio->io_error, ==, EINVAL);
+		ASSERT3U(zio->io_error, ==, EAGAIN);
 		zio->io_pipeline = ZIO_INTERLOCK_PIPELINE;
 		return (zio);
 	}
@@ -4571,11 +4572,11 @@ zio_dio_checksum_verify(zio_t *zio)
 	if (verify_checksum && (error = zio_checksum_error(zio, NULL)) != 0) {
 		if (error == ECKSUM) {
 			zio->io_vd->vdev_stat.vs_dio_verify_errors++;
-			zio->io_error = SET_ERROR(EINVAL);
+			zio->io_error = SET_ERROR(EAGAIN);
 			zio->io_flags |= ZIO_FLAG_DIO_CHKSUM_ERR;
 
 			/*
-			 * The EINVAL error must be propagated up to the
+			 * The EAGAIB error must be propagated up to the
 			 * logical parent ZIO in zio_notify_parent() so it can
 			 * be returned to dmu_write_abd().
 			 */
@@ -5016,9 +5017,9 @@ zio_done(zio_t *zio)
 	if (zio->io_reexecute) {
 		/*
 		 * A Direct I/O write that has a checksum verify error should
-		 * not attempt to reexecute. Instead, the EINVAL error should
-		 * just be propagated back up and returned signalling that an
-		 * checksum verify failure occurred to the user.
+		 * not attempt to reexecute. Instead, EAGAIN should just be
+		 * propagated back up so the write can be attempt to be issued
+		 * through the ARC.
 		 */
 		ASSERT(!(zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR));
 
