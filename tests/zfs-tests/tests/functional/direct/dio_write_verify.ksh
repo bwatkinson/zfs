@@ -119,8 +119,9 @@ for i in $(seq 1 $ITERATIONS); do
 	log_must zpool events -c
 
 	prev_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
+	prev_arc_wr=$(get_iostats_stat $TESTPOOL arc_write_count)
 	log_must manipulate_user_buffer -o "$mntpnt/direct-write.iso" \
-	    -n $NUMBLOCKS -b $BS -v
+	    -n $NUMBLOCKS -b $BS
 
 	# Reading file back to verify checksum errors
 	filesize=$(get_file_size "$mntpnt/direct-write.iso")
@@ -131,12 +132,18 @@ for i in $(seq 1 $ITERATIONS); do
 	# Getting new Direct I/O write count, Direct I/O write checksum verify
 	# errors and zevents.
 	curr_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
+	curr_arc_wr=$(get_iostats_stat $TESTPOOL arc_write_count)
+	total_arc_wr=$((curr_arc_wr - prev_arc_wr))
 	DIO_VERIFIES=$(zpool status -dp | awk -v d="raidz" '$0 ~ d {print $6}')
 	DIO_VERIFY_EVENTS=$(zpool events | grep -c dio_verify)
 
 	log_must [ $DIO_VERIFIES -gt 0 ]
 	log_must [ $DIO_VERIFY_EVENTS -gt 0 ]
 	log_must [ $curr_dio_wr -gt $prev_dio_wr ]
+
+	# In the event of checksum verify error, the write will be redirected
+	# through the ARC. We check here that we have ARC writes.
+	log_must [ $total_arc_wr -gt $DIO_VERIFIES ]
 
 	# Verifying there are checksum errors
 	cksum=$(zpool status -P -v $TESTPOOL | awk -v v="$firstvdev" '$0 ~ v \
@@ -160,8 +167,9 @@ for i in $(seq 1 $ITERATIONS); do
 	log_must zpool events -c
 
 	prev_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
+	prev_arc_wr=$(get_iostats_stat $TESTPOOL arc_write_count)
 	log_must manipulate_user_buffer -o "$mntpnt/direct-write.iso" \
-	    -n $NUMBLOCKS -b $BS -v
+	    -n $NUMBLOCKS -b $BS
 
 	# Reading file back to verify there no are checksum errors
 	filesize=$(get_file_size "$mntpnt/direct-write.iso")
@@ -172,12 +180,18 @@ for i in $(seq 1 $ITERATIONS); do
 	# Getting new Direct I/O write count, Direct I/O write checksum verify
 	# errors and zevents.
 	curr_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
+	curr_arc_wr=$(get_iostats_stat $TESTPOOL arc_write_count)
+	total_arc_wr=$((curr_arc_wr - prev_arc_wr))
 	DIO_VERIFIES=$(zpool status -dp | awk -v d="raidz" '$0 ~ d {print $6}')
 	DIO_VERIFY_EVENTS=$(zpool events | grep -c dio_verify)
 
 	log_must [ $DIO_VERIFIES -gt 0 ]
 	log_must [ $DIO_VERIFY_EVENTS -gt 0 ]
 	log_must [ $curr_dio_wr -gt $prev_dio_wr ]
+
+	# In the event of checksum verify error, the write will be redirected
+	# through the ARC. We check here that we have ARC writes.
+	log_must [ $total_arc_wr -gt $DIO_VERIFIES ]
 
 	log_must check_pool_status $TESTPOOL "errors" "No known data errors"
 	log_must rm -f "$mntpnt/direct-write.iso"
