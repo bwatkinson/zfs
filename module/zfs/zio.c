@@ -4963,7 +4963,8 @@ zio_done(zio_t *zio)
 		ASSERT(zio->io_child_type == ZIO_CHILD_LOGICAL);
 
 		if (IO_IS_ALLOCATING(zio) &&
-		    !(zio->io_flags & ZIO_FLAG_CANFAIL)) {
+		    !(zio->io_flags & ZIO_FLAG_CANFAIL) &&
+		    !(zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR)) {
 			if (zio->io_error != ENOSPC)
 				zio->io_reexecute |= ZIO_REEXECUTE_NOW;
 			else
@@ -5013,6 +5014,14 @@ zio_done(zio_t *zio)
 		zio->io_reexecute &= ~ZIO_REEXECUTE_SUSPEND;
 
 	if (zio->io_reexecute) {
+		/*
+		 * A Direct I/O write that has a checksum verify error should
+		 * not attempt to reexecute. Instead, the EINVAL error should
+		 * just be propagated back up and returned signalling that an
+		 * checksum verify failure occurred to the user.
+		 */
+		ASSERT(!(zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR));
+
 		/*
 		 * This is a logical I/O that wants to reexecute.
 		 *
