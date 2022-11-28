@@ -2679,7 +2679,7 @@ dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 		dbuf_unoverride(dr);
 
 		/*
-		 * In the Direct IO case, the buffer is still dirty, but it
+		 * In the Direct I/O case, the buffer is still dirty, but it
 		 * may be UNCACHED, so we do not need to destroy an ARC buffer.
 		 */
 		if (dr->dt.dl.dr_data && dr->dt.dl.dr_data != db->db_buf) {
