@@ -91,6 +91,9 @@
 #define	param_set_max_auto_ashift_args(var) \
     CTLTYPE_UINT, NULL, 0, param_set_max_auto_ashift, "IU"
 
+#define	param_set_direct_write_verify_pct_args(var) \
+    CTLTYPE_UINT, NULL, 0, param_set_direct_write_verify_pct, "IU"
+
 #define	fletcher_4_param_set_args(var) \
     CTLTYPE_STRING, NULL, 0, fletcher_4_param, "A"
 
