@@ -399,23 +399,23 @@ May be increased up to
 .Sy ASHIFT_MAX Po 16 Pc ,
 but this may negatively impact pool space efficiency.
 .
-.It Sy zfs_vdev_direct_write_verify_cnt Ns = Ns Sy Linux 100 | FreeBSD 0 Pq uint
-If non-zero, then a Direct I/O write's checksum will be verified every cnt
-intervals for a top-level VDEV before it is committed and the block pointer is
-updated.
+.It Sy zfs_vdev_direct_write_verify_pct Ns = Ns Sy Linux 2 | FreeBSD 0 Pq uint
+If non-zero, then a Direct I/O write's checksum will be verified every
+percentage (pct) of Direct I/O writes that are issued to a top-level VDEV
+before it is committed and the block pointer is updated.
 In the event the checksum is not valid then the I/O operation will be
 redirected through the ARC.
 This module parameter can be used to detect if the
 contents of the users buffer have changed in the process of doing a Direct I/O
 write.
-It can also help to identify if reported checksum errors are tied to those
-Direct I/O writes.
+It can also help to identify if reported checksum errors are tied to Direct I/O
+writes.
 Each verify error causes a
 .Sy dio_verify
 zevent.
 Direct Write I/O checkum verify errors can be seen with
 .Nm zpool Cm status Fl d .
-The default value for this is 100 on Linux, but is 0 for
+The default value for this is 2 percent on Linux, but is 0 for
 .Fx
 because user pages can be placed under write protection in
 .Fx
