@@ -1555,12 +1555,11 @@ zio_vdev_child_io(zio_t *pio, blkptr_t *bp, vdev_t *vd, uint64_t offset,
 		pipeline |= ZIO_STAGE_CHECKSUM_VERIFY;
 		pio->io_pipeline &= ~ZIO_STAGE_CHECKSUM_VERIFY;
 	} else if (type == ZIO_TYPE_WRITE &&
-	    pio->io_prop.zp_direct_write == B_TRUE &&
-	    zfs_vdev_direct_write_verify_cnt > 0) {
+	    pio->io_prop.zp_direct_write == B_TRUE) {
 		/*
-		 * We only will verify checksums for Direct I/O writes for
-		 * Linux. FreeBSD is able to place user pages under write
-		 * protection before issuing them to the ZIO pipeline.
+		 * By default we only will verify checksums for Direct I/O
+		 * writes for Linux. FreeBSD is able to place user pages under
+		 * write protection before issuing them to the ZIO pipeline.
 		 *
 		 * Checksum validation errors will only be reported through
 		 * the top-level VDEV, which is set by this child ZIO.
@@ -4547,10 +4546,7 @@ zio_checksum_verify(zio_t *zio)
 static zio_t *
 zio_dio_checksum_verify(zio_t *zio)
 {
-	int error = 0;
-
 	zio_t *pio = zio_unique_parent(zio);
-	boolean_t verify_checksum = B_FALSE;
 
 	ASSERT3P(zio->io_vd, !=, NULL);
 	ASSERT3P(zio->io_bp, !=, NULL);
@@ -4559,39 +4555,42 @@ zio_dio_checksum_verify(zio_t *zio)
 	ASSERT3B(pio->io_prop.zp_direct_write, ==, B_TRUE);
 	ASSERT3U(pio->io_child_type, ==, ZIO_CHILD_LOGICAL);
 
-	mutex_enter(&zio->io_vd->vdev_stat_lock);
-	zio->io_vd->vdev_direct_write_verify_cnt += 1;
-	if ((zio->io_vd->vdev_direct_write_verify_cnt %
-	    zfs_vdev_direct_write_verify_cnt) == 0) {
-		verify_checksum = B_TRUE;
-	} else {
-		mutex_exit(&zio->io_vd->vdev_stat_lock);
-		return (zio);
-	}
+	if (zfs_vdev_direct_write_verify_pct == 0 || zio->io_error != 0)
+		goto out;
 
-	if (verify_checksum && (error = zio_checksum_error(zio, NULL)) != 0) {
-		if (error == ECKSUM) {
-			zio->io_vd->vdev_stat.vs_dio_verify_errors++;
-			zio->io_error = SET_ERROR(EAGAIN);
-			zio->io_flags |= ZIO_FLAG_DIO_CHKSUM_ERR;
+	/*
+	 * A Direct I/O write checksum verification will only be
+	 * performed based on the top-level VDEV percentage for checks.
+	 */
+	uint32_t rand = random_in_range(100);
+	int error;
 
-			/*
-			 * The EAGAIB error must be propagated up to the
-			 * logical parent ZIO in zio_notify_parent() so it can
-			 * be returned to dmu_write_abd().
-			 */
-			zio->io_flags &= ~ZIO_FLAG_DONT_PROPAGATE;
+	if (rand < zfs_vdev_direct_write_verify_pct) {
+		if ((error = zio_checksum_error(zio, NULL)) != 0) {
+			zio->io_error = error;
+			if (error == ECKSUM) {
+				mutex_enter(&zio->io_vd->vdev_stat_lock);
+				zio->io_vd->vdev_stat.vs_dio_verify_errors++;
+				mutex_exit(&zio->io_vd->vdev_stat_lock);
+				zio->io_error = SET_ERROR(EAGAIN);
+				zio->io_flags |= ZIO_FLAG_DIO_CHKSUM_ERR;
 
-			(void) zfs_ereport_post(FM_EREPORT_ZFS_DIO_VERIFY,
-			    zio->io_spa, zio->io_vd, &zio->io_bookmark,
-			    zio, 0);
+				/*
+				 * The EAGAIN error must be propagated up to the
+				 * logical parent ZIO in zio_notify_parent() so
+				 * it can be returned to dmu_write_abd().
+				 */
+				zio->io_flags &= ~ZIO_FLAG_DONT_PROPAGATE;
+
+				(void) zfs_ereport_post(
+				    FM_EREPORT_ZFS_DIO_VERIFY,
+				    zio->io_spa, zio->io_vd, &zio->io_bookmark,
+				    zio, 0);
+			}
 		}
-	} else {
-		zio->io_error = error;
 	}
 
-	mutex_exit(&zio->io_vd->vdev_stat_lock);
-
+out:
 	return (zio);
 }
 

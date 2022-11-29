@@ -154,14 +154,14 @@ uint_t zfs_vdev_max_auto_ashift = 14;
 uint_t zfs_vdev_min_auto_ashift = ASHIFT_MIN;
 
 /*
- * VDEV checksum verification count for Direct I/O writes. This is neccessary
- * for Linux, because user pages can not be placed under write protection
- * during Direct I/O writes.
+ * VDEV checksum verification percentage for Direct I/O writes. This is
+ * neccessary for Linux, because user pages can not be placed under write
+ * protection during Direct I/O writes.
  */
 #if !defined(__FreeBSD__)
-uint_t zfs_vdev_direct_write_verify_cnt = 100;
+uint_t zfs_vdev_direct_write_verify_pct = 2;
 #else
-uint_t zfs_vdev_direct_write_verify_cnt = 0;
+uint_t zfs_vdev_direct_write_verify_pct = 0;
 #endif
 
 void
@@ -6522,7 +6522,8 @@ ZFS_MODULE_PARAM_CALL(zfs_vdev, zfs_vdev_, max_auto_ashift,
 	"Maximum ashift used when optimizing for logical -> physical sector "
 	"size on new top-level vdevs");
 
-ZFS_MODULE_PARAM(zfs_vdev, zfs_vdev_, direct_write_verify_cnt, UINT, ZMOD_RW,
-	"Count interval per top-level VDEV for checksum verification to be "
-	"performed for Direct I/O writes");
+ZFS_MODULE_PARAM_CALL(zfs_vdev, zfs_vdev_, direct_write_verify_pct,
+	param_set_direct_write_verify_pct, param_get_uint, ZMOD_RW,
+	"Percentage of Direct I/O writes per top-level VDEV for checksum "
+	"verification to be performed");
 /* END CSTYLED */
