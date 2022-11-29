@@ -58,7 +58,8 @@ fi
 log_onexit cleanup
 
 ITERATIONS=3
-NUMBLOCKS=8
+NUMBLOCKS=300
+BS=$((128 * 1024)) #128k
 mntpnt=$(get_prop mountpoint $TESTPOOL/$TESTFS)
 log_must zfs set recordsize=128k $TESTPOOL/$TESTFS
 
@@ -67,16 +68,23 @@ do
 	log_must zfs set compression=$compress $TESTPOOL/$TESTFS
 
 	for i in $(seq 1 $ITERATIONS); do
-		log_not "Verifying stable pages for Direct I/O writes \
+		log_note "Verifying stable pages for Direct I/O writes \
 		    iteration $i of $ITERATIONS"
+
+		prev_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
+
 		# Manipulate the user's buffer while running O_DIRECT write
 		# workload with the buffer.
 		log_must manipulate_user_buffer -o "$mntpnt/direct-write.iso" \
-		    -r 5 -n $NUMBLOCKS
+		    -n $NUMBLOCKS -b $BS
 
 		# Reading back the contents of the file
-		log_must dd if=$mntpnt/direct-write.iso of=/dev/null bs=128k \
-		    count=$NUMBLOCKS
+		log_must stride_dd -i $mntpnt/direct-write.iso -o /dev/null \
+		    -b $BS -c $NUMBLOCKS
+
+		curr_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
+
+		log_must [ $curr_dio_wr -gt $prev_dio_wr ]
 
 		# Making sure there are no data errors for the zpool
 		log_must check_pool_status $TESTPOOL "errors" \
