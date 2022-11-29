@@ -33,7 +33,7 @@
 # 	Verify checksum verify works for Direct I/O writes.
 #
 # STRATEGY:
-#	1. Set the module parameter zfs_vdev_direct_write_verify_cnt to 20.
+#	1. Set the module parameter zfs_vdev_direct_write_verify_pct to 30.
 #	2. Check that manipulating the user buffer while Direct I/O writes are
 #	   taking place does not cause any panics with compression turned on.
 #	3. Start a Direct IO write workload while manipulating the user buffer
@@ -42,7 +42,7 @@
 #	   zpool status -d and checking for zevents. We also make sure there
 #	   are reported data errors when reading the file back.
 #	5. Repeat steps 3 and 4 for 3 iterations.
-#	6. Set zfs_vdev_direct_write_verify_cnt set to 1 and repeat 3.
+#	6. Set zfs_vdev_direct_write_verify_pct set to 1 and repeat 3.
 #	7. Verify there are Direct I/O write verify failures using
 #	   zpool status -d and checking for zevents. We also make sure there
 #	   there are no reported data errors when reading the file back because
@@ -58,7 +58,7 @@ function cleanup
 	log_must zpool clear $TESTPOOL
 	# Clearing out dio_verify from event logs
 	log_must zpool events -c
-	log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_CNT 100
+	log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_PCT 10
 }
 
 function get_file_size
@@ -89,7 +89,7 @@ set -A array $(get_disklist_fullpath $TESTPOOL)
 firstvdev=${array[0]}
 
 log_must zfs set recordsize=128k $TESTPOOL/$TESTFS
-log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_CNT 20
+log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_PCT 30
 
 # First we will verify there are no panics while manipulating the contents of
 # the user buffer during Direct I/O writes with compression. The contents
@@ -155,7 +155,7 @@ done
 
 # Finally we will verfiy that with checking every Direct I/O write we have no
 # errors at all.
-log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_CNT 1
+log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_PCT 100
 
 for i in $(seq 1 $ITERATIONS); do
 	log_note "Verifying every Direct I/O write checksums iteration $i of \
