@@ -456,33 +456,36 @@ EXPORT_SYMBOL(zfs_uioskip);
 boolean_t
 zfs_uio_page_aligned(zfs_uio_t *uio)
 {
-	const struct iovec *iov;
+	boolean_t aligned = B_TRUE;
 
 	if (uio->uio_segflg == UIO_USERSPACE ||
 	    uio->uio_segflg == UIO_SYSSPACE) {
-		iov = uio->uio_iov;
+		const struct iovec *iov = uio->uio_iov;
+		size_t skip = uio->uio_skip;
+
+		for (int i = uio->uio_iovcnt; i > 0; iov++, i--) {
+			unsigned long addr =
+			    (unsigned long)(iov->iov_base + skip);
+			size_t size = iov->iov_len - skip;
+			if ((addr & (PAGE_SIZE - 1)) ||
+			    (size & (PAGE_SIZE - 1))) {
+				aligned = B_FALSE;
+				break;
+			}
+			skip = 0;
+		}
 #if defined(HAVE_VFS_IOV_ITER)
 	} else if (uio->uio_segflg == UIO_ITER) {
-		iov = uio->uio_iter->iov;
+		unsigned long alignment =
+		    iov_iter_alignment(uio->uio_iter);
+		aligned = IS_P2ALIGNED(alignment, PAGE_SIZE);
 #endif
 	} else {
 		/* Currently not supported */
-		return (B_FALSE);
+		aligned = B_FALSE;
 	}
 
-	size_t skip = uio->uio_skip;
-
-	for (int i = uio->uio_iovcnt; i > 0; iov++, i--) {
-		unsigned long addr = (unsigned long)(iov->iov_base + skip);
-		size_t size = iov->iov_len - skip;
-		if ((addr & (PAGE_SIZE - 1)) ||
-		    (size & (PAGE_SIZE - 1))) {
-			return (B_FALSE);
-		}
-		skip = 0;
-	}
-
-	return (B_TRUE);
+	return (aligned);
 }
 
 
