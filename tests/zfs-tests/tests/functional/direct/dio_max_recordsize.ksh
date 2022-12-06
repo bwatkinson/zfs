@@ -57,6 +57,14 @@ for type in "" "mirror" "raidz" "draid"; do;
 		verify_dio_write_count $TESTPOOL1 $recsize $((4 * recsize)) \
 		    $mntpnt
 
+		if [[ "$type" == "" ]]; then
+			check_dio_write_chksum_verify_failures $TESTPOOL1 \
+			    "stripe" 0
+		else
+			check_dio_write_chksum_verify_failures $TESTPOOL1 \
+			    "$type" 0
+		fi
+
 		destroy_pool $TESTPOOL1
 	done
 done
