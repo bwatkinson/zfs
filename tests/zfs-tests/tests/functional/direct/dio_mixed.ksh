@@ -42,6 +42,7 @@ verify_runnable "global"
 function cleanup
 {
 	log_must rm -f $src_file $new_file $tmp_file
+	check_dio_write_chksum_verify_failures $TESTPOOL "raidz" 0
 }
 
 log_assert "Verify mixed buffered and direct IO are cohearant."
