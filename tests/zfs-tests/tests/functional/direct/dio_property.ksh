@@ -44,6 +44,7 @@ function cleanup
 {
 	zfs set direct=standard $TESTPOOL/$TESTFS
 	log_must rm -f $tmp_file
+	check_dio_write_chksum_verify_failures $TESTPOOL "raidz" 0
 }
 
 log_assert "Verify the direct=always|disabled|standard property"
