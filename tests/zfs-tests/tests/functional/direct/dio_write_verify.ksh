@@ -58,7 +58,7 @@ function cleanup
 	log_must zpool clear $TESTPOOL
 	# Clearing out dio_verify from event logs
 	log_must zpool events -c
-	log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_PCT 10
+	log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_PCT 2
 }
 
 function get_file_size
@@ -79,6 +79,7 @@ log_onexit cleanup
 
 ITERATIONS=3
 NUMBLOCKS=300
+VERIFY_PCT=30
 BS=$((128 * 1024)) # 128k
 mntpnt=$(get_prop mountpoint $TESTPOOL/$TESTFS)
 
@@ -89,7 +90,7 @@ set -A array $(get_disklist_fullpath $TESTPOOL)
 firstvdev=${array[0]}
 
 log_must zfs set recordsize=128k $TESTPOOL/$TESTFS
-log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_PCT 30
+log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_PCT $VERIFY_PCT
 
 # First we will verify there are no panics while manipulating the contents of
 # the user buffer during Direct I/O writes with compression. The contents
@@ -110,8 +111,9 @@ log_must rm -f "$mntpnt/direct-write.iso"
 log_must zfs set compression=off $TESTPOOL/$TESTFS
 
 for i in $(seq 1 $ITERATIONS); do
-	log_note "Verifying every 100th Direct I/O write checksum iteration \
-	    $i of $ITERATIONS"
+	log_note "Verifying 30% of Direct I/O write checksums iteration \
+	    $i of $ITERATIONS with \
+	    zfs_vdev_direct_write_verify_pct=$VERIFY_PCT"
 
 	# Clearing out DIO counts for Zpool
 	log_must zpool clear $TESTPOOL
@@ -137,17 +139,24 @@ for i in $(seq 1 $ITERATIONS); do
 	DIO_VERIFIES=$(zpool status -dp | awk -v d="raidz" '$0 ~ d {print $6}')
 	DIO_VERIFY_EVENTS=$(zpool events | grep -c dio_verify)
 
+	log_note "Making sure we have Direct I/O checkum verifies with zpool \
+	    status -d"
 	log_must [ $DIO_VERIFIES -gt 0 ]
+	log_note "Making sure there are dio_verify events with ZED"
 	log_must [ $DIO_VERIFY_EVENTS -gt 0 ]
+	log_note "Making sure we have Direct I/O writes logged"
 	log_must [ $curr_dio_wr -gt $prev_dio_wr ]
 
 	# In the event of checksum verify error, the write will be redirected
 	# through the ARC. We check here that we have ARC writes.
+	log_note "Making sure we have ARC writes have taken place in the event \
+	    a Direct I/O checksum verify failures occurred"
 	log_must [ $total_arc_wr -gt $DIO_VERIFIES ]
 
 	# Verifying there are checksum errors
 	cksum=$(zpool status -P -v $TESTPOOL | awk -v v="$firstvdev" '$0 ~ v \
 	    {print $5}')
+	log_note "Making sure there are checksum errors for the ZPool"
 	log_must [ $cksum -ne 0 ]
 
 	log_must rm -f "$mntpnt/direct-write.iso"
@@ -155,11 +164,12 @@ done
 
 # Finally we will verfiy that with checking every Direct I/O write we have no
 # errors at all.
-log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_PCT 100
+VERIFY_PCT=100
+log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_PCT $VERIFY_PCT
 
 for i in $(seq 1 $ITERATIONS); do
 	log_note "Verifying every Direct I/O write checksums iteration $i of \
-	    $ITERATIONS"
+	    $ITERATIONS with zfs_vdev_direct_write_verify_pct=$VERIFY_PCT"
 
 	# Clearing out DIO counts for Zpool
 	log_must zpool clear $TESTPOOL
@@ -185,14 +195,21 @@ for i in $(seq 1 $ITERATIONS); do
 	DIO_VERIFIES=$(zpool status -dp | awk -v d="raidz" '$0 ~ d {print $6}')
 	DIO_VERIFY_EVENTS=$(zpool events | grep -c dio_verify)
 
+	log_note "Making sure we have Direct I/O checkum verifies with zpool \
+	    status -d"
 	log_must [ $DIO_VERIFIES -gt 0 ]
+	log_note "Making sure there are dio_verify events with ZED"
 	log_must [ $DIO_VERIFY_EVENTS -gt 0 ]
+	log_note "Making sure we have Direct I/O writes logged"
 	log_must [ $curr_dio_wr -gt $prev_dio_wr ]
 
 	# In the event of checksum verify error, the write will be redirected
 	# through the ARC. We check here that we have ARC writes.
+	log_note "Making sure we have ARC writes have taken place in the event \
+	    a Direct I/O checksum verify failures occurred"
 	log_must [ $total_arc_wr -gt $DIO_VERIFIES ]
 
+	log_note "Making sure there are no checksum errors with the ZPool"
 	log_must check_pool_status $TESTPOOL "errors" "No known data errors"
 	log_must rm -f "$mntpnt/direct-write.iso"
 done
