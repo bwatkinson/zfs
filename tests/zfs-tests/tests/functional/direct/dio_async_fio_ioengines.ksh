@@ -44,6 +44,7 @@ verify_runnable "global"
 function cleanup
 {
 	log_must rm -f "$mntpnt/direct-*"
+	check_dio_write_chksum_verify_failures $TESTPOOL "raidz" 0
 }
 
 log_assert "Verify FIO async ioengines work using Direct IO."
