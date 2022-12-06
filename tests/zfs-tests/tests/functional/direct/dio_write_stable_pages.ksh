@@ -84,9 +84,11 @@ do
 
 		curr_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
 
+		log_note "Making sure we have Direct I/O writes logged"
 		log_must [ $curr_dio_wr -gt $prev_dio_wr ]
 
 		# Making sure there are no data errors for the zpool
+		log_note "Making sure there are no checksum errors with the ZPool"
 		log_must check_pool_status $TESTPOOL "errors" \
 		    "No known data errors"
 
