@@ -46,6 +46,7 @@ verify_runnable "global"
 function cleanup
 {
 	log_must rm -f "$mntpnt/direct-write.iso"
+	check_dio_write_chksum_verify_failures $TESTPOOL "raidz" 0
 }
 
 log_assert "Verify stable pages work for Direct I/O writes."
@@ -83,9 +84,12 @@ do
 		    -b $BS -c $NUMBLOCKS
 
 		curr_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
+		total_dio_wr=$((curr_dio_wr - prev_dio_wr))
 
 		log_note "Making sure we have Direct I/O writes logged"
-		log_must [ $curr_dio_wr -gt $prev_dio_wr ]
+		if [[ $total_dio_wr -lt 1 ]]; then
+			log_fail "No Direct I/O writes $total_dio_wr"
+		fi
 
 		# Making sure there are no data errors for the zpool
 		log_note "Making sure there are no checksum errors with the ZPool"
