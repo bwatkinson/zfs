@@ -59,4 +59,6 @@ for bs in "4k" "128k" "1m"; do
 	done
 done
 
+check_dio_write_chksum_verify_failures $TESTPOOL1 "stripe" 0
+
 log_pass "Verified encryption works using Direct IO"
