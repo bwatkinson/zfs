@@ -57,13 +57,27 @@ fio_async_ioengines="posixaio"
 
 if is_linux; then
 	fio_async_ioengines+=" libaio"
+	if $(grep -q "CONFIG_IO_URING=y" /boot/config-$(uname -r)); then
+		fio --ioengine=io_uring --parse-only > /dev/null 2>&1
+		if [[ $? -eq 0 ]]; then
+			fio_async_ioengines+=" io_uring"
+	
+			else
+				log_note "io_uring not supported by fio and " \
+				     "will not be tested"
+		fi
+		else
+			log_note "io_uring not supported by kernel will not " \
+			     "be tested"
+
+	fi
 fi
 
 for ioengine in $fio_async_ioengines; do
 	for ioengine_args in "${async_ioengine_args[@]}"; do
 		for op in "rw" "randrw" "write"; do
 			log_note "Checking direct IO with FIO async ioengine" \
-			    " $ioengine with args $ioengine_args"
+			    " $ioengine with args $ioengine_args --rw=$op"
 			dio_and_verify $op $DIO_FILESIZE $DIO_BS $mntpnt "$ioengine" \
 			    "$ioengine_args"
 		done
