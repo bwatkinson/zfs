@@ -102,8 +102,19 @@ prev_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
 log_must manipulate_user_buffer -o "$mntpnt/direct-write.iso" -n $NUMBLOCKS \
     -b $BS
 curr_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
-log_must [ $curr_dio_wr -gt $prev_dio_wr ]
+total_dio_wr=$((curr_dio_wr - prev_dio_wr))
+
+log_note "Making sure we have Direct I/O writes logged"
+if [[ $total_dio_wr -lt 1 ]]; then
+	log_fail "No Direct I/O writes $total_dio_wr"
+fi
+
 log_must rm -f "$mntpnt/direct-write.iso"
+# Clearing out DIO counts for Zpool
+log_must zpool clear $TESTPOOL
+# Clearing out dio_verify from event logs
+log_must zpool events -c
+
 
 
 # Next we will verify there are checksum errors for Direct I/O writes while
@@ -114,11 +125,6 @@ for i in $(seq 1 $ITERATIONS); do
 	log_note "Verifying 30% of Direct I/O write checksums iteration \
 	    $i of $ITERATIONS with \
 	    zfs_vdev_direct_write_verify_pct=$VERIFY_PCT"
-
-	# Clearing out DIO counts for Zpool
-	log_must zpool clear $TESTPOOL
-	# Clearing out dio_verify from event logs
-	log_must zpool events -c
 
 	prev_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
 	prev_arc_wr=$(get_iostats_stat $TESTPOOL arc_write_count)
@@ -131,36 +137,43 @@ for i in $(seq 1 $ITERATIONS); do
 	log_mustnot stride_dd -i "$mntpnt/direct-write.iso" -o /dev/null -b $BS \
 	    -c $num_blocks
 
-	# Getting new Direct I/O write count, Direct I/O write checksum verify
-	# errors and zevents.
+	# Getting new Direct I/O and ARC write counts.
 	curr_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
 	curr_arc_wr=$(get_iostats_stat $TESTPOOL arc_write_count)
+	total_dio_wr=$((curr_dio_wr - prev_dio_wr))
 	total_arc_wr=$((curr_arc_wr - prev_arc_wr))
-	DIO_VERIFIES=$(zpool status -dp | awk -v d="raidz" '$0 ~ d {print $6}')
-	DIO_VERIFY_EVENTS=$(zpool events | grep -c dio_verify)
 
-	log_note "Making sure we have Direct I/O checkum verifies with zpool \
-	    status -d"
-	log_must [ $DIO_VERIFIES -gt 0 ]
-	log_note "Making sure there are dio_verify events with ZED"
-	log_must [ $DIO_VERIFY_EVENTS -gt 0 ]
+	# Verifying there are checksum errors
+	log_note "Making sure there are checksum errors for the ZPool"
+	cksum=$(zpool status -P -v $TESTPOOL | awk -v v="$firstvdev" '$0 ~ v \
+	    {print $5}')
+	if  [[ $cksum -eq 0 ]]; then
+		zpool status -P -v $TESTPOOL
+		log_fail "No checksum failures for ZPool $TESTPOOL"
+	fi
+	
+	# Getting checksum verify failures
+	verify_failures=$(get_zpool_status_chksum_verify_failures $TESTPOOL "raidz")
+
 	log_note "Making sure we have Direct I/O writes logged"
-	log_must [ $curr_dio_wr -gt $prev_dio_wr ]
+	if [[ $total_dio_wr -lt 1 ]]; then
+		log_fail "No Direct I/O writes $total_dio_wr"
+	fi
+	log_note "Making sure we have Direct I/O write checksum verifies with ZPool"
+	check_dio_write_chksum_verify_failures $TESTPOOL "raidz" 1
 
 	# In the event of checksum verify error, the write will be redirected
 	# through the ARC. We check here that we have ARC writes.
 	log_note "Making sure we have ARC writes have taken place in the event \
 	    a Direct I/O checksum verify failures occurred"
-	log_must [ $total_arc_wr -gt $DIO_VERIFIES ]
-
-	# Verifying there are checksum errors
-	cksum=$(zpool status -P -v $TESTPOOL | awk -v v="$firstvdev" '$0 ~ v \
-	    {print $5}')
-	log_note "Making sure there are checksum errors for the ZPool"
-	log_must [ $cksum -ne 0 ]
+	if [[ $total_arc_wr -lt $verify_failures ]]; then
+		log_fail "ARC writes $total_arc_wr < $verify_failures"
+	fi
 
 	log_must rm -f "$mntpnt/direct-write.iso"
 done
+
+
 
 # Finally we will verfiy that with checking every Direct I/O write we have no
 # errors at all.
@@ -170,11 +183,6 @@ log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_PCT $VERIFY_PCT
 for i in $(seq 1 $ITERATIONS); do
 	log_note "Verifying every Direct I/O write checksums iteration $i of \
 	    $ITERATIONS with zfs_vdev_direct_write_verify_pct=$VERIFY_PCT"
-
-	# Clearing out DIO counts for Zpool
-	log_must zpool clear $TESTPOOL
-	# Clearing out dio_verify from event logs
-	log_must zpool events -c
 
 	prev_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
 	prev_arc_wr=$(get_iostats_stat $TESTPOOL arc_write_count)
@@ -187,30 +195,34 @@ for i in $(seq 1 $ITERATIONS); do
 	log_must stride_dd -i "$mntpnt/direct-write.iso" -o /dev/null -b $BS \
 	    -c $num_blocks
 
-	# Getting new Direct I/O write count, Direct I/O write checksum verify
-	# errors and zevents.
+	# Getting new Direct I/O and ARC Write counts.
 	curr_dio_wr=$(get_iostats_stat $TESTPOOL direct_write_count)
 	curr_arc_wr=$(get_iostats_stat $TESTPOOL arc_write_count)
+	total_dio_wr=$((curr_dio_wr - prev_dio_wr))
 	total_arc_wr=$((curr_arc_wr - prev_arc_wr))
-	DIO_VERIFIES=$(zpool status -dp | awk -v d="raidz" '$0 ~ d {print $6}')
-	DIO_VERIFY_EVENTS=$(zpool events | grep -c dio_verify)
 
-	log_note "Making sure we have Direct I/O checkum verifies with zpool \
-	    status -d"
-	log_must [ $DIO_VERIFIES -gt 0 ]
-	log_note "Making sure there are dio_verify events with ZED"
-	log_must [ $DIO_VERIFY_EVENTS -gt 0 ]
+	log_note "Making sure there are no checksum errors with the ZPool"
+	log_must check_pool_status $TESTPOOL "errors" "No known data errors"
+
+	# Geting checksum verify failures
+	verify_failures=$(get_zpool_status_chksum_verify_failures $TESTPOOL "raidz")	
+
 	log_note "Making sure we have Direct I/O writes logged"
-	log_must [ $curr_dio_wr -gt $prev_dio_wr ]
+	if [[ $total_dio_wr -lt 1 ]]; then
+		log_fail "No Direct I/O writes $total_dio_wr"
+	fi
+
+	log_note "Making sure we have Direct I/O write checksum verifies with ZPool"
+	check_dio_write_chksum_verify_failures "$TESTPOOL" "raidz" 1
 
 	# In the event of checksum verify error, the write will be redirected
 	# through the ARC. We check here that we have ARC writes.
 	log_note "Making sure we have ARC writes have taken place in the event \
 	    a Direct I/O checksum verify failures occurred"
-	log_must [ $total_arc_wr -gt $DIO_VERIFIES ]
+	if [[ $total_arc_wr -lt $verify_failures ]]; then
+		log_fail "ARC writes $total_arc_wr < $verify_failures"
+	fi
 
-	log_note "Making sure there are no checksum errors with the ZPool"
-	log_must check_pool_status $TESTPOOL "errors" "No known data errors"
 	log_must rm -f "$mntpnt/direct-write.iso"
 done
 

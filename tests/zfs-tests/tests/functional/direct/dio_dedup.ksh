@@ -45,6 +45,7 @@ function cleanup
 {
 	log_must rm -f "$mntpnt/direct-*"
 	log_must zfs set dedup=off $TESTPOOL/$TESTFS
+	check_dio_write_chksum_verify_failures $TESTPOOL "raidz" 0
 }
 
 log_assert "Verify deduplication works using Direct IO."
