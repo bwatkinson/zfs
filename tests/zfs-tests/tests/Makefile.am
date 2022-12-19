@@ -261,6 +261,8 @@ nobase_dist_datadir_zfs_tests_tests_DATA += \
 	functional/devices/devices_common.kshlib \
 	functional/direct/dio.cfg \
 	functional/direct/dio.kshlib \
+	functional/direct_mmap/dio.cfg \
+	functional/direct_mmap/dio.kshlib \
 	functional/events/events.cfg \
 	functional/events/events_common.kshlib \
 	functional/fault/fault.cfg \
@@ -1379,6 +1381,9 @@ nobase_dist_datadir_zfs_tests_tests_SCRIPTS += \
 	functional/direct/dio_write_stable_pages.ksh \
 	functional/direct/setup.ksh \
 	functional/direct/cleanup.ksh \
+	functional/direct_mmap/dio_mmap.ksh \
+	functional/direct_mmap/setup.ksh \
+	functional/direct_mmap/cleanup.ksh \
 	functional/dos_attributes/cleanup.ksh \
 	functional/dos_attributes/read_dos_attrs_001.ksh \
 	functional/dos_attributes/setup.ksh \
