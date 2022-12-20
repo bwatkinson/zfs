@@ -2808,7 +2808,7 @@ dmu_buf_direct_mixed_io_wait(dmu_buf_impl_t *db, uint64_t txg, boolean_t read)
 	} else {
 		/*
 		 * There must be an ARC buf associated with this Direct I/O
-		 * write otherwise there is no reason to way for previous
+		 * write otherwise there is no reason to wait for previous
 		 * dirty records to sync out.
 		 */
 		ASSERT3P(db->db_buf, !=, NULL);
@@ -4823,20 +4823,12 @@ dbuf_sync_leaf(dbuf_dirty_record_t *dr, dmu_tx_t *tx)
 	 * If this buffer is in the middle of an immediate write, wait for the
 	 * synchronous IO to complete.
 	 *
-	 * The exception to this rule is if the buffer is a Direct IO write.
-	 * We do not want to wait on the O_DIRECT write to finish. We are
-	 * removing the dirty records for this dbuf in dmu_write_direct_done()
-	 * but will wait on any dirty record that is currently syncing to
-	 * finalize instead of removing it.
+	 * This is also valid even with Direct I/O writes setting a dirty
+	 * records override state into DR_IN_DMU_SYNC, because all
+	 * Direct I/O writes happen in open-context.
 	 */
-	dbuf_dirty_record_t *dr_dio = dbuf_get_dirty_direct(db);
 	while (dr->dt.dl.dr_override_state == DR_IN_DMU_SYNC) {
 		ASSERT(dn->dn_object != DMU_META_DNODE_OBJECT);
-
-		/* Direct IO write */
-		if (dr_dio->dt.dl.dr_data == NULL)
-			break;
-
 		cv_wait(&db->db_changed, &db->db_mtx);
 	}
 
