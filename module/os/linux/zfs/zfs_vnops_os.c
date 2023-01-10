@@ -3978,8 +3978,11 @@ zfs_fillpage(struct inode *ip, struct page *pl[], int nr_pages)
 	io_off = page_offset(pl[0]);
 
 
+	for (int i = 0; i < nr_pages; i++)
+		ASSERT(PageLocked(pl[i]));
+
 	zfs_locked_range_t *lr = zfs_rangelock_enter(&zp->z_rangelock,
-	    io_off, io_len, RL_WRITER);
+	    io_off, io_len, RL_READER);
 
 	if (io_off + io_len > i_size)
 		io_len = i_size - io_off;
@@ -3992,7 +3995,6 @@ zfs_fillpage(struct inode *ip, struct page *pl[], int nr_pages)
 		caddr_t va;
 
 		cur_pp = pl[page_idx++];
-		ASSERT(PageLocked(cur_pp));
 		va = kmap(cur_pp);
 		err = dmu_read(os, zp->z_id, io_off, PAGESIZE, va,
 		    DMU_READ_PREFETCH);
