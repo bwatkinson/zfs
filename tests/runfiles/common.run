@@ -624,6 +624,10 @@ tests = ['dio_aligned_block', 'dio_async_always', 'dio_async_fio_ioengines',
     'dio_unaligned_filesize']
 tags = ['functional', 'direct']
 
+[tests/functional/direct_mmap]
+tests = ['dio_mmap']
+tags = ['functional', 'direct_mmap']
+
 [tests/functional/exec]
 tests = ['exec_001_pos', 'exec_002_neg']
 tags = ['functional', 'exec']
