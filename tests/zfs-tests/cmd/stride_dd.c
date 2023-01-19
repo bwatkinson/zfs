@@ -33,6 +33,7 @@ static int if_o_direct = 0;
 static int of_o_direct = 0;
 static int skip = 0;
 static int skipbytes = 0;
+static int entire_file = 0;
 static const char *execname = "stride_dd";
 
 static void usage(void);
@@ -42,10 +43,10 @@ static void
 usage(void)
 {
 	(void) fprintf(stderr,
-	    "usage: %s -i inputfile -o outputfile -b blocksize -c count \n"
+	    "usage: %s -i inputfile -o outputfile -b blocksize [-c count]\n"
 	    "           [-s stride] [-k seekblocks] [-K seekbytes]\n"
 	    "           [-a alignment] [-d if_o_direct] [-D of_o_direct]\n"
-	    "           [-p skipblocks] [-P skipbytes]\n"
+	    "           [-p skipblocks] [-P skipbytes] [-e entire_file]\n"
 	    "\n"
 	    "Simplified version of dd that supports the stride option.\n"
 	    "A stride of n means that for each block written, n - 1 blocks\n"
@@ -56,12 +57,13 @@ usage(void)
 	    "    inputfile:   File to read from\n"
 	    "    outputfile:  File to write to\n"
 	    "    blocksize:   Size of each block to read/write\n"
-	    "    count:       Number of blocks to read/write\n"
+	    "    count:       Number of blocks to read/write (Required"
+	    " unless -e is used)\n"
 	    "    stride:      Read/write a block then skip (stride - 1) blocks"
 	    "\n"
 	    "    seekblocks:  Number of blocks to skip at start of output\n"
 	    "    seekbytes:   Treat seekblocks as byte count\n"
-	    "    alignment:   Alignment passed to posix_memalign() (default "
+	    "    alignment:   Alignment passed to posix_memalign() (default"
 	    " PAGE_SIZE)\n"
 	    "    if_o_direct: Use O_DIRECT with inputfile (default no O_DIRECT)"
 	    "\n"
@@ -69,7 +71,9 @@ usage(void)
 	    " O_DIRECT)\n"
 	    "    skipblocks:  Number of blocks to skip at start of input "
 	    " (default 0)\n"
-	    "    skipbytes:   Treat skipblocks as byte count\n",
+	    "    skipbytes:   Treat skipblocks as byte count\n"
+	    "    entire_file: When used the entire inputfile will be read and"
+	    " count will be ignored\n",
 	    execname);
 	(void) exit(1);
 }
@@ -103,7 +107,7 @@ parse_options(int argc, char *argv[])
 	extern char *optarg;
 	extern int optind, optopt;
 
-	while ((c = getopt(argc, argv, "a:b:c:dDi:o:s:k:Kp:P")) != -1) {
+	while ((c = getopt(argc, argv, "a:b:c:deDi:o:s:k:Kp:P")) != -1) {
 		switch (c) {
 			case 'a':
 				alignment = atoi(optarg);
@@ -119,6 +123,10 @@ parse_options(int argc, char *argv[])
 
 			case 'd':
 				if_o_direct = 1;
+				break;
+
+			case 'e':
+				entire_file = 1;
 				break;
 
 			case 'D':
@@ -172,25 +180,106 @@ parse_options(int argc, char *argv[])
 		}
 	}
 
-	if (bsize <= 0 || count <= 0 || stride <= 0 || ifile == NULL ||
-	    ofile == NULL || seek < 0 || invalid_alignment(alignment) ||
-	    skip < 0) {
+	if (bsize <= 0 || stride <= 0 || ifile == NULL || ofile == NULL ||
+	    seek < 0 || invalid_alignment(alignment) || skip < 0) {
+		(void) fprintf(stderr,
+		    "Required parameter(s) missing or invalid.\n");
+		(void) usage();
+	}
+
+	if (count <= 0 && entire_file == 0) {
 		(void) fprintf(stderr,
 		    "Required parameter(s) missing or invalid.\n");
 		(void) usage();
 	}
 }
 
+static void
+read_entire_file(int ifd, int ofd, void *buf)
+{
+	int c;
+
+	do {
+		c = read(ifd, buf, bsize);
+		if (c < 0) {
+			perror("read");
+			exit(2);
+		} else if (c != 0) {
+			c = write(ofd, buf, bsize);
+			if (c < 0) {
+				perror("write");
+				exit(2);
+			}
+
+		}
+
+		if (stride > 1) {
+			if (lseek(ifd, (stride - 1) * bsize, SEEK_CUR) == -1) {
+				perror("input lseek");
+				exit(2);
+			}
+			if (lseek(ofd, (stride - 1) * bsize, SEEK_CUR) == -1) {
+				perror("output lseek");
+				exit(2);
+			}
+		}
+	} while (c != 0);
+}
+
+static void
+read_on_count(int ifd, int ofd, void *buf)
+{
+	int i;
+	int c;
+
+	for (i = 0; i < count; i++) {
+		c = read(ifd, buf, bsize);
+		if (c != bsize) {
+			if (c < 0) {
+				perror("read");
+			} else {
+				(void) fprintf(stderr,
+				    "%s: unexpected short read, read %d "
+				    "bytes, expected %d\n", execname,
+				    c, bsize);
+			}
+			exit(2);
+		}
+
+		c = write(ofd, buf, bsize);
+		if (c != bsize) {
+			if (c < 0) {
+				perror("write");
+			} else {
+				(void) fprintf(stderr,
+				    "%s: unexpected short write, wrote %d "
+				    "bytes, expected %d\n", execname,
+				    c, bsize);
+			}
+			exit(2);
+		}
+
+		if (stride > 1) {
+			if (lseek(ifd, (stride - 1) * bsize, SEEK_CUR) == -1) {
+				perror("input lseek");
+				exit(2);
+			}
+			if (lseek(ofd, (stride - 1) * bsize, SEEK_CUR) == -1) {
+				perror("output lseek");
+				exit(2);
+			}
+		}
+	}
+}
+
 int
 main(int argc, char *argv[])
 {
-	int i;
 	int ifd;
 	int ofd;
 	int ifd_flags = O_RDONLY;
 	int ofd_flags = O_WRONLY | O_CREAT;
 	void *buf;
-	int c;
 
 	parse_options(argc, argv);
 
@@ -241,44 +330,11 @@ main(int argc, char *argv[])
 		}
 	}
 
-	for (i = 0; i < count; i++) {
-		c = read(ifd, buf, bsize);
-		if (c != bsize) {
-			if (c < 0) {
-				perror("read");
-			} else {
-				(void) fprintf(stderr,
-				    "%s: unexpected short read, read %d "
-				    "bytes, expected %d\n", execname,
-				    c, bsize);
-			}
-			exit(2);
-		}
+	if (entire_file == 1)
+		read_entire_file(ifd, ofd, buf);
+	else
+		read_on_count(ifd, ofd, buf);
 
-		c = write(ofd, buf, bsize);
-		if (c != bsize) {
-			if (c < 0) {
-				perror("write");
-			} else {
-				(void) fprintf(stderr,
-				    "%s: unexpected short write, wrote %d "
-				    "bytes, expected %d\n", execname,
-				    c, bsize);
-			}
-			exit(2);
-		}
-
-		if (stride > 1) {
-			if (lseek(ifd, (stride - 1) * bsize, SEEK_CUR) == -1) {
-				perror("input lseek");
-				exit(2);
-			}
-			if (lseek(ofd, (stride - 1) * bsize, SEEK_CUR) == -1) {
-				perror("output lseek");
-				exit(2);
-			}
-		}
-	}
 	free(buf);
 
 	(void) close(ofd);

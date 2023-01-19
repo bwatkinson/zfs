@@ -61,14 +61,6 @@ function cleanup
 	log_must set_tunable32 VDEV_DIRECT_WR_VERIFY_PCT 2
 }
 
-function get_file_size
-{
-	typeset filename="$1"
-	typeset filesize=$(stat -c %s $filename)
-
-	echo $filesize
-}
-
 log_assert "Verify checksum verify works for Direct I/O writes."
 
 if is_freebsd; then
