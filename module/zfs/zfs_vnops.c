@@ -380,13 +380,31 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 	ssize_t chunk_size = zfs_vnops_read_chunk_size;
 	ssize_t n = MIN(zfs_uio_resid(uio), zp->z_size - zfs_uio_offset(uio));
 	ssize_t start_resid = n;
+	ssize_t dio_remaining_resid = 0;
 
-	/*
-	 * All pages for an O_DIRECT request have already been mapped so
-	 * there's no compelling reason to handle this uio is smaller chunks.
-	 */
-	if (uio->uio_extflg & UIO_DIRECT)
+	if (uio->uio_extflg & UIO_DIRECT) {
+		/*
+		 * All pages for an O_DIRECT request ahve already been mapped
+		 * so there's no compelling reason to handle this uio in
+		 * smaller chunks.
+		 */
 		chunk_size = DMU_MAX_ACCESS;
+
+		/*
+		 * In the event that the O_DIRECT request is reading the entire
+		 * file, it is possible file's length is not page sized
+		 * aligned. However, lower layers expect that the Direct I/O
+		 * request is page-aligned. In this case, as much of the file
+		 * that can be read using Direct I/O happens and the remaining
+		 * amount will be read through the ARC.
+		 *
+		 * This is still consistent with the semantics of Direct I/O in
+		 * ZFS as at a minimum the I/O request must be page-aligned.
+		 */
+		dio_remaining_resid = n - P2ALIGN(n, PAGE_SIZE);
+		if (dio_remaining_resid != 0)
+			n -= dio_remaining_resid;
+	}
 
 	while (n > 0) {
 		ssize_t nbytes = MIN(n, chunk_size -
@@ -427,7 +445,23 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		n -= nbytes;
 	}
 
-	int64_t nread = start_resid - n;
+	int64_t nread = start_resid;
+	if (error == 0 && (uio->uio_extflg & UIO_DIRECT) &&
+	    dio_remaining_resid != 0) {
+		/*
+		 * Temporarily remove the UIO_DIRECT flag from the UIO so the
+		 * remainder of the file can be read using the ARC.
+		 */
+		uio->uio_extflg &= ~UIO_DIRECT;
+		error = dmu_read_uio_dbuf(sa_get_db(zp->z_sa_hdl), uio,
+		    dio_remaining_resid);
+		uio->uio_extflg |= UIO_DIRECT;
+
+		if (error != 0)
+			n -= dio_remaining_resid;
+	}
+	nread -= n;
+
 	dataset_kstats_update_read_kstats(&zfsvfs->z_kstat, nread);
 out:
 	zfs_rangelock_exit(lr);
