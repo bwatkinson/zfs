@@ -401,8 +401,7 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		else
 #endif
 		if (zn_has_cached_data(zp, zfs_uio_offset(uio),
-		    zfs_uio_offset(uio) + nbytes - 1) &&
-		    !(uio->uio_extflg & UIO_DIRECT)) {
+		    zfs_uio_offset(uio) + nbytes - 1)) {
 			error = mappedread(zp, nbytes, uio);
 		} else {
 			error = dmu_read_uio_dbuf(sa_get_db(zp->z_sa_hdl),
@@ -439,8 +438,13 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		 * remainder of the file can be read using the ARC.
 		 */
 		uio->uio_extflg &= ~UIO_DIRECT;
-		error = dmu_read_uio_dbuf(sa_get_db(zp->z_sa_hdl), uio,
-		    dio_remaining_resid);
+		if (zn_has_cached_data(zp, zfs_uio_offset(uio),
+		    zfs_uio_offset(uio) + dio_remaining_resid - 1)) {
+			error = mappedread(zp, dio_remaining_resid, uio);
+		} else {
+			error = dmu_read_uio_dbuf(sa_get_db(zp->z_sa_hdl), uio,
+			    dio_remaining_resid);
+		}
 		uio->uio_extflg |= UIO_DIRECT;
 
 		if (error != 0)
@@ -879,8 +883,7 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		 * in zfs_fillpage().
 		 */
 		if (tx_bytes &&
-		    zn_has_cached_data(zp, woff, woff + tx_bytes - 1) &&
-		    !(ioflag & O_DIRECT)) {
+		    zn_has_cached_data(zp, woff, woff + tx_bytes - 1)) {
 			update_pages(zp, woff, tx_bytes, zfsvfs->z_os);
 		}
 
