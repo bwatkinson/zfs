@@ -577,7 +577,7 @@ mappedread_sf(znode_t *zp, int nbytes, zfs_uio_t *uio)
  *	 the file is memory mapped.
  */
 int
-mappedread(znode_t *zp, int nbytes, zfs_uio_t *uio)
+mappedread(znode_t *zp, int nbytes, zfs_uio_t *uio, zfs_locked_range_t *lr)
 {
 	vnode_t *vp = ZTOV(zp);
 	vm_object_t obj;

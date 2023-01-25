@@ -397,12 +397,12 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		    P2PHASE(zfs_uio_offset(uio), chunk_size));
 #ifdef UIO_NOCOPY
 		if (zfs_uio_segflg(uio) == UIO_NOCOPY)
-			error = mappedread_sf(zp, nbytes, uio);
+			error = mappedread_sf(zp, nbytes, uio, lr);
 		else
 #endif
 		if (zn_has_cached_data(zp, zfs_uio_offset(uio),
 		    zfs_uio_offset(uio) + nbytes - 1)) {
-			error = mappedread(zp, nbytes, uio);
+			error = mappedread(zp, nbytes, uio, lr);
 		} else {
 			error = dmu_read_uio_dbuf(sa_get_db(zp->z_sa_hdl),
 			    uio, nbytes);
@@ -440,7 +440,7 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		uio->uio_extflg &= ~UIO_DIRECT;
 		if (zn_has_cached_data(zp, zfs_uio_offset(uio),
 		    zfs_uio_offset(uio) + dio_remaining_resid - 1)) {
-			error = mappedread(zp, dio_remaining_resid, uio);
+			error = mappedread(zp, dio_remaining_resid, uio, lr);
 		} else {
 			error = dmu_read_uio_dbuf(sa_get_db(zp->z_sa_hdl), uio,
 			    dio_remaining_resid);

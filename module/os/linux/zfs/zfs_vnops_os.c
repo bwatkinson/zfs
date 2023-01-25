@@ -277,7 +277,7 @@ update_pages(znode_t *zp, int64_t start, int len, objset_t *os)
  *	 the file is memory mapped.
  */
 int
-mappedread(znode_t *zp, int nbytes, zfs_uio_t *uio)
+mappedread(znode_t *zp, int nbytes, zfs_uio_t *uio, zfs_locked_range_t *lr)
 {
 	struct inode *ip = ZTOI(zp);
 	struct address_space *mp = ip->i_mapping;
@@ -295,6 +295,17 @@ mappedread(znode_t *zp, int nbytes, zfs_uio_t *uio)
 
 		pp = find_lock_page(mp, start >> PAGE_SHIFT);
 		if (pp) {
+			while (!PageUptodate(pp)) {
+			    zfs_rangelock_exit(lr);
+#ifdef HAVE_PAGEMAP_FOLIO_WAIT_BIT
+				folio_wait_bit(page_folio(pp), PG_uptodate);
+#else
+				wait_on_page_bit(pp, PG_uptodate);
+#endif
+				lr = zfs_rangelock_enter(&zp->z_rangelock,
+				    zfs_uio_offset(uio), zfs_uio_resid(uio),
+				    RL_READER);
+			}
 			ASSERT(PageUptodate(pp));
 			unlock_page(pp);
 

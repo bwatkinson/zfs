@@ -41,7 +41,7 @@ extern int zfs_access(znode_t *, int, int, cred_t *);
 extern int zfs_getsecattr(znode_t *, vsecattr_t *, int, cred_t *);
 extern int zfs_setsecattr(znode_t *, vsecattr_t *, int, cred_t *);
 
-extern int mappedread(znode_t *, int, zfs_uio_t *);
+extern int mappedread(znode_t *, int, zfs_uio_t *, zfs_locked_range_t *);
 extern int mappedread_sf(znode_t *, int, zfs_uio_t *);
 extern void update_pages(znode_t *, int64_t, int, objset_t *);
 
