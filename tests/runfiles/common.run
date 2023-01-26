@@ -606,6 +606,10 @@ pre =
 post =
 tags = ['functional', 'deadman']
 
+[tests/functional/direct_mmap]
+tests = ['dio_mmap']
+tags = ['functional', 'direct_mmap']
+
 [tests/functional/delegate]
 tests = ['zfs_allow_001_pos', 'zfs_allow_002_pos', 'zfs_allow_003_pos',
     'zfs_allow_004_pos', 'zfs_allow_005_pos', 'zfs_allow_006_pos',
