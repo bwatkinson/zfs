@@ -230,8 +230,15 @@ zfs_check_direct_enabled(znode_t *zp, int ioflags, int *error)
  * is it allows the property to be safely set on a dataset without forcing
  * all of the applications to be aware of the alignment restrictions. When
  * O_DIRECT is explicitly requested by an application return EINVAL if the
- * request is unaligned.  In all cases, if the file has been accessed via
- * mmap(2) then perform buffered IO to keep the mapped region synchronized.
+ * request is unaligned.  In all cases, if the range for this request has
+ * been mmap'ed then we will perform buffered I/O to keep the mapped region
+ * synhronized with the ARC.
+ *
+ * It is possible that a file's pages could be mmap'ed after it is checked
+ * here. If so, that is handled according in zfs_read() and zfs_write(). See
+ * comments in the following two areas for how this handled:
+ * zfs_read() -> mappedread()
+ * zfs_write() -> update_pages()
  */
 int
 zfs_setup_direct(struct znode *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
@@ -415,9 +422,23 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		else
 #endif
 		if (zn_has_cached_data(zp, zfs_uio_offset(uio),
-		    zfs_uio_offset(uio) + nbytes - 1) &&
-		    !(uio->uio_extflg & UIO_DIRECT)) {
+		    zfs_uio_offset(uio) + nbytes - 1)) {
+			/*
+			 * It is possible that a files pages have been mmap'ed
+			 * since our check for Direct I/O reads and the read
+			 * being issued. In this case, we will use the ARC to
+			 * keep it synchronized with the page cache. In order
+			 * to do this we temporarily remove the UIO_DIRECT
+			 * flag.
+			 */
+			boolean_t uio_direct_mmap = B_FALSE;
+			if (uio->uio_extflg & UIO_DIRECT) {
+				uio->uio_extflg &= ~UIO_DIRECT;
+				uio_direct_mmap = B_TRUE;
+			}
 			error = mappedread(zp, nbytes, uio);
+			if (uio_direct_mmap)
+				uio->uio_extflg |= UIO_DIRECT;
 		} else {
 			error = dmu_read_uio_dbuf(sa_get_db(zp->z_sa_hdl),
 			    uio, nbytes);
@@ -453,8 +474,14 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		 * remainder of the file can be read using the ARC.
 		 */
 		uio->uio_extflg &= ~UIO_DIRECT;
-		error = dmu_read_uio_dbuf(sa_get_db(zp->z_sa_hdl), uio,
-		    dio_remaining_resid);
+
+		if (zn_has_cached_data(zp, zfs_uio_offset(uio),
+		    zfs_uio_offset(uio) + dio_remaining_resid - 1)) {
+			error = mappedread(zp, dio_remaining_resid, uio);
+		} else {
+			error = dmu_read_uio_dbuf(sa_get_db(zp->z_sa_hdl), uio,
+			    dio_remaining_resid);
+		}
 		uio->uio_extflg |= UIO_DIRECT;
 
 		if (error != 0)
@@ -871,25 +898,15 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 
 		/*
 		 * There is a a window where a file's pages can be mmap'ed after
-		 * the write has started. We may have temporarily removed the
-		 * UIO_DIRECT flag as we are still growing the blocksize but
-		 * the O_DIRECT flag is still present. This check for the
-		 * O_DIRECT flag has always been present before calling
-		 * update_pages(). If we remove the check for O_DIRECT we can
-		 * wind up in a deadlock between update_pages() and
-		 * zpl_writepages() -> write_cache_pages().
-		 *
-		 * XXX - In reality, this can probably be fixed by adding a
-		 * rangelock to zfs_fillpage(). There has always been a window
-		 * where we can start a write, but the pages are not mmapp'ed
-		 * till later. Ideally we would want to only check using
-		 * zn_has_cached_data() while holding the rangelock to remove
-		 * this window and the addition of also grabbing a rangelock
-		 * in zfs_fillpage().
+		 * the Direct I/O write has started. In this case we will still
+		 * call update_pages() to make sure there is consistency
+		 * between the ARC and the page cache. This is unfortunate
+		 * situation as the data will be read back into the ARC after
+		 * the Direct I/O write has completed, but this is the pentalty
+		 * for writing to a mmap'ed region of the file using O_DIRECT.
 		 */
 		if (tx_bytes &&
-		    zn_has_cached_data(zp, woff, woff + tx_bytes - 1) &&
-		    !(ioflag & O_DIRECT)) {
+		    zn_has_cached_data(zp, woff, woff + tx_bytes - 1)) {
 			update_pages(zp, woff, tx_bytes, zfsvfs->z_os);
 		}
 
