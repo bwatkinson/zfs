@@ -351,16 +351,6 @@ zpl_iter_read_direct(struct kiocb *kiocb, struct iov_iter *to)
 	zfs_uio_t uio;
 	ssize_t ret;
 
-	/*
-	 * Attempt to flush out any pages from the page cache. On error
-	 * fallback to the buffered path.
-	 */
-	ret = filemap_write_and_wait_range(filp->f_mapping, kiocb->ki_pos,
-	    kiocb->ki_pos + count - 1);
-
-	if (ret < 0)
-		return (ret);
-
 	zpl_uio_init(&uio, kiocb, to, kiocb->ki_pos, count, 0);
 
 	/* On error, return to fallback to the buffered path. */
@@ -508,6 +498,7 @@ zpl_iter_write_direct(struct kiocb *kiocb, struct iov_iter *from)
 		return (error);
 
 	wrote = count - uio.uio_resid;
+	kiocb->ki_pos += wrote;
 
 	return (wrote);
 }
@@ -533,22 +524,9 @@ zpl_iter_write(struct kiocb *kiocb, struct iov_iter *from)
 	if (direct == ZFS_DIRECT_IO_ERR) {
 		return (-error);
 	} else if (direct == ZFS_DIRECT_IO_ENABLED) {
-		/*
-		 * zpl_generic_file_direct_write() will attempt to flush out any
-		 * pages in the page cache and invalidate them. If this is
-		 * successful it will cal the direct_IO
-		 * address_space_operation (zpl_iter_write_direct()).
-		 */
-		ssize_t wrote = zpl_generic_file_direct_write(kiocb, from,
-		    kiocb->ki_pos);
+		ssize_t wrote = zpl_iter_write_direct(kiocb, from);
 
 		if (wrote >= 0 || wrote != -EAGAIN) {
-			/*
-			 * generic_file_direct_write() will update
-			 * kiocb->ki_pos on a successful Direct IO write.
-			 */
-			IMPLY(wrote >= 0,
-			    (offset + wrote) == kiocb->ki_pos);
 			return (wrote);
 		}
 
@@ -617,16 +595,6 @@ zpl_aio_read_direct(struct kiocb *kiocb, const struct iovec *iov,
 
 	ret = generic_segment_checks(iov, &nr_segs, &count, VERIFY_WRITE);
 	if (ret)
-		return (ret);
-
-	/*
-	 * Attempt to flush out any pages from the page cache. On error
-	 * fallback to the buffered path.
-	 */
-	ret = filemap_write_and_wait_range(filp->f_mapping, kiocb->ki_pos,
-	    kiocb->ki_pos + iov_length(iov, nr_segs) - 1);
-
-	if (ret < 0)
 		return (ret);
 
 	zfs_uio_t uio;
@@ -771,6 +739,7 @@ zpl_aio_write_direct(struct kiocb *kiocb, const struct iovec *iov,
 		return (error);
 
 	ssize_t wrote = count - uio.uio_resid;
+	kiocb->ki_pos += wrote;
 
 	return (wrote);
 }
@@ -805,21 +774,9 @@ zpl_aio_write(struct kiocb *kiocb, const struct iovec *iov,
 	if (direct == ZFS_DIRECT_IO_ERR) {
 		return (-error);
 	} else if (direct == ZFS_DIRECT_IO_ENABLED) {
-		/*
-		 * zpl_generic_file_direct_write() will attempt to flush out any
-		 * pages in the page cahce and invalidate them. If this is
-		 * successful it will call the direct_IO
-		 * address_space_operation (zpl_aio_write_direct()).
-		 */
-		ssize_t wrote = zpl_generic_file_direct_write(kiocb, iov,
-		    &nr_segs, pos, &kiocb->ki_pos, count, ocount);
+		ssize_t wrote = zpl_aio_write_direct(kiocb, iov, nr_segs, pos);
 
 		if (wrote >= 0 || wrote != -EAGAIN) {
-			/*
-			 * generic_file_direct_write() will update
-			 * kiocb->ki_pos on a successful Direct IO write.
-			 */
-			IMPLY(wrote >= 0, (pos + wrote) == kiocb->ki_pos);
 			return (wrote);
 		}
 
@@ -835,35 +792,37 @@ zpl_aio_write(struct kiocb *kiocb, const struct iovec *iov,
 
 #endif /* HAVE_VFS_RW_ITERATE */
 
+static ssize_t
+zpl_direct_IO_impl(void)
+{
+	/*
+	 * All O_DIRCT requests should be handled by
+	 * zpl_{iter/aio}_{write/read}(). There is no way kernel generic code
+	 * should call the direct_IO address_space_operations function. We set
+	 * this code path to be fatal if it is executed.
+	 */
+	VERIFY(0);
+	return (0);
+}
+
 #if defined(HAVE_VFS_RW_ITERATE)
 #if defined(HAVE_VFS_DIRECT_IO_ITER)
 static ssize_t
 zpl_direct_IO(struct kiocb *kiocb, struct iov_iter *iter)
 {
-	if (iov_iter_rw(iter) == WRITE)
-		return (zpl_iter_write_direct(kiocb, iter));
-	else
-		return (zpl_iter_read(kiocb, iter));
+	return (zpl_direct_IO_impl());
 }
 #elif defined(HAVE_VFS_DIRECT_IO_ITER_OFFSET)
 static ssize_t
 zpl_direct_IO(struct kiocb *kiocb, struct iov_iter *iter, loff_t pos)
 {
-	ASSERT3S(pos, ==, kiocb->ki_pos);
-	if (iov_iter_rw(iter) == WRITE)
-		return (zpl_iter_write_direct(kiocb, iter));
-	else
-		return (zpl_iter_read(kiocb, iter));
+	return (zpl_direct_IO_impl());
 }
 #elif defined(HAVE_VFS_DIRECT_IO_ITER_RW_OFFSET)
 static ssize_t
 zpl_direct_IO(int rw, struct kiocb *kiocb, struct iov_iter *iter, loff_t pos)
 {
-	ASSERT3S(pos, ==, kiocb->ki_pos);
-	if (rw == WRITE)
-		return (zpl_iter_write_direct(kiocb, iter));
-	else
-		return (zpl_iter_read(kiocb, iter));
+	return (zpl_direct_IO_impl());
 }
 #else
 #error "Unknown direct IO interface"
@@ -876,23 +835,13 @@ static ssize_t
 zpl_direct_IO(int rw, struct kiocb *kiocb, const struct iovec *iov,
     loff_t pos, unsigned long nr_segs)
 {
-	if (rw == WRITE)
-		return (zpl_aio_write_direct(kiocb, iov, nr_segs, pos));
-	else
-		return (zpl_aio_read(kiocb, iov, nr_segs, pos));
+	return (zpl_direct_IO_impl());
 }
 #elif defined(HAVE_VFS_DIRECT_IO_ITER_RW_OFFSET)
 static ssize_t
 zpl_direct_IO(int rw, struct kiocb *kiocb, struct iov_iter *iter, loff_t pos)
 {
-	const struct iovec *iovp = iov_iter_iovec(iter);
-	unsigned long nr_segs = iter->nr_segs;
-
-	ASSERT3S(pos, ==, kiocb->ki_pos);
-	if (rw == WRITE)
-		return (zpl_aio_write_direct(kiocb, iovp, nr_segs, pos));
-	else
-		return (zpl_aio_read(kiocb, iovp, nr_segs, pos));
+	return (zpl_direct_IO_impl());
 }
 #else
 #error "Unknown direct IO interface"
