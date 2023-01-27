@@ -293,31 +293,4 @@ extern long zpl_ioctl_fideduperange(struct file *filp, void *arg);
 #define	zpl_inode_set_mtime_to_ts(ip, ts)	(ip->i_mtime = ts)
 #endif
 
-/*
- * HAVE_GENERIC_FILE_DIRECT_WRITE_IOV_ITER* align with HAVE_VFS_RW_ITERATE
- */
-#if defined(HAVE_GENERIC_FILE_DIRECT_WRITE_IOV_ITER)
-/* 4.7 API */
-#define	zpl_generic_file_direct_write(iocb, iter, off) \
-	generic_file_direct_write(iocb, iter)
-
-#elif defined(HAVE_GENERIC_FILE_DIRECT_WRITE_IOV_ITER_WITH_LOFF)
-/* 3.16 API */
-#define	zpl_generic_file_direct_write(iocb, iter, off) \
-	generic_file_direct_write(iocb, iter, off)
-
-#elif defined(HAVE_GENERIC_FILE_DIRECT_WRITE_IOVEC)
-/* 3.15 API */
-#define	zpl_generic_file_direct_write(iocb, vec, segs, pos, ppos, cnt, ocnt) \
-	generic_file_direct_write(iocb, vec, segs, pos, cnt, ocnt)
-
-#elif defined(HAVE_GENERIC_FILE_DIRECT_WRITE_IOVEC_LOFF_PTR)
-/* 3.10 API */
-#define	zpl_generic_file_direct_write(iocb, vec, segs, pos, ppos, cnt, ocnt) \
-	generic_file_direct_write(iocb, vec, segs, pos, ppos, cnt, ocnt)
-
-#else
-#error "Unsupported kernel"
-#endif
-
 #endif	/* _SYS_ZPL_H */
