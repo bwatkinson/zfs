@@ -3659,6 +3659,8 @@ zfs_putpage(struct inode *ip, struct page *pp, struct writeback_control *wbc,
 
 	/* Page is beyond end of file */
 	if (pgoff >= offset) {
+		if (!PageUptodate(pp))
+			dump_page(pp, "beyond EOF");
 		unlock_page(pp);
 		zfs_exit(zfsvfs, FTAG);
 		return (0);
@@ -3710,14 +3712,21 @@ zfs_putpage(struct inode *ip, struct page *pp, struct writeback_control *wbc,
 	 */
 	mapping = pp->mapping;
 	redirty_page_for_writepage(wbc, pp);
+
+	if (unlikely(!PageUptodate(pp)))
+		dump_page(pp, "zfs_putpage() not uptodate A");
+
 	unlock_page(pp);
 
 	zfs_locked_range_t *lr = zfs_rangelock_enter(&zp->z_rangelock,
 	    pgoff, pglen, RL_WRITER);
+
 	lock_page(pp);
 
 	/* Page mapping changed or it was no longer dirty, we're done */
 	if (unlikely((mapping != pp->mapping) || !PageDirty(pp))) {
+		if (!PageUptodate(pp))
+			dump_page(pp, "mapping change or not dirty");
 		unlock_page(pp);
 		zfs_rangelock_exit(lr);
 		zfs_exit(zfsvfs, FTAG);
@@ -3754,6 +3763,8 @@ zfs_putpage(struct inode *ip, struct page *pp, struct writeback_control *wbc,
 
 	/* Clear the dirty flag the required locks are held */
 	if (!clear_page_dirty_for_io(pp)) {
+		if (!PageUptodate(pp))
+			dump_page(pp, "clear_page_dirty_for_io() failed");
 		unlock_page(pp);
 		zfs_rangelock_exit(lr);
 		zfs_exit(zfsvfs, FTAG);
@@ -3792,6 +3803,10 @@ zfs_putpage(struct inode *ip, struct page *pp, struct writeback_control *wbc,
 			atomic_dec_32(&zp->z_async_writes_cnt);
 		zfs_rangelock_exit(lr);
 		zfs_exit(zfsvfs, FTAG);
+
+		if (!PageUptodate(pp))
+			dump_page(pp, "tx assign");
+
 		return (err);
 	}
 
@@ -3841,6 +3856,10 @@ zfs_putpage(struct inode *ip, struct page *pp, struct writeback_control *wbc,
 	}
 
 	dataset_kstats_update_write_kstats(&zfsvfs->z_kstat, pglen);
+
+	if (err && !PageUptodate(pp))
+		dump_page(pp, "sa_bulk_update() failed");
+
 
 	zfs_exit(zfsvfs, FTAG);
 	return (err);
