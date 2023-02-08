@@ -328,6 +328,7 @@ nobase_dist_datadir_zfs_tests_tests_DATA += \
 	functional/migration/migration.cfg \
 	functional/migration/migration.kshlib \
 	functional/mmap/mmap.cfg \
+	functional/mmap_buffered/mmap.cfg \
 	functional/mmp/mmp.cfg \
 	functional/mmp/mmp.kshlib \
 	functional/mv_files/mv_files.cfg \
@@ -1497,6 +1498,9 @@ nobase_dist_datadir_zfs_tests_tests_SCRIPTS += \
 	functional/mmap/mmap_sync_001_pos.ksh \
 	functional/mmap/mmap_write_001_pos.ksh \
 	functional/mmap/setup.ksh \
+	functional/mmap_buffered/cleanup.ksh \
+	functional/mmap_buffered/mmap_buffered.ksh \
+	functional/mmap_buffered/setup.ksh \
 	functional/mmp/cleanup.ksh \
 	functional/mmp/mmp_active_import.ksh \
 	functional/mmp/mmp_exported_import.ksh \
