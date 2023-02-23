@@ -34,14 +34,16 @@
 #
 # STRATEGY:
 #	1. Create an empty file.
-#	2. Start a background fio randomly direct writing to the file.
-#	3. Start a background fio randomly mmap writing to the file.
+#	2. Start a background direct I/O random read/write fio to the
+#	   file.
+#	3. Start a background mmap random read/write fio to the file.
 #
 
 verify_runnable "global"
 
 function cleanup
 {
+	zfs set recordsize=$rs $TESTPOOL/$TESTFS
 	log_must rm -f "$tmp_file"
 	check_dio_write_chksum_verify_failures $TESTPOOL "raidz" 0
 }
@@ -52,36 +54,39 @@ log_onexit cleanup
 
 mntpnt=$(get_prop mountpoint $TESTPOOL/$TESTFS)
 tmp_file=$mntpnt/file
-bs=$((1024 * 1024))
-blocks=32
+bs=$((128 * 1024))
+blocks=64
 size=$((bs * blocks))
-runtime=10
+runtime=60
+
+rs=$(get_prop recordsize $TESTPOOL/$TESTFS)
+log_must zfs set recordsize=128k $TESTPOOL/$TESTFS
 
 log_must stride_dd -i /dev/zero -o $tmp_file -b $bs -c $blocks
 
 # Direct IO writes
 log_must eval "fio --filename=$tmp_file --name=direct-write \
-	--rw=write --size=$size --bs=$bs --direct=1 --numjobs=1 \
-	--ioengine=sync --fallocate=none --verify=sha1 \
-	--group_reporting --minimal --runtime=$runtime --time_based &"
+	--rw=randwrite --size=$size --bs=$bs --direct=1 --numjobs=1 \
+	--ioengine=sync --fallocate=none --group_reporting --minimal \
+	--runtime=$runtime --time_based --norandommap &"
 
 # Direct IO reads
 log_must eval "fio --filename=$tmp_file --name=direct-read \
-	--rw=read --size=$size --bs=$bs --direct=1 --numjobs=1 \
-	--ioengine=sync --fallocate=none --verify=sha1 \
-	--group_reporting --minimal --runtime=$runtime --time_based &"
+	--rw=randread --size=$size --bs=$bs --direct=1 --numjobs=1 \
+	--ioengine=sync --fallocate=none --group_reporting --minimal \
+	--runtime=$runtime --time_based --norandommap &"
 
 # mmap IO writes
 log_must eval "fio --filename=$tmp_file --name=mmap-write \
-	--rw=write --size=$size --bs=$bs --numjobs=1 \
-	--ioengine=mmap --fallocate=none --verify=sha1 \
-	--group_reporting --minimal --runtime=$runtime --time_based &"
+	--rw=randwrite --size=$size --bs=$bs --numjobs=1 \
+	--ioengine=mmap --fallocate=none --group_reporting --minimal \
+	--runtime=$runtime --time_based --norandommap &"
 
 # mmap IO reads
 log_must eval "fio --filename=$tmp_file --name=mmap-read \
-	--rw=read --size=$size --bs=$bs --numjobs=1 \
-	--ioengine=mmap --fallocate=none --verify=sha1 \
-	--group_reporting --minimal --runtime=$runtime --time_based &"
+	--rw=randread --size=$size --bs=$bs --numjobs=1 \
+	--ioengine=mmap --fallocate=none --group_reporting --minimal \
+	--runtime=$runtime --time_based --norandommap &"
 
 wait
 
