@@ -152,7 +152,10 @@ write_thread(void *arg)
 
 	while (!args->entire_file_written) {
 		wrote = pwrite(ofd, buf, blocksize, offset);
-		assert(wrote == blocksize);
+		if (wrote != blocksize) {
+			perror("write");
+			exit(2);
+		}
 
 		offset = ((offset + blocksize) % total_data);
 		left -= blocksize;
