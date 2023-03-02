@@ -135,6 +135,14 @@ dmu_write_direct_done(zio_t *zio)
 		 */
 		ASSERT(db->db.db_data == NULL);
 		db->db_state = DB_UNCACHED;
+		cmn_err(CE_NOTE, "Done writing DIO with zio->io_bp = %p, "
+		    "DVA_OFFSET(zio->io_bp) = %llu, "
+		    "BP_PHYSICAL_BIRTH(zio->io_bp) = %llu, "
+		    "zio->io_txg = %llu",
+		    zio->io_bp,
+		    (u_longlong_t)DVA_GET_OFFSET(&zio->io_bp->blk_dva[0]),
+		    (u_longlong_t)BP_PHYSICAL_BIRTH(zio->io_bp),
+		    (u_longlong_t)zio->io_txg);
 	} else {
 		if (zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR)
 			ASSERT3U(zio->io_error, ==, EAGAIN);
@@ -317,7 +325,7 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 		 */
 		dmu_buf_direct_mixed_io_wait(db, 0, B_TRUE);
 
-		blkptr_t *bp = dmu_buf_get_bp_from_dbuf(db);
+		blkptr_t *bp = dmu_buf_get_bp_from_dbuf(db, B_TRUE);
 
 		/*
 		 * There is no need to read if this is a hole or the data is

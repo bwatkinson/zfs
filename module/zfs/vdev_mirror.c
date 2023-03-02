@@ -531,6 +531,17 @@ vdev_mirror_child_select(zio_t *zio)
 	uint64_t txg = zio->io_txg;
 	int c, lowest_load;
 
+	if (zio->io_bp != NULL && (BP_PHYSICAL_BIRTH(zio->io_bp) != txg)) {
+		zfs_dbgmsg("zio->io_bp = %p, "
+		    "BP_PHYSICAL_BIRTH(zio->io_bp) = %llu, "
+		    "txg = %llu, "
+		    "DVA_OFFSET(zio->io_bp) = %llu",
+		    zio->io_bp,
+		    (u_longlong_t)BP_PHYSICAL_BIRTH(zio->io_bp),
+		    (u_longlong_t)txg,
+		    (u_longlong_t)DVA_GET_OFFSET(&zio->io_bp->blk_dva[0]));
+	}
+
 	ASSERT(zio->io_bp == NULL || BP_PHYSICAL_BIRTH(zio->io_bp) == txg);
 
 	lowest_load = INT_MAX;

@@ -1850,7 +1850,7 @@ dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 		 * If a Direct I/O write has occurred we will use the updated
 		 * block pointer.
 		 */
-		bp = dmu_buf_get_bp_from_dbuf(db);
+		bp = dmu_buf_get_bp_from_dbuf(db, B_FALSE);
 
 		if (zio == NULL && bp != NULL && !BP_IS_HOLE(bp)) {
 			spa_t *spa = dn->dn_objset->os_spa;
@@ -2791,23 +2791,43 @@ dmu_buf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
  * on-disk content.
  */
 blkptr_t *
-dmu_buf_get_bp_from_dbuf(dmu_buf_impl_t *db)
+dmu_buf_get_bp_from_dbuf(dmu_buf_impl_t *db, boolean_t print)
 {
 	ASSERT(MUTEX_HELD(&db->db_mtx));
+	blkptr_t *bp = db->db_blkptr;
+	int i;
 
 	if (db->db_level != 0)
-		return (db->db_blkptr);
+		return (bp);
 
-	blkptr_t *bp = db->db_blkptr;
-
-	dbuf_dirty_record_t *dr_dio = dbuf_get_dirty_direct(db);
-	if (dr_dio && dr_dio->dt.dl.dr_override_state == DR_OVERRIDDEN &&
-	    dr_dio->dt.dl.dr_data == NULL) {
-		ASSERT3S(db->db_state, !=, DB_NOFILL);
-		/* We have a Direct I/O write, use it's BP */
-		bp = &dr_dio->dt.dl.dr_overridden_by;
+	if (print == B_TRUE) {
+		cmn_err(CE_NOTE, "Getting blkptr for reading: bp = %p, DVA_OFFSET(bp) = %llu",
+		    bp, bp != NULL ? (u_longlong_t)DVA_GET_OFFSET(&bp->blk_dva[0]) : 0);
 	}
 
+	dbuf_dirty_record_t *dr_dio;
+	for (dr_dio = list_head(&db->db_dirty_records), i = 0;
+	    dr_dio != NULL;
+	    dr_dio = list_next(&db->db_dirty_records, dr_dio), i++) {
+	    	if (print == B_TRUE)
+	    		cmn_err(CE_NOTE, "About to check for DIO BP iteration: %d", i);
+		if (dr_dio->dt.dl.dr_override_state == DR_OVERRIDDEN &&
+		     dr_dio->dt.dl.dr_data == NULL) {
+			ASSERT3S(db->db_state, !=, DB_NOFILL);
+			/* We have a Direct I/O write, use it's BP */
+			if (print == B_TRUE) {
+				cmn_err(CE_NOTE, "Found DIO BP, bp = %p, DVA_OFFSET(bp) = %llu, "
+				    "&dr_dio->dt.dl.dr_overridden_by = %p, "
+				    "DVA_OFFSET(dr) = %llu",
+				    bp,
+				    bp != NULL ? (u_longlong_t)DVA_GET_OFFSET(&bp->blk_dva[0]) : 0,
+				    &dr_dio->dt.dl.dr_overridden_by,
+				    (u_longlong_t)DVA_GET_OFFSET(
+				    &(dr_dio->dt.dl.dr_overridden_by.blk_dva[0])));
+			}
+			bp = &dr_dio->dt.dl.dr_overridden_by;
+		}
+	}
 	return (bp);
 }
 

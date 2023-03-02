@@ -77,16 +77,16 @@ log_must eval "fio --filename=$tmp_file --name=direct-read \
 	--runtime=$runtime --time_based --norandommap &"
 
 # mmap IO writes
-log_must eval "fio --filename=$tmp_file --name=mmap-write \
-	--rw=randwrite --size=$size --bs=$bs --numjobs=1 \
-	--ioengine=mmap --fallocate=none --group_reporting --minimal \
-	--runtime=$runtime --time_based --norandommap &"
+#log_must eval "fio --filename=$tmp_file --name=mmap-write \
+#	--rw=randwrite --size=$size --bs=$bs --numjobs=1 \
+#	--ioengine=mmap --fallocate=none --group_reporting --minimal \
+#	--runtime=$runtime --time_based --norandommap &"
 
 # mmap IO reads
-log_must eval "fio --filename=$tmp_file --name=mmap-read \
-	--rw=randread --size=$size --bs=$bs --numjobs=1 \
-	--ioengine=mmap --fallocate=none --group_reporting --minimal \
-	--runtime=$runtime --time_based --norandommap &"
+#log_must eval "fio --filename=$tmp_file --name=mmap-read \
+#	--rw=randread --size=$size --bs=$bs --numjobs=1 \
+#	--ioengine=mmap --fallocate=none --group_reporting --minimal \
+#	--runtime=$runtime --time_based --norandommap &"
 
 wait
 
