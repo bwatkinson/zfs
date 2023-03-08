@@ -94,6 +94,7 @@ dmu_write_direct_done(zio_t *zio)
 
 	abd_free(zio->io_abd);
 	mutex_enter(&db->db_mtx);
+	ASSERT3B(dr->dr_direct_write, ==, B_TRUE);
 
 	if (zio->io_error == 0) {
 		dr->dt.dl.dr_data = NULL;
@@ -146,6 +147,15 @@ dmu_write_direct_done(zio_t *zio)
 	} else {
 		if (zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR)
 			ASSERT3U(zio->io_error, ==, EAGAIN);
+
+		zfs_dbgmsg("IO ERROR when doing DIO write zio->io_bp = %p, "
+		    "DVA_OFFSET(zio->io_bp) = %llu, "
+		    "zio->io_txg = %llu, "
+		    "zio->io_error = %d",
+		    zio->io_bp,
+		    (u_longlong_t)DVA_GET_OFFSET(&zio->io_bp->blk_dva[0]),
+		    (u_longlong_t)zio->io_txg,
+		    zio->io_error);
 
 		/*
 		 * If there is a valid ARC buffer assocatied with this dirty
@@ -226,6 +236,7 @@ dmu_write_direct(zio_t *pio, dmu_buf_impl_t *db, abd_t *data, dmu_tx_t *tx)
 
 	ASSERT3S(dr_head->dt.dl.dr_override_state, ==, DR_NOT_OVERRIDDEN);
 	dr_head->dt.dl.dr_override_state = DR_IN_DMU_SYNC;
+	dr_head->dr_direct_write = B_TRUE;
 
 	mutex_exit(&db->db_mtx);
 

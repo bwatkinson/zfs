@@ -54,6 +54,7 @@
 #include <sys/spa_impl.h>
 #include <sys/wmsum.h>
 #include <sys/vdev_impl.h>
+#include <sys/zfs_debug.h>
 
 static kstat_t *dbuf_ksp;
 
@@ -2801,29 +2802,38 @@ dmu_buf_get_bp_from_dbuf(dmu_buf_impl_t *db, boolean_t print)
 		return (bp);
 
 	if (print == B_TRUE) {
-		cmn_err(CE_NOTE, "Getting blkptr for reading: bp = %p, DVA_OFFSET(bp) = %llu",
-		    bp, bp != NULL ? (u_longlong_t)DVA_GET_OFFSET(&bp->blk_dva[0]) : 0);
+		cmn_err(CE_NOTE, "Getting blkptr for reading: bp = %p, "
+		    "DVA_OFFSET(bp) = %llu",
+		    bp,
+		    bp != NULL ?
+		    (u_longlong_t)DVA_GET_OFFSET(&bp->blk_dva[0]) : 0);
 	}
 
 	dbuf_dirty_record_t *dr_dio;
 	for (dr_dio = list_head(&db->db_dirty_records), i = 0;
 	    dr_dio != NULL;
 	    dr_dio = list_next(&db->db_dirty_records, dr_dio), i++) {
-	    	if (print == B_TRUE)
-	    		cmn_err(CE_NOTE, "About to check for DIO BP iteration: %d", i);
+		if (print == B_TRUE)
+			cmn_err(CE_NOTE, "About to check for DIO BP "
+			    "iteration: %d", i);
 		if (dr_dio->dt.dl.dr_override_state == DR_OVERRIDDEN &&
-		     dr_dio->dt.dl.dr_data == NULL) {
+		    dr_dio->dt.dl.dr_data == NULL) {
 			ASSERT3S(db->db_state, !=, DB_NOFILL);
+			blkptr_t *dr_dio_blkptr =
+			    &dr_dio->dt.dl.dr_overridden_by;
 			/* We have a Direct I/O write, use it's BP */
 			if (print == B_TRUE) {
-				cmn_err(CE_NOTE, "Found DIO BP, bp = %p, DVA_OFFSET(bp) = %llu, "
+				cmn_err(CE_NOTE, "Found DIO BP, bp = %p, "
+				    "DVA_OFFSET(bp) = %llu, "
 				    "&dr_dio->dt.dl.dr_overridden_by = %p, "
 				    "DVA_OFFSET(dr) = %llu",
 				    bp,
-				    bp != NULL ? (u_longlong_t)DVA_GET_OFFSET(&bp->blk_dva[0]) : 0,
-				    &dr_dio->dt.dl.dr_overridden_by,
+				    bp != NULL ?
+				    (u_longlong_t)
+				    DVA_GET_OFFSET(&bp->blk_dva[0]) : 0,
+				    dr_dio_blkptr,
 				    (u_longlong_t)DVA_GET_OFFSET(
-				    &(dr_dio->dt.dl.dr_overridden_by.blk_dva[0])));
+				    &(dr_dio_blkptr->blk_dva[0])));
 			}
 			bp = &dr_dio->dt.dl.dr_overridden_by;
 		}
@@ -5336,6 +5346,17 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 	} else if (db->db_state == DB_NOFILL && data == NULL) {
 		ASSERT(zp.zp_checksum == ZIO_CHECKSUM_OFF ||
 		    zp.zp_checksum == ZIO_CHECKSUM_NOPARITY);
+		if (dr->dr_direct_write == B_TRUE) {
+			zfs_dbgmsg("ERROR: should not be here(1) "
+			    "dr->dr_bp_copy = %p,"
+			    "DVA_OFFSET(dr->dr_bp_copy) = %llu, "
+			    "txg = %llu",
+			    &dr->dr_bp_copy,
+			    (u_longlong_t)
+			    DVA_GET_OFFSET(&(dr->dr_bp_copy.blk_dva[0])),
+			    (u_longlong_t)txg);
+			ASSERT3B(dr->dr_direct_write, ==, B_FALSE);
+		}
 		dr->dr_zio = zio_write(pio, os->os_spa, txg,
 		    &dr->dr_bp_copy, NULL, db->db.db_size, db->db.db_size, &zp,
 		    dbuf_write_nofill_ready, NULL, NULL,
@@ -5345,6 +5366,17 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 	} else {
 		ASSERT(arc_released(data));
 
+		if (dr->dr_direct_write == B_TRUE) {
+			zfs_dbgmsg("ERROR: should not be here(2) "
+			    "dr->dr_bp_copy = %p,"
+			    "DVA_OFFSET(dr->dr_bp_copy) = %llu, "
+			    "txg = %llu",
+			    &dr->dr_bp_copy,
+			    (u_longlong_t)
+			    DVA_GET_OFFSET(&(dr->dr_bp_copy.blk_dva[0])),
+			    (u_longlong_t)txg);
+			ASSERT3B(dr->dr_direct_write, ==, B_FALSE);
+		}
 		/*
 		 * For indirect blocks, we want to setup the children
 		 * ready callback so that we can properly handle an indirect

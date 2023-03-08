@@ -121,6 +121,9 @@ typedef struct dbuf_dirty_record {
 	/* link on our parents dirty list */
 	list_node_t dr_dirty_node;
 
+	/* Just putting this here for debugging purposes */
+	boolean_t dr_direct_write;
+
 	/* transaction group this data will sync in */
 	uint64_t dr_txg;
 
