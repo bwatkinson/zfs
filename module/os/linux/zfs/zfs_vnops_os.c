@@ -221,7 +221,8 @@ zfs_close(struct inode *ip, int flag, cred_t *cr)
 
 #if defined(_KERNEL)
 
-static int zfs_fillpage(struct inode *ip, struct page *pp);
+static int zfs_fillpage(struct inode *ip, struct page *pp,
+    boolean_t rangelock_held);
 
 /*
  * When a file is memory mapped, we must keep the IO data synchronized
@@ -295,7 +296,7 @@ mappedread(znode_t *zp, int nbytes, zfs_uio_t *uio)
 			 * In this case we must try and fill the page.
 			 */
 			if (unlikely(!PageUptodate(pp))) {
-				error = zfs_fillpage(ip, pp);
+				error = zfs_fillpage(ip, pp, B_TRUE);
 				if (error) {
 					unlock_page(pp);
 					put_page(pp);
@@ -3971,20 +3972,38 @@ zfs_inactive(struct inode *ip)
  * Fill pages with data from the disk.
  */
 static int
-zfs_fillpage(struct inode *ip, struct page *pp)
+zfs_fillpage(struct inode *ip, struct page *pp, boolean_t rangelock_held)
 {
+	znode_t *zp = ITOZ(ip);
 	zfsvfs_t *zfsvfs = ITOZSB(ip);
 	loff_t i_size = i_size_read(ip);
 	u_offset_t io_off = page_offset(pp);
 	size_t io_len = PAGE_SIZE;
+	zfs_locked_range_t *lr = NULL;
 
 	ASSERT3U(io_off, <, i_size);
 
 	if (io_off + io_len > i_size)
 		io_len = i_size - io_off;
 
+	/*
+	 * See lock ordering in zfs_putpage().
+	 */
+	if (rangelock_held == B_FALSE) {
+		lr = zfs_rangelock_tryenter(&zp->z_rangelock, io_off, io_len,
+		    RL_READER);
+		if (lr == NULL) {
+			get_page(pp);
+			unlock_page(pp);
+			lr = zfs_rangelock_enter(&zp->z_rangelock, io_off,
+			    io_len, RL_READER);
+			lock_page(pp);
+			put_page(pp);
+		}
+	}
+
 	void *va = kmap(pp);
-	int error = dmu_read(zfsvfs->z_os, ITOZ(ip)->z_id, io_off,
+	int error = dmu_read(zfsvfs->z_os, zp->z_id, io_off,
 	    io_len, va, DMU_READ_PREFETCH);
 	if (io_len != PAGE_SIZE)
 		memset((char *)va + io_len, 0, PAGE_SIZE - io_len);
@@ -4001,6 +4020,9 @@ zfs_fillpage(struct inode *ip, struct page *pp)
 		ClearPageError(pp);
 		SetPageUptodate(pp);
 	}
+
+	if (rangelock_held == B_FALSE)
+		zfs_rangelock_exit(lr);
 
 	return (error);
 }
@@ -4026,7 +4048,7 @@ zfs_getpage(struct inode *ip, struct page *pp)
 	if ((error = zfs_enter_verify_zp(zfsvfs, zp, FTAG)) != 0)
 		return (error);
 
-	error = zfs_fillpage(ip, pp);
+	error = zfs_fillpage(ip, pp, B_FALSE);
 	if (error == 0)
 		dataset_kstats_update_read_kstats(&zfsvfs->z_kstat, PAGE_SIZE);
 
