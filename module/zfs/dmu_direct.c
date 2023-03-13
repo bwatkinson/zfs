@@ -350,12 +350,25 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 
 		mbuf = make_abd_for_dbuf(db, data, offset, size);
 		ASSERT3P(mbuf, !=, NULL);
+
+		/*
+		 * The dbuf mutex (db_mtx) must be held when creating the ZIO
+		 * for the read. The BP returned from
+		 * dmu_buf_get_bp_from_dbuf() could be from a previous Direct
+		 * I/O write that is in the dbuf's dirty record. When
+		 * zio_read() is called, zio_create() will make a copy of the
+		 * BP. However, if zio_read() is called without the mutex
+		 * being held then the dirty record from the dbuf could be
+		 * freed in dbuf_write_done() resulting in garbage being set
+		 * for the zio BP.
+		 */
+		zio_t *cio = zio_read(rio, spa, bp, mbuf, db->db.db_size,
+		    dmu_read_abd_done, NULL, ZIO_PRIORITY_SYNC_READ,
+		    ZIO_FLAG_CANFAIL, &zb);
 		mutex_exit(&db->db_mtx);
 
 		zfs_racct_read(spa, db->db.db_size, 1, flags);
-		zio_nowait(zio_read(rio, spa, bp, mbuf, db->db.db_size,
-		    dmu_read_abd_done, NULL, ZIO_PRIORITY_SYNC_READ,
-		    ZIO_FLAG_CANFAIL, &zb));
+		zio_nowait(cio);
 	}
 
 	dmu_buf_rele_array(dbp, numbufs, FTAG);
