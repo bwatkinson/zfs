@@ -171,6 +171,7 @@ dmu_write_direct(zio_t *pio, dmu_buf_impl_t *db, abd_t *data, dmu_tx_t *tx)
 	objset_t *os = db->db_objset;
 	dsl_dataset_t *ds = dmu_objset_ds(os);
 	zbookmark_phys_t zb;
+	dbuf_dirty_record_t *dr_head;
 
 	SET_BOOKMARK(&zb, ds->ds_object,
 	    db->db.db_object, db->db_level, db->db_blkid);
@@ -181,6 +182,23 @@ dmu_write_direct(zio_t *pio, dmu_buf_impl_t *db, abd_t *data, dmu_tx_t *tx)
 	dmu_write_policy(os, dn, db->db_level, WP_DMU_SYNC | WP_DIRECT_WR, &zp);
 
 	DB_DNODE_EXIT(db);
+
+	/*
+	 * If we going to overwrite a previous Direct I/O write that is part of
+	 * the current TXG, then we can can go ahead and undirty it now. Part
+	 * of it being undirtied will be allowing for previously allocated
+	 * space in the dr_overridden_bp BP's DVAs to be freed. This avoids
+	 * ENOSPC errors from possibly occuring when trying to allocate new
+	 * metaslabs in open-context for Direct I/O writes.
+	 */
+	mutex_enter(&db->db_mtx);
+	dr_head = dbuf_find_dirty_eq(db, dmu_tx_get_txg(tx));
+	if (dr_head && dr_head->dt.dl.dr_override_state == DR_OVERRIDDEN &&
+	    dr_head->dt.dl.dr_data == NULL &&
+	    !dr_head->dt.dl.dr_brtwrite) {
+		dmu_buf_undirty(db, tx);
+	}
+	mutex_exit(&db->db_mtx);
 
 	/*
 	 * Dirty this dbuf with DB_NOFILL since we will not have any data
@@ -194,7 +212,7 @@ dmu_write_direct(zio_t *pio, dmu_buf_impl_t *db, abd_t *data, dmu_tx_t *tx)
 	ASSERT3U(txg, >, spa_last_synced_txg(os->os_spa));
 	ASSERT3U(txg, >, spa_syncing_txg(os->os_spa));
 
-	dbuf_dirty_record_t *dr_head = dbuf_get_dirty_direct(db);
+	dr_head = dbuf_get_dirty_direct(db);
 	ASSERT3U(dr_head->dr_txg, ==, txg);
 
 	blkptr_t *bp = kmem_alloc(sizeof (blkptr_t), KM_SLEEP);
