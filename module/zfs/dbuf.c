@@ -2832,7 +2832,7 @@ dmu_buf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	 */
 	ASSERT(!dmu_tx_is_syncing(tx));
 	ASSERT(MUTEX_HELD(&db->db_mtx));
-	ASSERT3S(db->db_state, ==, DB_NOFILL);
+	ASSERT(db->db_state == DB_NOFILL || db->db_state == DB_UNCACHED);
 
 
 	/*
@@ -2842,6 +2842,20 @@ dmu_buf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	 * is still set to DB_NOFILL, dbuf_unoverride() will not be called in
 	 * dbuf_undirty() and the dirty record's BP will not be added the SPA's
 	 * spa_free_bplist via zio_free().
+	 *
+	 * This function can also be called in the event that a Direct I/O
+	 * write is overwriting a previous Direct I/O to the same block for
+	 * this TXG. It is important to go ahead and free up the space
+	 * accounting in this case through dbuf_undirty() -> dbuf_unoverride()
+	 * -> zio_free(). This is necessary because the space accounting for
+	 * determining if a write can occur in zfs_write() happens through
+	 * dmu_tx_assign(). This can cause an issue with Direct I/O writes in
+	 * the case of overwrites, because all DVA allocations are being done
+	 * in open-context. Constanstly allowing Direct I/O overwrites to the
+	 * same blocks can exhaust the pools available space leading to ENOSPC
+	 * errors at the DVA allcoation part of the ZIO pipeline, which will
+	 * eventually suspend the pool. By cleaning up space accounting now
+	 * the ENOSPC pool suspend can be avoided.
 	 *
 	 * Since we are undirtying the record for the Direct I/O in
 	 * open-context we must have a hold on the db, so it should never be
