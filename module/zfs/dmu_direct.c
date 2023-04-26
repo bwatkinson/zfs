@@ -214,6 +214,7 @@ dmu_write_direct(zio_t *pio, dmu_buf_impl_t *db, abd_t *data, dmu_tx_t *tx)
 
 	dr_head = dbuf_get_dirty_direct(db);
 	ASSERT3U(dr_head->dr_txg, ==, txg);
+	dr_head->dr_accounted = db->db.db_size;
 
 	blkptr_t *bp = kmem_alloc(sizeof (blkptr_t), KM_SLEEP);
 	if (db->db_blkptr != NULL) {
@@ -239,11 +240,7 @@ dmu_write_direct(zio_t *pio, dmu_buf_impl_t *db, abd_t *data, dmu_tx_t *tx)
 
 	mutex_exit(&db->db_mtx);
 
-	/*
-	 * We will not be writing this block in syncing context, so
-	 * update the dirty space accounting.
-	 */
-	dsl_pool_undirty_space(dmu_objset_pool(os), dr_head->dr_accounted, txg);
+	dmu_objset_willuse_space(os, dr_head->dr_accounted, tx);
 
 	dmu_sync_arg_t *dsa = kmem_zalloc(sizeof (dmu_sync_arg_t), KM_SLEEP);
 	dsa->dsa_dr = dr_head;
