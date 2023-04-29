@@ -194,6 +194,7 @@ for i in $(seq 1 $ITERATIONS); do
 	total_arc_wr=$((curr_arc_wr - prev_arc_wr))
 
 	log_note "Making sure there are no checksum errors with the ZPool"
+	log_must zpool status -dv $TESTPOOL
 	log_must check_pool_status $TESTPOOL "errors" "No known data errors"
 
 	# Geting checksum verify failures
