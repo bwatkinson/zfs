@@ -165,7 +165,7 @@ for i in $(seq 1 $ITERATIONS); do
 	log_must rm -f "$mntpnt/direct-write.iso"
 done
 
-
+log_must zpool scrub -w $TESTPOOL
 
 # Finally we will verfiy that with checking every Direct I/O write we have no
 # errors at all.
