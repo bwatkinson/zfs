@@ -96,8 +96,6 @@ dmu_write_direct_done(zio_t *zio)
 	mutex_enter(&db->db_mtx);
 
 	if (zio->io_error == 0) {
-		dr->dt.dl.dr_data = NULL;
-
 		/*
 		 * After a successful Direct I/O write any stale contents in
 		 * the ARC must be cleaned up in order to force all future
@@ -124,8 +122,10 @@ dmu_write_direct_done(zio_t *zio)
 		 */
 		if (db->db_buf) {
 			dmu_buf_direct_mixed_io_wait(db, txg - 1, B_FALSE);
+			ASSERT3P(db->db_buf, ==, dr->dt.dl.dr_data);
 			arc_buf_destroy(db->db_buf, db);
 			db->db_buf = NULL;
+			dr->dt.dl.dr_data = NULL;
 			db->db.db_data = NULL;
 			ASSERT3U(db->db_dirtycnt, ==, 1);
 		}
@@ -133,6 +133,7 @@ dmu_write_direct_done(zio_t *zio)
 		/*
 		 * The current contents of the dbuf are now stale.
 		 */
+		ASSERT3P(dr->dt.dl.dr_data, ==, NULL);
 		ASSERT(db->db.db_data == NULL);
 		db->db_state = DB_UNCACHED;
 	} else {
