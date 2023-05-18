@@ -1103,8 +1103,12 @@ dmu_tx_try_assign(dmu_tx_t *tx, uint64_t txg_how)
 
 	/* needed allocation: worst-case estimate of write space */
 	uint64_t asize = spa_get_worst_case_asize(tx->tx_pool->dp_spa, towrite);
-	/* calculate memory footprint estimate */
-	uint64_t memory = towrite + tohold;
+	/*
+	 * Calculate memory footprint estimate, unless this is a Direct I/O
+	 * write. dsl_dir_tempreserve_space() does not need to reserve ARC
+	 * space for Direct I/O writes as they bypass the ARC.
+	 */
+	uint64_t memory = (txg_how & TXG_DIO_WRITE) ? 0 : towrite + tohold;
 
 	if (tx->tx_dir != NULL && asize != 0) {
 		int err = dsl_dir_tempreserve_space(tx->tx_dir, memory,
@@ -1173,6 +1177,13 @@ dmu_tx_unassign(dmu_tx_t *tx)
  * they have already called dmu_tx_wait() (though most likely on a
  * different tx).
  *
+ * If TXG_DIO_WRITE is set, this indicates that this tx has been created
+ * for a Direct I/O write. This flag is used in combination with TXG_WAIT
+ * in zfs_write(). The only purpose of this flag is avoid reserving space
+ * in the ARC through dsl_dir_tempreserve_space(). Since all Direct I/O
+ * writes bypass the ARC, there is no reason to try and reserve ARC space
+ * for them.
+ *
  * It is guaranteed that subsequent successful calls to dmu_tx_assign()
  * will assign the tx to monotonically increasing txgs. Of course this is
  * not strong monotonicity, because the same txg can be returned multiple
@@ -1195,7 +1206,7 @@ dmu_tx_assign(dmu_tx_t *tx, uint64_t txg_how)
 	int err;
 
 	ASSERT(tx->tx_txg == 0);
-	ASSERT0(txg_how & ~(TXG_WAIT | TXG_NOTHROTTLE));
+	ASSERT0(txg_how & ~(TXG_WAIT | TXG_NOTHROTTLE | TXG_DIO_WRITE));
 	ASSERT(!dsl_pool_sync_context(tx->tx_pool));
 
 	/* If we might wait, we must not hold the config lock. */

@@ -770,7 +770,15 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		    MIN(n, max_blksz));
 		DB_DNODE_EXIT(db);
 		zfs_sa_upgrade_txholds(tx, zp);
-		error = dmu_tx_assign(tx, TXG_WAIT);
+		/*
+		 * If this is a Direct I/O write, flag the tx so it does not
+		 * try and reserve ARC space for the write. See comment above
+		 * dmu_tx_assign() and in dmu_tx_try_assign().
+		 */
+		if (uio->uio_extflg & UIO_DIRECT)
+			error = dmu_tx_assign(tx, TXG_WAIT | TXG_DIO_WRITE);
+		else
+			error = dmu_tx_assign(tx, TXG_WAIT);
 		if (error) {
 			dmu_tx_abort(tx);
 			if (abuf != NULL)
