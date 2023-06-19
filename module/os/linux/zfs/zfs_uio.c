@@ -334,8 +334,13 @@ EXPORT_SYMBOL(zfs_uiomove);
 int
 zfs_uio_prefaultpages(ssize_t n, zfs_uio_t *uio)
 {
-	if (uio->uio_segflg == UIO_SYSSPACE || uio->uio_segflg == UIO_BVEC) {
-		/* There's never a need to fault in kernel pages */
+	if (uio->uio_segflg == UIO_SYSSPACE || uio->uio_segflg == UIO_BVEC ||
+	    (uio->uio_extflg & UIO_DIRECT)) {
+		/*
+		 * There's never a need to fault in kernel pages or Direct I/O
+		 * write pages. Direct I/O write pages have been pinned in so
+		 * there is never a time for these pages a fault will occur.
+		 */
 		return (0);
 #if defined(HAVE_VFS_IOV_ITER)
 	} else if (uio->uio_segflg == UIO_ITER) {
