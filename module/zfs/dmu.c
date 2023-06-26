@@ -1081,7 +1081,7 @@ dmu_read_impl(dnode_t *dn, uint64_t offset, uint64_t size,
 
 	/* Allow Direct IO when requested and properly aligned */
 	if ((flags & DMU_DIRECTIO) && zfs_dio_page_aligned(buf) &&
-	    zfs_dio_blksz_aligned(offset, size, SPA_MINBLOCKSIZE)) {
+	    zfs_dio_aligned(offset, size, SPA_MINBLOCKSIZE)) {
 		abd_t *data = abd_get_from_buf(buf, size);
 		err = dmu_read_abd(dn, offset, size, data, flags);
 		abd_free(data);
@@ -1212,7 +1212,7 @@ dmu_write_by_dnode_flags(dnode_t *dn, uint64_t offset, uint64_t size,
 
 	/* Allow Direct IO when requested and properly aligned */
 	if ((flags & DMU_DIRECTIO) && zfs_dio_page_aligned((void *)buf) &&
-	    zfs_dio_blksz_aligned(offset, size, dn->dn_datablksz)) {
+	    zfs_dio_aligned(offset, size, dn->dn_datablksz)) {
 		abd_t *data = abd_get_from_buf((void *)buf, size);
 		error = dmu_write_abd(dn, offset, size, data, DMU_DIRECTIO, tx);
 		abd_free(data);
@@ -1387,17 +1387,38 @@ dmu_write_uio_dnode(dnode_t *dn, zfs_uio_t *uio, uint64_t size, dmu_tx_t *tx)
 	dmu_buf_t **dbp;
 	int numbufs;
 	int err = 0;
+	uint64_t write_size;
+
+top:
+	write_size = size;
 
 	/*
 	 * We only allow Direct IO writes to happen if we are block
 	 * sized aligned. Otherwise, we pass the write off to the ARC.
 	 */
-	if ((uio->uio_extflg & UIO_DIRECT) && zfs_dio_blksz_aligned(
-	    zfs_uio_offset(uio), size, dn->dn_datablksz)) {
-		return (dmu_write_uio_direct(dn, uio, size, tx));
+	if ((uio->uio_extflg & UIO_DIRECT) &&
+	    (write_size >= dn->dn_datablksz)) {
+		if (zfs_dio_aligned(zfs_uio_offset(uio), write_size,
+		    dn->dn_datablksz)) {
+			return (dmu_write_uio_direct(dn, uio, size, tx));
+		} else if (write_size > dn->dn_datablksz &&
+		    zfs_dio_offset_aligned(zfs_uio_offset(uio),
+		    dn->dn_datablksz)) {
+			err = dmu_write_uio_direct(dn, uio, dn->dn_datablksz,
+			    tx);
+			if (err == 0) {
+				size -= dn->dn_datablksz;
+				goto top;
+			} else {
+				return (err);
+			}
+		} else {
+			write_size =
+			    P2PHASE(zfs_uio_offset(uio), dn->dn_datablksz);
+		}
 	}
 
-	err = dmu_buf_hold_array_by_dnode(dn, zfs_uio_offset(uio), size,
+	err = dmu_buf_hold_array_by_dnode(dn, zfs_uio_offset(uio), write_size,
 	    FALSE, FTAG, &numbufs, &dbp, DMU_READ_PREFETCH);
 	if (err)
 		return (err);
@@ -1407,11 +1428,11 @@ dmu_write_uio_dnode(dnode_t *dn, zfs_uio_t *uio, uint64_t size, dmu_tx_t *tx)
 		int64_t bufoff;
 		dmu_buf_t *db = dbp[i];
 
-		ASSERT(size > 0);
+		ASSERT(write_size > 0);
 
 		offset_t off = zfs_uio_offset(uio);
 		bufoff = off - db->db_offset;
-		tocpy = MIN(db->db_size - bufoff, size);
+		tocpy = MIN(db->db_size - bufoff, write_size);
 
 		ASSERT(i == 0 || i == numbufs-1 || tocpy == db->db_size);
 
@@ -1431,10 +1452,18 @@ dmu_write_uio_dnode(dnode_t *dn, zfs_uio_t *uio, uint64_t size, dmu_tx_t *tx)
 		if (err)
 			break;
 
+		write_size -= tocpy;
 		size -= tocpy;
 	}
 
+	IMPLY(err == 0, write_size == 0);
+
 	dmu_buf_rele_array(dbp, numbufs, FTAG);
+
+	if ((uio->uio_extflg & UIO_DIRECT) && size > 0) {
+		goto top;
+	}
+
 	return (err);
 }
 
