@@ -90,10 +90,22 @@ zfs_dio_page_aligned(void *buf)
 }
 
 static inline boolean_t
-zfs_dio_blksz_aligned(uint64_t offset, uint64_t size, uint64_t blksz)
+zfs_dio_offset_aligned(uint64_t offset, uint64_t blksz)
 {
-	return ((((offset % blksz) == 0) && ((size % blksz) == 0)) ?
-	    B_TRUE : B_FALSE);
+	return (IS_P2ALIGNED(offset, blksz));
+}
+
+static inline boolean_t
+zfs_dio_size_aligned(uint64_t size, uint64_t blksz)
+{
+	return (IS_P2ALIGNED(size, blksz));
+}
+
+static inline boolean_t
+zfs_dio_aligned(uint64_t offset, uint64_t size, uint64_t blksz)
+{
+	return (zfs_dio_offset_aligned(offset, blksz) &&
+	    zfs_dio_size_aligned(size, blksz));
 }
 
 static inline void

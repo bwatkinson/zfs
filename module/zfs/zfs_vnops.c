@@ -239,7 +239,7 @@ zfs_setup_direct(struct znode *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
 
 	} else if (os->os_direct == ZFS_DIRECT_ALWAYS &&
 	    zfs_uio_page_aligned(uio) &&
-	    zfs_uio_blksz_aligned(uio, SPA_MINBLOCKSIZE)) {
+	    zfs_uio_aligned(uio, SPA_MINBLOCKSIZE)) {
 		if ((rw == UIO_WRITE && zfs_uio_resid(uio) >= zp->z_blksz) ||
 		    (rw == UIO_READ)) {
 			ioflag |= O_DIRECT;
@@ -248,7 +248,7 @@ zfs_setup_direct(struct znode *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
 
 	if (ioflag & O_DIRECT) {
 		if (!zfs_uio_page_aligned(uio) ||
-		    !zfs_uio_blksz_aligned(uio, SPA_MINBLOCKSIZE)) {
+		    !zfs_uio_aligned(uio, SPA_MINBLOCKSIZE)) {
 			error = SET_ERROR(EINVAL);
 			goto out;
 		}
