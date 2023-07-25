@@ -8867,7 +8867,7 @@ status_callback(zpool_handle_t *zhp, void *data)
  *              [interval [count]]
  *
  *	-c CMD	For each vdev, run command CMD
- *	-d	Display Direct IO write verify errors
+ *	-d	Display Direct I/O write verify errors
  *	-i	Display vdev initialization status.
  *	-g	Display guid for individual vdev name.
  *	-L	Follow links when resolving vdev path name.

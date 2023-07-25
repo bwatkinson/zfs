@@ -45,7 +45,7 @@
 /*
  * read returning FOLL_WRITE is due to the fact that we are stating
  * that the kernel will have write access to the user pages. So, when
- * a Direct IO read request is issued, the kernel must write to the user
+ * a Direct I/O read request is issued, the kernel must write to the user
  * pages.
  *
  * get_user_pages_unlocked was not available to 4.0, so we also check
@@ -84,7 +84,7 @@
  * get_user_pages_unlocked() or get_user_pages() to map user pages into
  * the kernel.
  */
-#error	"Unknown Direct IO interface"
+#error	"Unknown Direct I/O interface"
 #endif
 
 #endif	/* _ZFS_KMAP_H */

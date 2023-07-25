@@ -38,7 +38,7 @@
 /*
  * uio_extflg: extended flags
  */
-#define	UIO_DIRECT	0x0001 /* Direct IO request */
+#define	UIO_DIRECT	0x0001 /* Direct I/O request */
 
 #if defined(HAVE_VFS_IOV_ITER) && defined(HAVE_FAULT_IN_IOV_ITER_READABLE)
 #define	iov_iter_fault_in_readable(a, b)	fault_in_iov_iter_readable(a, b)
@@ -61,7 +61,7 @@ typedef enum zfs_uio_seg {
 } zfs_uio_seg_t;
 
 /*
- * This structures is used when doing Direct IO.
+ * This structures is used when doing Direct I/O.
  */
 typedef struct {
 	struct page	**pages;	/* Mapped pages */
@@ -85,7 +85,7 @@ typedef struct zfs_uio {
 	uint16_t	uio_extflg;	/* Extra flags (UIO_DIRECT) */
 	ssize_t		uio_resid;	/* Residual unprocessed bytes */
 	size_t		uio_skip;	/* Skipped bytes in current iovec */
-	zfs_uio_dio_t	uio_dio;	/* Direct IO user pages */
+	zfs_uio_dio_t	uio_dio;	/* Direct I/O user pages */
 
 	struct request	*rq;
 } zfs_uio_t;
