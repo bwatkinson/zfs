@@ -1079,7 +1079,7 @@ dmu_read_impl(dnode_t *dn, uint64_t offset, uint64_t size,
 	if (size == 0)
 		return (0);
 
-	/* Allow Direct IO when requested and properly aligned */
+	/* Allow Direct I/O when requested and properly aligned */
 	if ((flags & DMU_DIRECTIO) && zfs_dio_page_aligned(buf) &&
 	    zfs_dio_aligned(offset, size, SPA_MINBLOCKSIZE)) {
 		abd_t *data = abd_get_from_buf(buf, size);
@@ -1210,7 +1210,7 @@ dmu_write_by_dnode_flags(dnode_t *dn, uint64_t offset, uint64_t size,
 	if (size == 0)
 		return (0);
 
-	/* Allow Direct IO when requested and properly aligned */
+	/* Allow Direct I/O when requested and properly aligned */
 	if ((flags & DMU_DIRECTIO) && zfs_dio_page_aligned((void *)buf) &&
 	    zfs_dio_aligned(offset, size, dn->dn_datablksz)) {
 		abd_t *data = abd_get_from_buf((void *)buf, size);
@@ -1393,7 +1393,7 @@ top:
 	write_size = size;
 
 	/*
-	 * We only allow Direct IO writes to happen if we are block
+	 * We only allow Direct I/O writes to happen if we are block
 	 * sized aligned. Otherwise, we pass the write off to the ARC.
 	 */
 	if ((uio->uio_extflg & UIO_DIRECT) &&

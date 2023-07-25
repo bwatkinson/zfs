@@ -83,7 +83,7 @@ typedef struct dbuf_stats {
 	kstat_named_t cache_levels[DN_MAX_LEVELS];
 	kstat_named_t cache_levels_bytes[DN_MAX_LEVELS];
 	/*
-	 * Statistics for Direct IO.
+	 * Statistics for Direct I/O.
 	 */
 	kstat_named_t direct_mixed_io_read_wait;
 	kstat_named_t direct_mixed_io_write_wait;
@@ -1269,7 +1269,7 @@ dbuf_clear_data(dmu_buf_impl_t *db)
 {
 	ASSERT(MUTEX_HELD(&db->db_mtx));
 	dbuf_evict_user(db);
-	/* Direct IO writes may have data */
+	/* Direct I/O writes may have data */
 	if (db->db_buf == NULL)
 		db->db.db_data = NULL;
 	if (db->db_state != DB_NOFILL) {
@@ -1289,7 +1289,7 @@ dbuf_set_data(dmu_buf_impl_t *db, arc_buf_t *buf)
 	dr_dio = dbuf_get_dirty_direct(db);
 
 	/*
-	 * If there is a Direct IO, set its data too. Then its state
+	 * If there is a Direct I/O, set its data too. Then its state
 	 * will be the same as if we did a ZIL dmu_sync().
 	 */
 	if (dr_dio != NULL && db->db_level == 0 &&
@@ -2222,7 +2222,7 @@ dbuf_redirty(dbuf_dirty_record_t *dr)
 			arc_buf_thaw(db->db_buf);
 		}
 		/*
-		 * If initial dirty was via Direct IO, may not have a dr_data.
+		 * If initial dirty was via Direct I/O, may not have a dr_data.
 		 */
 		if (dr->dt.dl.dr_data == NULL)
 			dr->dt.dl.dr_data = db->db_buf;
@@ -2696,7 +2696,7 @@ dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 
 	if (zfs_refcount_remove(&db->db_holds, (void *)(uintptr_t)txg) == 0) {
 		/*
-		 * In the Direct IO case our db_buf will be NULL as we are not
+		 * In the Direct I/O case our db_buf will be NULL as we are not
 		 * caching in the ARC.
 		 */
 		ASSERT(db->db_state == DB_NOFILL || brtwrite ||
@@ -2896,7 +2896,7 @@ dmu_buf_get_bp_from_dbuf(dmu_buf_impl_t *db)
 }
 
 /*
- * Direct IO reads can read directly from the ARC, but the data has
+ * Direct I/O reads can read directly from the ARC, but the data has
  * to be untransformed in order to copy it over into user pages.
  */
 int
@@ -4748,11 +4748,11 @@ dbuf_sync_leaf(dbuf_dirty_record_t *dr, dmu_tx_t *tx)
 	mutex_enter(&db->db_mtx);
 
 	/*
-	 * It is possible a buffered read has come in after a direct IO
+	 * It is possible a buffered read has come in after a Direct I/O
 	 * write and is currently transistioning the db_state from DB_READ
 	 * in dbuf_read_impl() to another state in dbuf_read_done().  We
 	 * have to wait in order for the dbuf state to change from DB_READ
-	 * before syncing the dirty record of the direct IO write.
+	 * before syncing the dirty record of the Direct I/O write.
 	 */
 	if (db->db_state == DB_READ && !dr->dt.dl.dr_brtwrite) {
 		ASSERT3P(*datap, ==, NULL);
@@ -5146,7 +5146,7 @@ dbuf_write_done(zio_t *zio, arc_buf_t *buf, void *vdb)
 		ASSERT(db->db_blkid != DMU_BONUS_BLKID);
 		ASSERT(dr->dt.dl.dr_override_state == DR_NOT_OVERRIDDEN);
 
-		/* no dr_data if this is a NO_FILL or Direct IO */
+		/* no dr_data if this is a NO_FILL or Direct I/O */
 		if (dr->dt.dl.dr_data != NULL &&
 		    dr->dt.dl.dr_data != db->db_buf) {
 			ASSERT3B(dr->dt.dl.dr_brtwrite, ==, B_FALSE);

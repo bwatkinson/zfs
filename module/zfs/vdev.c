@@ -6492,7 +6492,7 @@ ZFS_MODULE_PARAM(zfs, zfs_, slow_io_events_per_second, UINT, ZMOD_RW,
 	"Rate limit slow IO (delay) events to this many per second");
 
 ZFS_MODULE_PARAM(zfs, zfs_, dio_write_verify_events_per_second, UINT, ZMOD_RW,
-	"Rate Direct IO write verify events to this many per second");
+	"Rate Direct I/O write verify events to this many per second");
 
 /* BEGIN CSTYLED */
 ZFS_MODULE_PARAM(zfs, zfs_, checksum_events_per_second, UINT, ZMOD_RW,

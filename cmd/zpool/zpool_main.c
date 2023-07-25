@@ -9237,7 +9237,7 @@ status_callback(zpool_handle_t *zhp, void *data)
  *              [-T d|u] [pool] [interval [count]]
  *
  *	-c CMD	For each vdev, run command CMD
- *	-d	Display Direct IO write verify errors
+ *	-d	Display Direct I/O write verify errors
  *	-D	Display dedup status (undocumented)
  *	-e	Display only unhealthy vdevs
  *	-g	Display guid for individual vdev name.
