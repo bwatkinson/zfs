@@ -30,11 +30,11 @@
 
 #
 # DESCRIPTION:
-# 	Verify direct IO overwrite.
+# 	Verify Direct I/O overwrite.
 #
 # STRATEGY:
 #	1. Create an empty file.
-#	2. Start a direct I/O random write fio to the file.
+#	2. Start a Direct I/O random write fio to the file.
 #
 
 verify_runnable "global"
@@ -46,7 +46,7 @@ function cleanup
 	check_dio_write_chksum_verify_failures $TESTPOOL "raidz" 0
 }
 
-log_assert "Verify direct IO overwrites"
+log_assert "Verify Direct I/O overwrites"
 
 log_onexit cleanup
 
@@ -62,10 +62,10 @@ log_must zfs set recordsize=128k $TESTPOOL/$TESTFS
 
 log_must stride_dd -i /dev/zero -o $tmp_file -b $bs -c $blocks
 
-# Direct IO overwrites
+# Direct I/O overwrites
 log_must eval "fio --filename=$tmp_file --name=direct-write \
 	--rw=randwrite --size=$size --bs=$bs --direct=1 --numjobs=1 \
 	--ioengine=sync --fallocate=none --group_reporting --minimal \
 	--runtime=$runtime --time_based --norandommap"
 
-log_pass "Verfied direct IO overwrites"
+log_pass "Verfied Direct I/O overwrites"

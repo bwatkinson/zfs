@@ -291,7 +291,7 @@ dmu_write_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 	err = zio_wait(pio);
 
 	/*
-	 * The dbuf must be held until the Direct IO write has completed in
+	 * The dbuf must be held until the Direct I/O write has completed in
 	 * the event there was any errors and dmu_buf_undirty() was called.
 	 */
 	dmu_buf_rele_array(dbp, numbufs, FTAG);

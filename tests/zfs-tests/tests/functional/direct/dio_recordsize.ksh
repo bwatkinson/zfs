@@ -30,17 +30,17 @@
 
 #
 # DESCRIPTION:
-# 	Verify different recordsizes are supported for Direct IO.
+# 	Verify different recordsizes are supported for Direct I/O.
 #
 # STRATEGY:
 #	1. Create a pool from each vdev type with varying recordsizes.
-#	2. Start sequential direct IO and verify with buffered IO.
-#	3. Start mixed direct IO and verify with buffered IO.
+#	2. Start sequential Direct I/O and verify with buffered I/O.
+#	3. Start mixed Direct I/O and verify with buffered I/O.
 #
 
 verify_runnable "global"
 
-log_assert "Verify different recordsizes are supported for Direct IO."
+log_assert "Verify different recordsizes are supported for Direct I/O."
 
 log_onexit dio_cleanup
 
@@ -73,4 +73,4 @@ for type in "" "mirror" "raidz" "draid"; do
 	done
 done
 
-log_pass "Verified different recordsizes are supported for Direct IO."
+log_pass "Verified different recordsizes are supported for Direct I/O."

@@ -30,7 +30,7 @@
 
 #
 # DESCRIPTION:
-# 	Verify small async direct IO requests
+# 	Verify small async Direct I/O requests
 #
 # STRATEGY:
 #	1. Use fio to issue small read/write requests.  Writes are

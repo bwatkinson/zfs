@@ -31,12 +31,12 @@
 
 #
 # DESCRIPTION:
-# 	Verify deduplication works using Direct IO.
+# 	Verify deduplication works using Direct I/O.
 #
 # STRATEGY:
 #	1. Enable dedup
-#	2. Start sequential direct IO and verify with buffered IO
-#	3. Start mixed direct IO and verify with buffered IO
+#	2. Start sequential Direct I/O and verify with buffered I/O
+#	3. Start mixed Direct IO and verify with buffered I/O
 #
 
 verify_runnable "global"
@@ -48,7 +48,7 @@ function cleanup
 	check_dio_write_chksum_verify_failures $TESTPOOL "raidz" 0
 }
 
-log_assert "Verify deduplication works using Direct IO."
+log_assert "Verify deduplication works using Direct I/O."
 
 log_onexit cleanup
 
@@ -60,4 +60,4 @@ for op in "rw" "randrw" "write"; do
 	dio_and_verify $op $DIO_FILESIZE $DIO_BS $mntpnt "sync" $dedup_args
 done
 
-log_pass "Verfied deduplication works using Direct IO"
+log_pass "Verfied deduplication works using Direct I/O"

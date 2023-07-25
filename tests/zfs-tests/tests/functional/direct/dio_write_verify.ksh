@@ -36,7 +36,7 @@
 #	1. Set the module parameter zfs_vdev_direct_write_verify_pct to 30.
 #	2. Check that manipulating the user buffer while Direct I/O writes are
 #	   taking place does not cause any panics with compression turned on.
-#	3. Start a Direct IO write workload while manipulating the user buffer
+#	3. Start a Direct I/O write workload while manipulating the user buffer
 #	   without compression.
 #	4. Verify there are Direct I/O write verify failures using
 #	   zpool status -d and checking for zevents. We also make sure there

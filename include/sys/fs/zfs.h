@@ -791,7 +791,7 @@ typedef struct zpool_load_policy {
 /* Number of slow IOs */
 #define	ZPOOL_CONFIG_VDEV_SLOW_IOS		"vdev_slow_ios"
 
-/* Number of Direct IO write verify errors */
+/* Number of Direct I/O write verify errors */
 #define	ZPOOL_CONFIG_VDEV_DIO_VERIFY_ERRORS	"vdev_dio_verify_errors"
 
 /* vdev enclosure sysfs path */
