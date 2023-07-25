@@ -41,14 +41,14 @@ function dio_and_verify # mode file-size block-size directory ioengine extra-arg
 	typeset ioengine=$5
 	typeset extra_args=$6
 
-	# Invoke an fio workload via direct IO and verify with direct IO.
+	# Invoke an fio workload via Direct I/O and verify with Direct I/O.
 	log_must fio --directory=$mntpnt --name=direct-$mode \
 	    --rw=$mode --size=$size --bs=$bs --direct=1 --numjobs=1 \
 	    --verify=sha1 --ioengine=$ioengine --fallocate=none \
 	    --group_reporting --minimal --do_verify=1 $extra_args
 
-	# Now just read back the file without direct IO into the ARC as an additional
-	# verfication step.
+	# Now just read back the file without Direct I/O into the ARC as an
+	# additional verfication step.
 	log_must fio --directory=$mntpnt --name=direct-$mode \
 	    --rw=read --size=$size --bs=$bs --direct=0 --numjobs=1 \
 		--ioengine=$ioengine --group_reporting --minimal
@@ -174,9 +174,9 @@ function evict_blocks
 }
 
 #
-# Perform FIO direct IO writes to a file with the given arguments.
+# Perform FIO Direct I/O writes to a file with the given arguments.
 # Then verify thae minimum expected number of blocks were written as
-# direct IO.
+# Direct I/O.
 #
 function verify_dio_write_count #pool bs size mnpnt
 {
@@ -186,7 +186,7 @@ function verify_dio_write_count #pool bs size mnpnt
 	typeset mntpnt=$4
 	typeset dio_wr_expected=$(((size / bs) -1))
 
-	log_note "Checking for $dio_wr_expected Direct IO writes"
+	log_note "Checking for $dio_wr_expected Direct I/O writes"
 
 	prev_dio_wr=$(get_iostats_stat $pool direct_write_count)
 	dio_and_verify write $size $bs $mntpnt "sync"
@@ -206,7 +206,7 @@ function verify_dio_write_count #pool bs size mnpnt
 #
 # Perform a stride_dd write command to the file with the given arguments.
 # Then verify the minimum expected number of blocks were written as either
-# buffered IO (by the ARC), or direct IO to the application (dd).
+# buffered IO (by the ARC), or Direct I/O to the application (dd).
 #
 function check_write # pool file bs count seek flags buf_wr dio_wr
 {
@@ -255,7 +255,7 @@ function check_write # pool file bs count seek flags buf_wr dio_wr
 #
 # Perform a stride_dd read command to the file with the given arguments.
 # Then verify the minimum expected number of blocks were read as either
-# buffered IO (by the ARC), or direct IO to the application (dd).
+# buffered IO (by the ARC), or Direct I/O to the application (dd).
 #
 function check_read # pool file bs count skip flags buf_rd dio_rd
 {
