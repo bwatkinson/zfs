@@ -504,7 +504,7 @@ zfs_uio_page_aligned(zfs_uio_t *uio)
 #else
 /*
  * Mark pages to know if they were allocated to replace ZERO_PAGE() for
- * Direct IO writes.
+ * Direct I/O writes.
  */
 #define	ZFS_MARKED_PAGE		0x5a465350414745 /* ASCII: ZFSPAGE */
 #define	IS_ZFS_MARKED_PAGE(_p) \

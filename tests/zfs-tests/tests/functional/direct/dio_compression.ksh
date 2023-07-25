@@ -31,12 +31,12 @@
 
 #
 # DESCRIPTION:
-# 	Verify compression works using Direct IO.
+# 	Verify compression works using Direct I/O.
 #
 # STRATEGY:
 #	1. Select a random compression algoritm
-#	2. Start sequential direct IO and verify with buffered IO
-#	3. Start mixed direct IO and verify with buffered IO
+#	2. Start sequential Direct I/O and verify with buffered I/O
+#	3. Start mixed Direct I/O and verify with buffered I/O
 #	4. Repeat from 2 for all compression algoritms
 #
 
@@ -49,7 +49,7 @@ function cleanup
 	check_dio_write_chksum_verify_failures $TESTPOOL "raidz" 0
 }
 
-log_assert "Verify compression works using Direct IO."
+log_assert "Verify compression works using Direct I/O."
 
 log_onexit cleanup
 
@@ -63,4 +63,4 @@ for comp in "${compress_prop_vals[@]:1}"; do
 	done
 done
 
-log_pass "Verfied compression works using Direct IO"
+log_pass "Verfied compression works using Direct I/O"
