@@ -4439,21 +4439,22 @@ zfs_freebsd_read(struct vop_read_args *ap)
 		    zfs_freebsd_read_direct(zp, &uio, UIO_READ, ioflag,
 		    ap->a_cred);
 		/*
-		 * XXX We occasionally get an EFAULT for Direct IO reads. This
-		 * still needs to be resolved. The EFAULT comes from
+		 * XXX We occasionally get an EFAULT for Direct I/O reads on
+		 * FreeBSD 13. This still needs to be resolved. The EFAULT comes
+		 * from:
 		 * zfs_uio_get__dio_pages_alloc() ->
 		 * zfs_uio_get_dio_pages_impl() ->
 		 * zfs_uio_iov_step() ->
 		 * zfs_uio_get_user_pages().
-		 * We return EFAULT from zfs_uio_iov_step(). When a Direct IO
+		 * We return EFAULT from zfs_uio_iov_step(). When a Direct I/O
 		 * read fails to map in the user pages (returning EFAULT) the
-		 * Direct IO request is broken up into two separate IO requests
-		 * and issued separately using Direct IO.
+		 * Direct I/O request is broken up into two separate IO requests
+		 * and issued separately using Direct I/O.
 		 */
 #ifdef ZFS_DEBUG
 		if (error == EFAULT) {
 #if 0
-			printf("%s(%d): Direct IO read returning EFAULT "
+			printf("%s(%d): Direct I/O read returning EFAULT "
 			    "uio = %p, zfs_uio_offset(uio) = %lu "
 			    "zfs_uio_resid(uio) = %lu\n",
 			    __FUNCTION__, __LINE__, &uio, zfs_uio_offset(&uio),
