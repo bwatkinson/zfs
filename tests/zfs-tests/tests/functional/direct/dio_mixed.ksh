@@ -31,10 +31,10 @@
 
 #
 # DESCRIPTION:
-# 	Verify mixed buffered and direct IO are cohearant.
+# 	Verify mixed buffered and Direct I/O are coherent.
 #
 # STRATEGY:
-#	1. Verify interleaved buffered and direct IO
+#	1. Verify interleaved buffered and Direct I/O
 #
 
 verify_runnable "global"
@@ -45,7 +45,7 @@ function cleanup
 	check_dio_write_chksum_verify_failures $TESTPOOL "raidz" 0
 }
 
-log_assert "Verify mixed buffered and direct IO are cohearant."
+log_assert "Verify mixed buffered and Direct I/O are coherent."
 
 log_onexit cleanup
 
@@ -61,7 +61,7 @@ log_must stride_dd -i /dev/urandom -o $src_file -b $file_size -c 1
 
 #
 # Using mixed input and output block sizes verify that buffered and
-# direct IO can be interleaved and the result with always be cohearant.
+# Direct I/O can be interleaved and the result with always be coherent.
 #
 for ibs in "512" "$page_size" "131072"; do
 	for obs in "512" "$page_size" "131072"; do
@@ -70,7 +70,7 @@ for ibs in "512" "$page_size" "131072"; do
 		iflags=""
 		oflags=""
 
-		# Only allow direct IO when it is at least page sized.
+		# Only allow Direct I/O when it is at least page sized.
 		if [[ $ibs -ge $page_size ]]; then
 			iflags="-d"
 		fi
@@ -105,4 +105,4 @@ for ibs in "512" "$page_size" "131072"; do
 	done
 done
 
-log_pass "Verify mixed buffered and direct IO are cohearant."
+log_pass "Verify mixed buffered and Direct I/O are coherent."
