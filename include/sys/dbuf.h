@@ -71,7 +71,7 @@ extern "C" {
  *             |    |                    |          |
  *             |    |                    |          |
  *             |    +------> NOFILL -----+-----> UNCACHED
- *             |               |                (Direct IO)
+ *             |               |               (Direct I/O)
  *             +---------------+
  *
  * DB_SEARCH is an invalid state for a dbuf. It is used by dbuf_free_range
@@ -457,8 +457,8 @@ dbuf_find_dirty_eq(dmu_buf_impl_t *db, uint64_t txg)
 }
 
 /*
- * All Direct IO writes happen in open context so the first dirty record will
- * always be associated with the write. After a Direct IO write completes the
+ * All Direct I/O writes happen in open context so the first dirty record will
+ * always be associated with the write. After a Direct I/O write completes the
  * dirty records dr_overriden state will bet DR_OVERRIDDEN and the dr_data will
  * get set to NULL.
  */
