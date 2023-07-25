@@ -224,7 +224,7 @@ zfs_check_direct_enabled(znode_t *zp, int ioflags, int *error)
 }
 
 /*
- * Determine if direct IO has been requested (either via the O_DIRECT flag or
+ * Determine if Direct I/O has been requested (either via the O_DIRECT flag or
  * the "direct" dataset property). When inherited by the property only apply
  * the O_DIRECT flag to correctly aligned IO requests. The rational for this
  * is it allows the property to be safely set on a dataset without forcing
@@ -705,13 +705,13 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 	 * In the event we are increasing the file block size
 	 * (lr_length == UINT64_MAX), we will direct the write to the ARC.
 	 * Because zfs_grow_blocksize() will read from the ARC in order to
-	 * grow the dbuf, we avoid doing Direct IO here as that would cause
+	 * grow the dbuf, we avoid doing Direct I/O here as that would cause
 	 * data written to disk to be overwritten by data in the ARC during
 	 * the sync phase. Besides writing data twice to disk, we also
 	 * want to avoid consistency concerns between data in the the ARC and
 	 * on disk while growing the file's blocksize.
 	 *
-	 * We will only temporarily remove Direct IO and put it back after
+	 * We will only temporarily remove Direct I/O and put it back after
 	 * we have grown the blocksize. We do this in the event a request
 	 * is larger than max_blksz, so further requests to
 	 * dmu_write_uio_dbuf() will still issue the requests using Direct
@@ -721,7 +721,7 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 	 * The first block to file is being written as a 4k request with
 	 * a recorsize of 1K. The first 1K issued in the loop below will go
 	 * through the ARC; however, the following 3 1K requests will
-	 * use Direct IO.
+	 * use Direct I/O.
 	 */
 	if (uio->uio_extflg & UIO_DIRECT && lr->lr_length == UINT64_MAX) {
 		uio->uio_extflg &= ~UIO_DIRECT;
@@ -961,7 +961,7 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		dmu_tx_commit(tx);
 
 		/*
-		 * Direct IO was deferred in order to grow the first block.
+		 * Direct I/O was deferred in order to grow the first block.
 		 * At this point it can be re-enabled for subsequent writes.
 		 */
 		if (o_direct_defer) {
