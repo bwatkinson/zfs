@@ -100,4 +100,4 @@ do
 	done
 done
 
-log_pass "Verified stable pages work for Direct IO writes."
+log_pass "Verified stable pages work for Direct I/O writes."

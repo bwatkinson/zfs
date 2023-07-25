@@ -30,7 +30,7 @@
 
 #
 # DESCRIPTION:
-# 	Verify mixed direct IO and buffered IO. A workload of random
+# 	Verify mixed Direct I/O and buffered I/O. A workload of random
 #	but correctly aligned direct read/writes is mixed with a
 #	concurrent workload of entirely unaligned buffered read/writes.
 #
@@ -48,7 +48,7 @@ function cleanup
 	check_dio_write_chksum_verify_failures $TESTPOOL "raidz" 0
 }
 
-log_assert "Verify randomly sized mixed direct IO and buffered IO"
+log_assert "Verify randomly sized mixed Direct I/O and buffered I/O"
 
 log_onexit cleanup
 
@@ -80,4 +80,4 @@ log_must eval "fio --filename=$tmp_file --name=buffered-write \
 
 wait
 
-log_pass "Verfied randomly sized mixed direct IO and buffered IO"
+log_pass "Verfied randomly sized mixed Direct I/O and buffered I/O"
