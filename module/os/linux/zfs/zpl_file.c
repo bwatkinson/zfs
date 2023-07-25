@@ -825,7 +825,7 @@ zpl_direct_IO(int rw, struct kiocb *kiocb, struct iov_iter *iter, loff_t pos)
 	return (zpl_direct_IO_impl());
 }
 #else
-#error "Unknown direct IO interface"
+#error "Unknown Direct I/O interface"
 #endif
 
 #else /* HAVE_VFS_RW_ITERATE */
@@ -844,7 +844,7 @@ zpl_direct_IO(int rw, struct kiocb *kiocb, struct iov_iter *iter, loff_t pos)
 	return (zpl_direct_IO_impl());
 }
 #else
-#error "Unknown direct IO interface"
+#error "Unknown Direct I/O interface"
 #endif
 
 #endif /* HAVE_VFS_RW_ITERATE */

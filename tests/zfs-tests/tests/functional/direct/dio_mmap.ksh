@@ -30,11 +30,11 @@
 
 #
 # DESCRIPTION:
-# 	Verify mixed direct IO and mmap IO.
+# 	Verify mixed Direct I/O and mmap I/O.
 #
 # STRATEGY:
 #	1. Create an empty file.
-#	2. Start a background direct I/O random read/write fio to the
+#	2. Start a background Direct I/O random read/write fio to the
 #	   file.
 #	3. Start a background mmap random read/write fio to the file.
 #
@@ -48,7 +48,7 @@ function cleanup
 	check_dio_write_chksum_verify_failures $TESTPOOL "raidz" 0
 }
 
-log_assert "Verify mixed direct IO and mmap IO"
+log_assert "Verify mixed Direct I/O and mmap I/O"
 
 log_onexit cleanup
 
@@ -64,25 +64,25 @@ log_must zfs set recordsize=128k $TESTPOOL/$TESTFS
 
 log_must stride_dd -i /dev/zero -o $tmp_file -b $bs -c $blocks
 
-# Direct IO writes
+# Direct I/O writes
 log_must eval "fio --filename=$tmp_file --name=direct-write \
 	--rw=randwrite --size=$size --bs=$bs --direct=1 --numjobs=1 \
 	--ioengine=sync --fallocate=none --group_reporting --minimal \
 	--runtime=$runtime --time_based --norandommap &"
 
-# Direct IO reads
+# Direct I/O reads
 log_must eval "fio --filename=$tmp_file --name=direct-read \
 	--rw=randread --size=$size --bs=$bs --direct=1 --numjobs=1 \
 	--ioengine=sync --fallocate=none --group_reporting --minimal \
 	--runtime=$runtime --time_based --norandommap &"
 
-# mmap IO writes
+# mmap I/O writes
 log_must eval "fio --filename=$tmp_file --name=mmap-write \
 	--rw=randwrite --size=$size --bs=$bs --numjobs=1 \
 	--ioengine=mmap --fallocate=none --group_reporting --minimal \
 	--runtime=$runtime --time_based --norandommap &"
 
-# mmap IO reads
+# mmap I/O reads
 log_must eval "fio --filename=$tmp_file --name=mmap-read \
 	--rw=randread --size=$size --bs=$bs --numjobs=1 \
 	--ioengine=mmap --fallocate=none --group_reporting --minimal \
@@ -90,4 +90,4 @@ log_must eval "fio --filename=$tmp_file --name=mmap-read \
 
 wait
 
-log_pass "Verfied mixed direct IO and mmap IO"
+log_pass "Verfied mixed Direct I/O and mmap I/O"

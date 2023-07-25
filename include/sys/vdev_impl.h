@@ -449,7 +449,7 @@ struct vdev {
 	 * We rate limit ZIO delay, deadman, and checksum events, since they
 	 * can flood ZED with tons of events when a drive is acting up.
 	 *
-	 * We also rate limit Direct IO write verify errors, since a user might
+	 * We also rate limit Direct I/O write verify errors, since a user might
 	 * be continually manipulating a buffer that can flood ZED with tons of
 	 * events.
 	 */

@@ -109,7 +109,7 @@ log_must rm -f $tmp_file
 
 
 #
-# Check when "direct=standard" only requested direct IO occur.
+# Check when "direct=standard" only requested Direct I/O occur.
 #
 log_must zfs set direct=standard $TESTPOOL/$TESTFS
 

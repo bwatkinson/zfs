@@ -168,9 +168,9 @@ AC_DEFUN([ZFS_AC_KERNEL_GET_USER_PAGES], [
 						dnl #
 						dnl # If we cannot map the user's
 						dnl # pages in then we cannot do
-						dnl # Direct IO
+						dnl # Direct I/O
 						dnl #
-						ZFS_LINUX_TEST_ERROR([Direct IO])
+						ZFS_LINUX_TEST_ERROR([Direct I/O])
 					])
 				])
 			])

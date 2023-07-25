@@ -31,12 +31,12 @@
 
 #
 # DESCRIPTION:
-# 	Verify FIO async engines work using Direct IO.
+# 	Verify FIO async engines work using Direct I/O.
 #
 # STRATEGY:
 #	1. Select a FIO async ioengine
-#	2. Start sequntial direct IO and verify with buffered IO
-#	3. Start mixed direct IO and verify with buffered IO
+#	2. Start sequntial Direct I/O and verify with buffered I/O
+#	3. Start mixed Direct I/O and verify with buffered I/O
 #
 
 verify_runnable "global"
@@ -47,7 +47,7 @@ function cleanup
 	check_dio_write_chksum_verify_failures $TESTPOOL "raidz" 0
 }
 
-log_assert "Verify FIO async ioengines work using Direct IO."
+log_assert "Verify FIO async ioengines work using Direct I/O."
 
 log_onexit cleanup
 
@@ -77,7 +77,7 @@ fi
 for ioengine in $fio_async_ioengines; do
 	for ioengine_args in "${async_ioengine_args[@]}"; do
 		for op in "rw" "randrw" "write"; do
-			log_note "Checking direct IO with FIO async ioengine" \
+			log_note "Checking Direct I/O with FIO async ioengine" \
 			    " $ioengine with args $ioengine_args --rw=$op"
 			dio_and_verify $op $DIO_FILESIZE $DIO_BS $mntpnt "$ioengine" \
 			    "$ioengine_args"
@@ -85,4 +85,4 @@ for ioengine in $fio_async_ioengines; do
 	done
 done
 
-log_pass "Verfied FIO async ioengines work using Direct IO"
+log_pass "Verfied FIO async ioengines work using Direct I/O"

@@ -39,14 +39,14 @@
 /*
  * uio_extflg: extended flags
  */
-#define	UIO_DIRECT	0x0001	/* Direct IO requset */
+#define	UIO_DIRECT	0x0001	/* Direct I/O requset */
 
 typedef	struct iovec	iovec_t;
 typedef	enum uio_seg	zfs_uio_seg_t;
 typedef	enum uio_rw	zfs_uio_rw_t;
 
 /*
- * This structure is used when doing Direct IO.
+ * This structure is used when doing Direct I/O.
  */
 typedef struct {
 	vm_page_t	*pages;

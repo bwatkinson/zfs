@@ -387,7 +387,7 @@ vdev_config_generate_stats(vdev_t *vd, nvlist_t *nv)
 	/* IO delays */
 	fnvlist_add_uint64(nvx, ZPOOL_CONFIG_VDEV_SLOW_IOS, vs->vs_slow_ios);
 
-	/* Direct IO write verify errors */
+	/* Direct I/O write verify errors */
 	fnvlist_add_uint64(nvx, ZPOOL_CONFIG_VDEV_DIO_VERIFY_ERRORS,
 	    vs->vs_dio_verify_errors);
 

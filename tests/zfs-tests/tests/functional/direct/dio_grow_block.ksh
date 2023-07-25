@@ -56,7 +56,7 @@ rs=$(get_prop recordsize $TESTPOOL/$TESTFS)
 log_must zfs set recordsize=128k $TESTPOOL/$TESTFS
 
 #
-# Verify the expected number of buffered and direct IOs when growing
+# Verify the expected number of buffered and Direct I/O's when growing
 # the first block of a file up to the maximum recordsize.
 #
 for bs in "8192" "16384" "32768" "65536" "131072"; do
