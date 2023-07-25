@@ -30,17 +30,17 @@
 
 #
 # DESCRIPTION:
-# 	Verify encryption works using Direct IO.
+# 	Verify encryption works using Direct I/O.
 #
 # STRATEGY:
 #	1. Create multidisk pool.
-#	2. Start some mixed readwrite direct IO.
-#	3. Verify the results are as expected using buffered IO.
+#	2. Start some mixed readwrite Direct I/O.
+#	3. Verify the results are as expected using buffered I/O.
 #
 
 verify_runnable "global"
 
-log_assert "Verify encryption works using Direct IO."
+log_assert "Verify encryption works using Direct I/O."
 
 log_onexit dio_cleanup
 
@@ -61,4 +61,4 @@ done
 
 check_dio_write_chksum_verify_failures $TESTPOOL1 "stripe" 0
 
-log_pass "Verified encryption works using Direct IO"
+log_pass "Verified encryption works using Direct I/O"
