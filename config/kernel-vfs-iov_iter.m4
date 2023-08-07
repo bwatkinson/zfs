@@ -85,19 +85,6 @@ AC_DEFUN([ZFS_AC_KERNEL_SRC_VFS_IOV_ITER], [
 		bytes = copy_from_iter((void *)&buf, size, &iter);
 	])
 
-	ZFS_LINUX_TEST_SRC([iov_iter_bvec], [
-		#include <linux/uio.h>
-		#include <linux/bvec.h>
-	], [
-		struct iov_iter iter = { 0 };
-		unsigned int direction = READ;
-		const struct bio_vec *bvec = NULL;
-		unsigned long nr_segs = 1;
-		size_t count = 4096;
-
-		iov_iter_bvec(&iter, direction, bvec, nr_segs, count);
-	])
-
 	ZFS_LINUX_TEST_SRC([iov_iter_get_pages2], [
 		#include <linux/uio.h>
 	], [
@@ -223,16 +210,6 @@ AC_DEFUN([ZFS_AC_KERNEL_VFS_IOV_ITER], [
 	],[
 		AC_MSG_RESULT(no)
 		enable_vfs_iov_iter="no"
-	])
-
-	AC_MSG_CHECKING([whether iov_iter_bvec() is available])
-		ZFS_LINUX_TEST_RESULT([iov_iter_bvec], [
-		AC_MSG_RESULT(yes)
-		AC_DEFINE(HAVE_IOV_ITER_BVEC, 1,
-		    [iov_iter_bvec() is available])
-	], [
-		AC_MSG_RESULT(no)
-		emable_vfs_iov_iter="no"
 	])
 
 	dnl #
