@@ -2810,13 +2810,24 @@ dmu_buf_direct_mixed_io_wait(dmu_buf_impl_t *db, uint64_t txg, boolean_t read)
 		 * There must be an ARC buf associated with this Direct I/O
 		 * write otherwise there is no reason to wait for previous
 		 * dirty records to sync out.
+		 *
+		 * The db_state will temporarily be set to DB_CACHED so that
+		 * that any synchronous writes issued through the ZIL will
+		 * still be handled properly. In particular, the call to
+		 * dbuf_read() in dmu_sync_late_arrival() must account for the
+		 * data still being in the ARC. After waiting here for previous
+		 * TXGs to sync out, dmu_write_direct_done() will update the
+		 * db_state.
 		 */
 		ASSERT3P(db->db_buf, !=, NULL);
 		ASSERT3U(txg, >, 0);
+		db->db_mixed_io_dio_wait = TRUE;
+		db->db_state = DB_CACHED;
 		while (dbuf_find_dirty_lte(db, txg) != NULL) {
 			DBUF_STAT_BUMP(direct_mixed_io_write_wait);
 			cv_wait(&db->db_changed, &db->db_mtx);
 		}
+		db->db_mixed_io_dio_wait = FALSE;
 	}
 }
 
@@ -3498,6 +3509,7 @@ dbuf_create(dnode_t *dn, uint8_t level, uint64_t blkid,
 	db->db_user_immediate_evict = FALSE;
 	db->db_freed_in_flight = FALSE;
 	db->db_pending_evict = FALSE;
+	db->db_mixed_io_dio_wait = FALSE;
 
 	if (blkid == DMU_BONUS_BLKID) {
 		ASSERT3P(parent, ==, dn->dn_dbuf);
