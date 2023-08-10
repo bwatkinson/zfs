@@ -330,6 +330,14 @@ typedef struct dmu_buf_impl {
 
 	/* The buffer was partially read.  More reads may follow. */
 	uint8_t db_partial_read;
+
+	/*
+	 * This block is being held under a writer rangelock of a Direct I/O
+	 * write that is waiting for previous buffered writes to synced out
+	 * due to mixed buffered and O_DIRECT operations. This is needed to
+	 * check whether to grab the rangelock in zfs_get_data().
+	 */
+	uint8_t db_mixed_io_dio_wait;
 } dmu_buf_impl_t;
 
 #define	DBUF_HASH_MUTEX(h, idx) \
