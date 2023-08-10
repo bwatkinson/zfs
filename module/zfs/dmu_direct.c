@@ -134,7 +134,7 @@ dmu_write_direct_done(zio_t *zio)
 		 * The current contents of the dbuf are now stale.
 		 */
 		ASSERT3P(dr->dt.dl.dr_data, ==, NULL);
-		ASSERT(db->db.db_data == NULL);
+		ASSERT3P(db->db.db_data, ==, NULL);
 		db->db_state = DB_UNCACHED;
 	} else {
 		if (zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR)
