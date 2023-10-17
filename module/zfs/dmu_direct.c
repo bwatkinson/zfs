@@ -29,6 +29,8 @@
 #include <sys/dsl_dataset.h>
 #include <sys/dmu_objset.h>
 
+static int zfs_dio_hole_punch_read = B_FALSE;
+
 static abd_t *
 make_abd_for_dbuf(dmu_buf_impl_t *db, abd_t *data, uint64_t offset,
     uint64_t size)
@@ -75,7 +77,8 @@ make_abd_for_dbuf(dmu_buf_impl_t *db, abd_t *data, uint64_t offset,
 static void
 dmu_read_abd_done(zio_t *zio)
 {
-	abd_free(zio->io_abd);
+	if (!(zio->io_flags & ZIO_FLAG_DIO_HP_READ))
+		abd_free(zio->io_abd);
 }
 
 static void
@@ -307,6 +310,8 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 	spa_t *spa = os->os_spa;
 	dmu_buf_t **dbp;
 	int numbufs, err;
+	zio_flag_t zio_flags = ZIO_FLAG_CANFAIL;
+	uint64_t total_io = size;
 
 	ASSERT(flags & DMU_DIRECTIO);
 
@@ -315,7 +320,7 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 	if (err)
 		return (err);
 
-	zio_t *rio = zio_root(spa, NULL, NULL, ZIO_FLAG_CANFAIL);
+	zio_t *rio = zio_root(spa, NULL, NULL, zio_flags);
 
 	for (int i = 0; i < numbufs; i++) {
 		dmu_buf_impl_t *db = (dmu_buf_impl_t *)dbp[i];
@@ -361,11 +366,22 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 			}
 
 			mutex_exit(&db->db_mtx);
+			total_io -= len;
 			continue;
 		}
 
-		mbuf = make_abd_for_dbuf(db, data, offset, size);
+		uint64_t io_size;
+		if (zfs_dio_hole_punch_read == B_FALSE) {
+			mbuf = make_abd_for_dbuf(db, data, offset, size);
+			io_size = db->db.db_size;
+		} else {
+			mbuf = data;
+			zio_flags |= ZIO_FLAG_DIO_HP_READ;
+			io_size = MIN(db->db.db_size, total_io);
+		}
+
 		ASSERT3P(mbuf, !=, NULL);
+		ASSERT3U(io_size, >, 0);
 
 		/*
 		 * The dbuf mutex (db_mtx) must be held when creating the ZIO
@@ -378,12 +394,12 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 		 * freed in dbuf_write_done() resulting in garbage being set
 		 * for the zio BP.
 		 */
-		zio_t *cio = zio_read(rio, spa, bp, mbuf, db->db.db_size,
+		zio_t *cio = zio_read(rio, spa, bp, mbuf, io_size,
 		    dmu_read_abd_done, NULL, ZIO_PRIORITY_SYNC_READ,
-		    ZIO_FLAG_CANFAIL, &zb);
+		    zio_flags, &zb);
 		mutex_exit(&db->db_mtx);
 
-		zfs_racct_read(spa, db->db.db_size, 1, flags);
+		zfs_racct_read(spa, io_size, 1, flags);
 		zio_nowait(cio);
 	}
 
@@ -438,3 +454,6 @@ dmu_write_uio_direct(dnode_t *dn, zfs_uio_t *uio, uint64_t size, dmu_tx_t *tx)
 
 EXPORT_SYMBOL(dmu_read_uio_direct);
 EXPORT_SYMBOL(dmu_write_uio_direct);
+
+ZFS_MODULE_PARAM(zfs, zfs_, dio_hole_punch_read, INT, ZMOD_RW,
+	"Allow hole punch reads for Direct I/O");

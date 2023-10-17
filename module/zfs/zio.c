@@ -1198,12 +1198,16 @@ zio_read(zio_t *pio, spa_t *spa, const blkptr_t *bp,
     zio_priority_t priority, zio_flag_t flags, const zbookmark_phys_t *zb)
 {
 	zio_t *zio;
+	enum zio_stage pipeline = (flags & ZIO_FLAG_DDT_CHILD) ?
+	    ZIO_DDT_CHILD_READ_PIPELINE : ZIO_READ_PIPELINE;
+
+	if (flags & ZIO_FLAG_DIO_HP_READ)
+		pipeline = pipeline & ~ZIO_STAGE_CHECKSUM_VERIFY;
 
 	zio = zio_create(pio, spa, BP_PHYSICAL_BIRTH(bp), bp,
 	    data, size, size, done, private,
 	    ZIO_TYPE_READ, priority, flags, NULL, 0, zb,
-	    ZIO_STAGE_OPEN, (flags & ZIO_FLAG_DDT_CHILD) ?
-	    ZIO_DDT_CHILD_READ_PIPELINE : ZIO_READ_PIPELINE);
+	    ZIO_STAGE_OPEN, pipeline);
 
 	return (zio);
 }
@@ -1545,6 +1549,9 @@ zio_vdev_child_io(zio_t *pio, blkptr_t *bp, vdev_t *vd, uint64_t offset,
 	}
 
 	flags |= ZIO_VDEV_CHILD_FLAGS(pio);
+
+	if (flags & ZIO_FLAG_DIO_HP_READ)
+		pipeline &= ~ZIO_STAGE_CHECKSUM_VERIFY;
 
 	/*
 	 * If we've decided to do a repair, the write is not speculative --
@@ -4467,6 +4474,7 @@ zio_checksum_verify(zio_t *zio)
 	}
 
 	if ((error = zio_checksum_error(zio, &info)) != 0) {
+		zfs_dbgmsg("Yeah... I got error = %d", error);
 		zio->io_error = error;
 		if (error == ECKSUM &&
 		    !(zio->io_flags & ZIO_FLAG_SPECULATIVE)) {

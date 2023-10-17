@@ -1785,6 +1785,11 @@ vdev_raidz_checksum_error(zio_t *zio, raidz_col_t *rc, abd_t *bad_data)
 static int
 raidz_checksum_verify(zio_t *zio)
 {
+	if (zio->io_flags & ZIO_FLAG_DIO_HP_READ) {
+		ASSERT3U(zio->io_error, !=, ECKSUM);
+		return (0);
+	}
+
 	zio_bad_cksum_t zbc = {0};
 	raidz_map_t *rm = zio->io_vsd;
 
