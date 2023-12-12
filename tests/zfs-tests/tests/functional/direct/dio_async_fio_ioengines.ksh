@@ -47,6 +47,12 @@ function cleanup
 	check_dio_write_chksum_verify_failures $TESTPOOL "raidz" 0
 }
 
+function check_fio_ioengine
+{
+	fio --ioengine=io_uring --parse-only > /dev/null 2>&1
+	return $?
+}
+
 log_assert "Verify FIO async ioengines work using Direct I/O."
 
 log_onexit cleanup
@@ -59,17 +65,30 @@ fio_async_ioengines="posixaio"
 if is_linux; then
 	fio_async_ioengines+=" libaio"
 	if $(grep -q "CONFIG_IO_URING=y" /boot/config-$(uname -r)); then
-		fio --ioengine=io_uring --parse-only > /dev/null 2>&1
-		if [[ $? -eq 0 ]]; then
-			fio_async_ioengines+=" io_uring"
+		if [ -e /etc/os-release ] ; then
+			source /etc/os-release
+			if [ -n "$REDHAT_SUPPORT_PRODUCT_VERSION" ] &&
+			    ((floor($REDHAT_SUPPORT_PRODUCT_VERSION) == 9)) ; then
+				log_note "io_uring disabled on CentOS 9, fails " \
+				"with 'Operation not permitted'"
+			elif $(check_fio_ioengine -eq 0); then
+				fio_async_ioengines+=" io_uring"
+			else
+				log_note "io_uring not supported by fio and " \
+				    "will not be tested"
+			fi
+		else 
+			if $(check_fio_ioengine); then
+				fio_async_ioengines+=" io_uring"
 	
 			else
 				log_note "io_uring not supported by fio and " \
-				     "will not be tested"
+				   "will not be tested"
+			fi
 		fi
-		else
-			log_note "io_uring not supported by kernel will not " \
-			     "be tested"
+	else
+		log_note "io_uring not supported by kernel will not " \
+		   "be tested"
 
 	fi
 fi
