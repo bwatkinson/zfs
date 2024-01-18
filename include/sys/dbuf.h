@@ -476,6 +476,20 @@ dbuf_get_dirty_direct(dmu_buf_impl_t *db)
 	return (list_head(&db->db_dirty_records));
 }
 
+static inline boolean_t
+dbuf_dirty_is_direct_write(dbuf_dirty_record_t *dr)
+{
+	boolean_t ret = B_FALSE;
+
+	if (dr != NULL && dr->dr_dbuf->db_level == 0 &&
+	    !dr->dt.dl.dr_brtwrite &&
+	    dr->dt.dl.dr_override_state == DR_OVERRIDDEN &&
+	    dr->dt.dl.dr_data == NULL) {
+		ret = B_TRUE;
+	}
+	return (ret);
+}
+
 #define	DBUF_GET_BUFC_TYPE(_db)	\
 	(dbuf_is_metadata(_db) ? ARC_BUFC_METADATA : ARC_BUFC_DATA)
 
