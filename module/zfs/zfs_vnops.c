@@ -1190,8 +1190,7 @@ zfs_get_data(void *arg, uint64_t gen, lr_write_t *lr, char *buf,
 		 * All Direct I/O writes will have already completed and the
 		 * block pointer can be immediately stored in the log record.
 		 */
-		if (dr != NULL && dr->dt.dl.dr_data == NULL &&
-		    dr->dt.dl.dr_override_state == DR_OVERRIDDEN) {
+		if (dbuf_dirty_is_direct_write(dr)) {
 			lr->lr_blkptr = dr->dt.dl.dr_overridden_by;
 			zfs_get_done(zgd, 0);
 			return (0);
