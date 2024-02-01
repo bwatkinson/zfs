@@ -1292,7 +1292,7 @@ dbuf_set_data(dmu_buf_impl_t *db, arc_buf_t *buf)
 	 * If there is a Direct I/O, set its data too. Then its state
 	 * will be the same as if we did a ZIL dmu_sync().
 	 */
-	if (dbuf_dirty_is_direct_write(dr_dio)) {
+	if (dbuf_dirty_is_direct_write(db, dr_dio)) {
 		dr_dio->dt.dl.dr_data = db->db_buf;
 	}
 
@@ -2227,7 +2227,8 @@ dbuf_redirty(dbuf_dirty_record_t *dr)
 		 * dr->dt.dl.dr_data and it will not be NULL here.
 		 */
 		if (dr->dt.dl.dr_data == NULL) {
-			ASSERT3B(dbuf_dirty_is_direct_write(dr), ==, B_TRUE);
+			ASSERT3B(dbuf_dirty_is_direct_write(db, dr), ==,
+			    B_TRUE);
 			dr->dt.dl.dr_data = db->db_buf;
 		}
 	}
