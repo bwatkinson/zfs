@@ -1119,6 +1119,7 @@ zfs_get_data(void *arg, uint64_t gen, lr_write_t *lr, char *buf,
 	zgd->zgd_grabbed_rangelock = !(rangelock_held);
 	dbuf_dirty_record_t *dr =
 	    dbuf_find_dirty_eq(db, lr->lr_common.lrc_txg);
+	boolean_t direct_write = dbuf_dirty_is_direct_write(db, dr);
 	mutex_exit(&db->db_mtx);
 
 	/*
@@ -1190,7 +1191,7 @@ zfs_get_data(void *arg, uint64_t gen, lr_write_t *lr, char *buf,
 		 * All Direct I/O writes will have already completed and the
 		 * block pointer can be immediately stored in the log record.
 		 */
-		if (dbuf_dirty_is_direct_write(dr)) {
+		if (direct_write) {
 			lr->lr_blkptr = dr->dt.dl.dr_overridden_by;
 			zfs_get_done(zgd, 0);
 			return (0);
