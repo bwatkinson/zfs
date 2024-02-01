@@ -194,7 +194,7 @@ dmu_write_direct(zio_t *pio, dmu_buf_impl_t *db, abd_t *data, dmu_tx_t *tx)
 	 */
 	mutex_enter(&db->db_mtx);
 	dr_head = dbuf_find_dirty_eq(db, dmu_tx_get_txg(tx));
-	if (dbuf_dirty_is_direct_write(dr_head)) {
+	if (dbuf_dirty_is_direct_write(db, dr_head)) {
 		dmu_buf_undirty(db, tx);
 	}
 	mutex_exit(&db->db_mtx);

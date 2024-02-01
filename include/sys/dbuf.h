@@ -477,12 +477,12 @@ dbuf_get_dirty_direct(dmu_buf_impl_t *db)
 }
 
 static inline boolean_t
-dbuf_dirty_is_direct_write(dbuf_dirty_record_t *dr)
+dbuf_dirty_is_direct_write(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr)
 {
 	boolean_t ret = B_FALSE;
+	ASSERT(MUTEX_HELD(&db->db_mtx));
 
-	if (dr != NULL && dr->dr_dbuf->db_level == 0 &&
-	    !dr->dt.dl.dr_brtwrite &&
+	if (dr != NULL && db->db_level == 0 && !dr->dt.dl.dr_brtwrite &&
 	    dr->dt.dl.dr_override_state == DR_OVERRIDDEN &&
 	    dr->dt.dl.dr_data == NULL) {
 		ret = B_TRUE;
