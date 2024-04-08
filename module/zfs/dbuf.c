@@ -1631,20 +1631,23 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags,
 		goto early_unlock;
 	}
 
+	/*
+	 * If we have a pending block clone, we don't want to read the
+	 * underlying block, but the content of the block being cloned,
+	 * pointed by the dirty record, so we have the most recent data.
+	 * If there is no dirty record, then we hit a race in a sync
+	 * process when the dirty record is already removed, while the
+	 * dbuf is not yet destroyed. Such case is equivalent to uncached.
+	 */
 	if (db->db_state == DB_NOFILL) {
-		dbuf_dirty_record_t *dr;
-
-		/*
-		 * Block cloning: If we have a pending block clone,
-		 * we don't want to read the underlying block, but the content
-		 * of the block being cloned, so we have the most recent data.
-		 */
-		dr = list_head(&db->db_dirty_records);
-		if (dr == NULL || !dr->dt.dl.dr_brtwrite) {
-			err = EIO;
-			goto early_unlock;
+		dbuf_dirty_record_t *dr = list_head(&db->db_dirty_records);
+		if (dr != NULL) {
+			if (!dr->dt.dl.dr_brtwrite) {
+				err = EIO;
+				goto early_unlock;
+			}
+			bpp = &dr->dt.dl.dr_overridden_by;
 		}
-		bpp = &dr->dt.dl.dr_overridden_by;
 	}
 
 	err = dbuf_read_hole(db, dn, bpp);
