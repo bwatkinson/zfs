@@ -1692,7 +1692,7 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags,
 
 	if (!DBUF_IS_CACHEABLE(db))
 		aflags |= ARC_FLAG_UNCACHED;
-	else if (dbuf_is_l2cacheable(db, bp))
+	else if (dbuf_is_l2cacheable(db, bpp))
 		aflags |= ARC_FLAG_L2CACHE;
 
 	dbuf_add_ref(db, NULL);
@@ -1700,7 +1700,7 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags,
 	zio_flags = (flags & DB_RF_CANFAIL) ?
 	    ZIO_FLAG_CANFAIL : ZIO_FLAG_MUSTSUCCEED;
 
-	if ((flags & DB_RF_NO_DECRYPT) && BP_IS_PROTECTED(bp))
+	if ((flags & DB_RF_NO_DECRYPT) && BP_IS_PROTECTED(bpp))
 		zio_flags |= ZIO_FLAG_RAW;
 
 	/*
