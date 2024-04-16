@@ -1244,10 +1244,12 @@ abd_iter_page(struct abd_iter *aiter)
 		dsize = aiter->iter_abd->abd_size - aiter->iter_offset;
 		zfs_dbgmsg("Have linear page with aiter->iter_abd = %p, "
 		    "doff = %ld, "
-		    "dsize = %ld",
+		    "dsize = %ld, "
+		    "page_size(page) = %ld",
 		    aiter->iter_abd,
 		    doff,
-		    dsize);
+		    dsize,
+		    page_size(page));
 	} else {
 		ASSERT(!abd_is_gang(aiter->iter_abd));
 
@@ -1260,20 +1262,30 @@ abd_iter_page(struct abd_iter *aiter)
 		/* remaining data in scatterlist */
 		dsize = MIN(aiter->iter_sg->length - aiter->iter_offset,
 		    aiter->iter_abd->abd_size - aiter->iter_pos);
+		/* amount of data in the chunk, up to the end of the page */
+		aiter->iter_page_dsize = dsize;
 		zfs_dbgmsg("Have scatter page with aiter->iter_abd = %p, "
 		    "doff = %ld, "
 		    "dsize = %ld, "
+		    "aiter->sg_iter = %p, "
 		    "aiter->iter_sg->length = %llu, "
 		    "aiter->iter_offset = %ld , "
 		    "aiter->iter_abd->abd_size = %llu, "
-		    "aiter->iter_pos = %ld",
+		    "aiter->iter_pos = %ld, "
+		    "page_size(page) = %ld, "
+		    "aiter->iter_page_dsize = %ld",
 		    aiter->iter_abd,
 		    doff,
 		    dsize,
+		    aiter->iter_sg,
 		    (u_longlong_t)aiter->iter_sg->length,
 		    aiter->iter_offset,
 		    (u_longlong_t)aiter->iter_abd->abd_size,
-		    aiter->iter_pos);
+		    aiter->iter_pos,
+		    page_size(page),
+		    aiter->iter_page_dsize);
+goto set_page;
+
 	}
 	ASSERT(page);
 
@@ -1329,12 +1341,14 @@ abd_iter_page(struct abd_iter *aiter)
 	}
 #endif
 
+	/* amount of data in the chunk, up to the end of the page */
+	aiter->iter_page_dsize = MIN(dsize, page_size(page) - doff);
+
+set_page:
+	ASSERT(page);
 	/* final page and position within it */
 	aiter->iter_page = page;
 	aiter->iter_page_doff = doff;
-
-	/* amount of data in the chunk, up to the end of the page */
-	aiter->iter_page_dsize = MIN(dsize, page_size(page) - doff);
 
 	if (aiter->iter_page_dsize < 1) {
 		zfs_dbgmsg("Here with aiter->iter_abd = %p, "
@@ -1346,7 +1360,8 @@ abd_iter_page(struct abd_iter *aiter)
 		    "aiter->iter_abd->abd_size = %llu, "
 		    "doff = %ld, "
 		    "dsize = %ld, "
-		    "page_size(page) = %ld",
+		    "page_size(page) = %ld, "
+		    "compound_head(page) = %d",
 		    aiter->iter_abd,
 		    aiter->iter_page_doff,
 		    aiter->iter_page_dsize,
@@ -1356,7 +1371,8 @@ abd_iter_page(struct abd_iter *aiter)
 		    (u_longlong_t)aiter->iter_abd->abd_size,
 		    doff,
 		    dsize,
-		    page_size(page));
+		    page_size(page),
+		    PageCompound(page));
 	}
 }
 
