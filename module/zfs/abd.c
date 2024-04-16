@@ -805,6 +805,10 @@ abd_iterate_page_func(abd_t *abd, size_t off, size_t size,
 		abd_iter_page(&aiter);
 
 		size_t len = MIN(aiter.iter_page_dsize, size);
+		if (len < 1) {
+			zfs_dbgmsg("Here with aiter.iter_abd = %p",
+			    aiter.iter_abd);
+		}
 		ASSERT3U(len, >, 0);
 
 		ret = func(aiter.iter_page, aiter.iter_page_doff,

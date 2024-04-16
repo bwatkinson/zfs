@@ -1242,6 +1242,12 @@ abd_iter_page(struct abd_iter *aiter)
 
 		/* total data remaining in abd from this position */
 		dsize = aiter->iter_abd->abd_size - aiter->iter_offset;
+		zfs_dbgmsg("Have linear page with aiter->iter_abd = %p, "
+		    "doff = %ld, "
+		    "dsize = %ld",
+		    aiter->iter_abd,
+		    doff,
+		    dsize);
 	} else {
 		ASSERT(!abd_is_gang(aiter->iter_abd));
 
@@ -1254,6 +1260,20 @@ abd_iter_page(struct abd_iter *aiter)
 		/* remaining data in scatterlist */
 		dsize = MIN(aiter->iter_sg->length - aiter->iter_offset,
 		    aiter->iter_abd->abd_size - aiter->iter_pos);
+		zfs_dbgmsg("Have scatter page with aiter->iter_abd = %p, "
+		    "doff = %ld, "
+		    "dsize = %ld, "
+		    "aiter->iter_sg->length = %llu, "
+		    "aiter->iter_offset = %ld , "
+		    "aiter->iter_abd->abd_size = %llu, "
+		    "aiter->iter_pos = %ld",
+		    aiter->iter_abd,
+		    doff,
+		    dsize,
+		    (u_longlong_t)aiter->iter_sg->length,
+		    aiter->iter_offset,
+		    (u_longlong_t)aiter->iter_abd->abd_size,
+		    aiter->iter_pos);
 	}
 	ASSERT(page);
 
@@ -1294,6 +1314,18 @@ abd_iter_page(struct abd_iter *aiter)
 		struct page *head = compound_head(page);
 		doff += ((page - head) * PAGESIZE);
 		page = head;
+		zfs_dbgmsg("Have a compond page  aiter->iter_abd = %p, "
+		    "doff = %ld, "
+		    "aiter->iter_pos = %ld, "
+		    "aiter->iter_offset = %ld, "
+		    "aiter->iter_abd->abd_flags = %x, "
+		    "aiter->iter_abd.abd_size = %llu",
+		    aiter->iter_abd,
+		    doff,
+		    aiter->iter_pos,
+		    aiter->iter_offset,
+		    aiter->iter_abd->abd_flags,
+		    (u_longlong_t)aiter->iter_abd->abd_size);
 	}
 #endif
 
@@ -1303,6 +1335,29 @@ abd_iter_page(struct abd_iter *aiter)
 
 	/* amount of data in the chunk, up to the end of the page */
 	aiter->iter_page_dsize = MIN(dsize, page_size(page) - doff);
+
+	if (aiter->iter_page_dsize < 1) {
+		zfs_dbgmsg("Here with aiter->iter_abd = %p, "
+		    "aiter->iter_page_doff = %ld, "
+		    "aiter->iter_page_dsize = %ld, "
+		    "aiter->iter_pos = %ld, "
+		    "aiter->iter_offset = %ld, "
+		    "aiter->iter_abd->abd_flags = %x, "
+		    "aiter->iter_abd->abd_size = %llu, "
+		    "doff = %ld, "
+		    "dsize = %ld, "
+		    "page_size(page) = %ld",
+		    aiter->iter_abd,
+		    aiter->iter_page_doff,
+		    aiter->iter_page_dsize,
+		    aiter->iter_pos,
+		    aiter->iter_offset,
+		    aiter->iter_abd->abd_flags,
+		    (u_longlong_t)aiter->iter_abd->abd_size,
+		    doff,
+		    dsize,
+		    page_size(page));
+	}
 }
 
 /*
