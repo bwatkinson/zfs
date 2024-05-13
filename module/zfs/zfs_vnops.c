@@ -408,7 +408,7 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		 * This is still consistent with the semantics of Direct I/O in
 		 * ZFS as at a minimum the I/O request must be page-aligned.
 		 */
-		dio_remaining_resid = n - P2ALIGN(n, PAGE_SIZE);
+		dio_remaining_resid = n - P2ALIGN_TYPED(n, PAGE_SIZE, ssize_t);
 		if (dio_remaining_resid != 0)
 			n -= dio_remaining_resid;
 	}
