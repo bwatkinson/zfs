@@ -595,8 +595,9 @@ zfs_uio_iov_step(struct iovec v, zfs_uio_rw_t rw, zfs_uio_t *uio, int *numpages)
 	size_t len = v.iov_len;
 	int n = DIV_ROUND_UP(len, PAGE_SIZE);
 
-	int res = zfs_get_user_pages(P2ALIGN(addr, PAGE_SIZE), n,
-	    rw == UIO_READ, &uio->uio_dio.pages[uio->uio_dio.npages]);
+	int res = zfs_get_user_pages(
+	    P2ALIGN_TYPED(addr, PAGE_SIZE, unsigned long), n, rw == UIO_READ,
+	    &uio->uio_dio.pages[uio->uio_dio.npages]);
 	if (res < 0) {
 		*numpages = -1;
 		return (-res);
