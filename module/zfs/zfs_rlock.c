@@ -238,6 +238,7 @@ zfs_rangelock_proxify(avl_tree_t *tree, zfs_locked_range_t *lr)
 	ASSERT3U(lr->lr_count, ==, 1);
 	ASSERT(lr->lr_write_wanted == B_FALSE);
 	ASSERT(lr->lr_read_wanted == B_FALSE);
+	ASSERT(lr->lr_dio_write == B_FALSE);
 	avl_remove(tree, lr);
 	lr->lr_count = 0;
 
@@ -250,6 +251,7 @@ zfs_rangelock_proxify(avl_tree_t *tree, zfs_locked_range_t *lr)
 	proxy->lr_proxy = B_TRUE;
 	proxy->lr_write_wanted = B_FALSE;
 	proxy->lr_read_wanted = B_FALSE;
+	proxy->lr_dio_write = B_FALSE;
 	avl_add(tree, proxy);
 
 	return (proxy);
@@ -497,8 +499,16 @@ zfs_rangelock_enter_impl(zfs_rangelock_t *rl, uint64_t off, uint64_t len,
 	new->lr_proxy = B_FALSE;
 	new->lr_write_wanted = B_FALSE;
 	new->lr_read_wanted = B_FALSE;
+	new->lr_dio_write = B_FALSE;
 
-	mutex_enter(&rl->rl_lock);
+	/*
+	 * If we checked for a Direct I/O write locked range previously in
+	 * zfs_rangelock_enter_check_dio_write() then the zfs_rangelock_t mutex
+	 * is already held.
+	 */
+	if (!MUTEX_HELD(&rl->rl_lock))
+		mutex_enter(&rl->rl_lock);
+
 	if (type == RL_READER) {
 		/*
 		 * First check for the usual case of no locks
@@ -621,6 +631,7 @@ zfs_rangelock_exit(zfs_locked_range_t *lr)
 	ASSERT(lr->lr_type == RL_WRITER || lr->lr_type == RL_READER);
 	ASSERT(lr->lr_count == 1 || lr->lr_count == 0);
 	ASSERT(!lr->lr_proxy);
+	IMPLY(lr->lr_type == RL_READER, lr->lr_dio_write == B_FALSE);
 
 	/*
 	 * The free list is used to defer the cv_destroy() and
@@ -679,6 +690,39 @@ zfs_rangelock_reduce(zfs_locked_range_t *lr, uint64_t off, uint64_t len)
 		cv_broadcast(&lr->lr_write_cv);
 	if (lr->lr_read_wanted)
 		cv_broadcast(&lr->lr_read_cv);
+}
+
+/*
+ * Check if the range lock is held by a Direct I/O writer. If so, then return
+ * NULL. Else return the requested reader rangelock.
+ */
+zfs_locked_range_t *
+zfs_rangelock_enter_check_dio_write(zfs_rangelock_t *rl, uint64_t off,
+    uint64_t len, zfs_rangelock_type_t type)
+{
+	mutex_enter(&rl->rl_lock);
+	avl_tree_t *tree = &rl->rl_tree;
+	zfs_locked_range_t *lr;
+	avl_index_t where;
+	ASSERT(type == RL_READER);
+
+	/*
+	 * First check if we have a have a Direct I/O write holding the
+	 * range lock.
+	 */
+	zfs_locked_range_t new = { 0 };
+	new.lr_offset = off;
+	lr = avl_find(tree, &new, &where);
+	if (lr && lr->lr_dio_write == B_TRUE) {
+		mutex_exit(&rl->rl_lock);
+		return (NULL);
+	}
+
+	/*
+	 * Direct I/O write does not hold the rangelock, so go ahead and grab
+	 * it as a reader.
+	 */
+	return (zfs_rangelock_enter_impl(rl, off, len, type, B_FALSE));
 }
 
 #if defined(_KERNEL)

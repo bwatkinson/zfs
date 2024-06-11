@@ -726,6 +726,8 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 	if (uio->uio_extflg & UIO_DIRECT && lr->lr_length == UINT64_MAX) {
 		uio->uio_extflg &= ~UIO_DIRECT;
 		o_direct_defer = B_TRUE;
+	} else if (uio->uio_extflg & UIO_DIRECT) {
+		lr->lr_dio_write = B_TRUE;
 	}
 
 	/*
@@ -838,8 +840,9 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		if (abuf == NULL) {
 			tx_bytes = zfs_uio_resid(uio);
 			zfs_uio_fault_disable(uio, B_TRUE);
-			error = dmu_write_uio_dbuf(sa_get_db(zp->z_sa_hdl),
-			    uio, nbytes, tx);
+			error = dmu_write_uio_dbuf(sa_get_db(zp->z_sa_hdl), uio,
+			    nbytes, tx);
+
 			zfs_uio_fault_disable(uio, B_FALSE);
 #ifdef __linux__
 			if (error == EFAULT) {
@@ -968,6 +971,7 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 			ASSERT(ioflag & O_DIRECT);
 			uio->uio_extflg |= UIO_DIRECT;
 			o_direct_defer = B_FALSE;
+			lr->lr_dio_write = B_TRUE;
 		}
 
 		if (error != 0)
@@ -1096,44 +1100,24 @@ zfs_get_data(void *arg, uint64_t gen, lr_write_t *lr, char *buf,
 	zgd->zgd_lwb = lwb;
 	zgd->zgd_private = zp;
 
-	dmu_buf_t *dbp;
-	error = dmu_buf_hold_noread(os, object, offset, zgd, &dbp);
-	zgd->zgd_db = dbp;
-	dmu_buf_impl_t *db = (dmu_buf_impl_t *)dbp;
-
-	if (error) {
-		zfs_get_done(zgd, error);
-		return (error);
-	}
-
-	/*
-	 * If a Direct I/O write is waiting for previous dirty records to sync
-	 * out in dmu_buf_direct_mixed_io_wait(), then the ranglock is already
-	 * held across the entire block by the O_DIRECT write.
-	 *
-	 * The dirty record for this TXG will also be used to identify if this
-	 * log record is associated with a Direct I/O write.
-	 */
-	mutex_enter(&db->db_mtx);
-	boolean_t rangelock_held = db->db_mixed_io_dio_wait;
-	zgd->zgd_grabbed_rangelock = !(rangelock_held);
-	dbuf_dirty_record_t *dr =
-	    dbuf_find_dirty_eq(db, lr->lr_common.lrc_txg);
-	boolean_t direct_write = dbuf_dirty_is_direct_write(db, dr);
-	mutex_exit(&db->db_mtx);
-
 	/*
 	 * Write records come in two flavors: immediate and indirect.
 	 * For small writes it's cheaper to store the data with the
 	 * log record (immediate); for large writes it's cheaper to
 	 * sync the data and get a pointer to it (indirect) so that
 	 * we don't have to write the data twice.
+	 *
+	 * If a Direct I/O write is waiting for previous dirty records to sync
+	 * out in dmu_buf_direct_mixed_io_wait(), then the ranglock is already
+	 * held across the entire block by the O_DIRECT write. In this case the
+	 * block can not change, so there is no reason to aquire the rangelock
+	 * for either immedaite or indirect writes. If rangelock is held by a
+	 * Direct I/O write, then zgd_lr will be set to NULL.
+	 *
 	 */
 	if (buf != NULL) { /* immediate write */
-		if (zgd->zgd_grabbed_rangelock) {
-			zgd->zgd_lr = zfs_rangelock_enter(&zp->z_rangelock,
-			    offset, size, RL_READER);
-		}
+		zgd->zgd_lr = zfs_rangelock_enter_check_dio_write(
+		    &zp->z_rangelock, offset, size, RL_READER);
 		/* test for truncation needs to be done while range locked */
 		if (offset >= zp->z_size) {
 			error = SET_ERROR(ENOENT);
@@ -1144,33 +1128,33 @@ zfs_get_data(void *arg, uint64_t gen, lr_write_t *lr, char *buf,
 		ASSERT(error == 0 || error == ENOENT);
 	} else { /* indirect write */
 		ASSERT3P(zio, !=, NULL);
+		boolean_t direct_write = B_FALSE;
+		dmu_buf_t *dbp;
+
 		/*
 		 * Have to lock the whole block to ensure when it's
 		 * written out and its checksum is being calculated
 		 * that no one can change the data. We need to re-check
 		 * blocksize after we get the lock in case it's changed!
 		 */
-		if (zgd->zgd_grabbed_rangelock) {
-			for (;;) {
-				uint64_t blkoff;
-				size = zp->z_blksz;
-				blkoff = ISP2(size) ? P2PHASE(offset, size) :
-				    offset;
-				offset -= blkoff;
-				zgd->zgd_lr = zfs_rangelock_enter(
-				    &zp->z_rangelock, offset, size, RL_READER);
-				if (zp->z_blksz == size)
-					break;
-				offset += blkoff;
-				zfs_rangelock_exit(zgd->zgd_lr);
-			}
-			ASSERT3U(dbp->db_size, ==, size);
-			ASSERT3U(dbp->db_offset, ==, offset);
-		} else {
+		for (;;) {
+			uint64_t blkoff;
+			size = zp->z_blksz;
+			blkoff = ISP2(size) ? P2PHASE(offset, size) :
+			    offset;
+			offset -= blkoff;
+			zgd->zgd_lr = zfs_rangelock_enter_check_dio_write(
+			    &zp->z_rangelock, offset, size, RL_READER);
 			/*
-			 * A Direct I/O write always covers an entire block.
+			 * Direct I/O write is holding the rangelock across the
+			 * entire block.
 			 */
-			ASSERT3U(dbp->db_size, ==, zp->z_blksz);
+			if (zgd->zgd_lr == NULL)
+				break;
+			if (zp->z_blksz == size)
+				break;
+			offset += blkoff;
+			zfs_rangelock_exit(zgd->zgd_lr);
 		}
 
 		/* test for truncation needs to be done while range locked */
@@ -1182,48 +1166,72 @@ zfs_get_data(void *arg, uint64_t gen, lr_write_t *lr, char *buf,
 			zil_fault_io = 0;
 		}
 #endif
-		if (error) {
-			zfs_get_done(zgd, error);
-			return (error);
-		}
-
-		/*
-		 * All Direct I/O writes will have already completed and the
-		 * block pointer can be immediately stored in the log record.
-		 */
-		if (direct_write) {
-			lr->lr_blkptr = dr->dt.dl.dr_overridden_by;
-			zfs_get_done(zgd, 0);
-			return (0);
-		}
-
-		blkptr_t *bp = &lr->lr_blkptr;
-		zgd->zgd_bp = bp;
-
-		error = dmu_sync(zio, lr->lr_common.lrc_txg,
-		    zfs_get_done, zgd);
-		ASSERT(error || lr->lr_length <= size);
-
-		/*
-		 * On success, we need to wait for the write I/O
-		 * initiated by dmu_sync() to complete before we can
-		 * release this dbuf.  We will finish everything up
-		 * in the zfs_get_done() callback.
-		 */
 		if (error == 0)
-			return (0);
+			error = dmu_buf_hold_noread(os, object, offset, zgd,
+			    &dbp);
 
-		if (error == EALREADY) {
-			lr->lr_common.lrc_txtype = TX_WRITE2;
+		if (error == 0) {
+			zgd->zgd_db = dbp;
+			dmu_buf_impl_t *db = (dmu_buf_impl_t *)dbp;
+
 			/*
-			 * TX_WRITE2 relies on the data previously
-			 * written by the TX_WRITE that caused
-			 * EALREADY.  We zero out the BP because
-			 * it is the old, currently-on-disk BP.
+			 * The dirty record for this TXG will also be used to
+			 * identify if this log record is associated with a
+			 * Direct I/O write.
 			 */
-			zgd->zgd_bp = NULL;
-			BP_ZERO(bp);
-			error = 0;
+			mutex_enter(&db->db_mtx);
+			dbuf_dirty_record_t *dr =
+			    dbuf_find_dirty_eq(db, lr->lr_common.lrc_txg);
+			direct_write = dbuf_dirty_is_direct_write(db, dr);
+			mutex_exit(&db->db_mtx);
+
+			/*
+			 * All Direct I/O writes will have already completed
+			 * and the block pointer can be immediately stored in
+			 * the log record.
+			 */
+			if (direct_write) {
+				/*
+				 * A Direct I/O write always covers an entire
+				 * block.
+				 */
+				ASSERT3U(dbp->db_size, ==, zp->z_blksz);
+				lr->lr_blkptr = dr->dt.dl.dr_overridden_by;
+				zfs_get_done(zgd, 0);
+				return (0);
+			}
+
+			blkptr_t *bp = &lr->lr_blkptr;
+			zgd->zgd_bp = bp;
+
+			ASSERT3U(dbp->db_offset, ==, offset);
+			ASSERT3U(dbp->db_size, ==, size);
+
+			error = dmu_sync(zio, lr->lr_common.lrc_txg,
+			    zfs_get_done, zgd);
+			ASSERT(error || lr->lr_length <= size);
+
+			/*
+			 * On success, we need to wait for the write I/O
+			 * initiated by dmu_sync() to complete before we can
+			 * release this dbuf.  We will finish everything up
+			 * in the zfs_get_done() callback.
+			 */
+			if (error == 0)
+				return (0);
+
+			if (error == EALREADY) {
+				lr->lr_common.lrc_txtype = TX_WRITE2;
+				/*
+				 * TX_WRITE2 relies on the data previously
+				 * written by the TX_WRITE that caused
+				 * EALREADY.  We zero out the BP because
+				 * it is the old, currently-on-disk BP.
+				 */
+				zgd->zgd_bp = NULL;
+				BP_ZERO(bp);
+				error = 0;
+			}
 		}
 	}
 
@@ -1239,10 +1247,10 @@ zfs_get_done(zgd_t *zgd, int error)
 	(void) error;
 	znode_t *zp = zgd->zgd_private;
 
-	ASSERT3P(zgd->zgd_db, !=, NULL);
-	dmu_buf_rele(zgd->zgd_db, zgd);
+	if (zgd->zgd_db)
+		dmu_buf_rele(zgd->zgd_db, zgd);
 
-	if (zgd->zgd_grabbed_rangelock)
+	if (zgd->zgd_lr != NULL)
 		zfs_rangelock_exit(zgd->zgd_lr);
 
 	/*

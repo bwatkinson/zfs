@@ -64,6 +64,7 @@ typedef struct zfs_locked_range {
 	uint8_t lr_proxy;	/* acting for original range */
 	uint8_t lr_write_wanted; /* writer wants to lock this range */
 	uint8_t lr_read_wanted;	/* reader wants to lock this range */
+	uint8_t lr_dio_write;	/* writer is a Direct I/O write */
 } zfs_locked_range_t;
 
 void zfs_rangelock_init(zfs_rangelock_t *, zfs_rangelock_cb_t *, void *);
@@ -75,6 +76,8 @@ zfs_locked_range_t *zfs_rangelock_tryenter(zfs_rangelock_t *,
     uint64_t, uint64_t, zfs_rangelock_type_t);
 void zfs_rangelock_exit(zfs_locked_range_t *);
 void zfs_rangelock_reduce(zfs_locked_range_t *, uint64_t, uint64_t);
+zfs_locked_range_t *zfs_rangelock_enter_check_dio_write(zfs_rangelock_t *,
+    uint64_t, uint64_t, zfs_rangelock_type_t);
 
 #ifdef	__cplusplus
 }

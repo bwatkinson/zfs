@@ -2820,13 +2820,11 @@ dmu_buf_direct_mixed_io_wait(dmu_buf_impl_t *db, uint64_t txg, boolean_t read)
 		 */
 		ASSERT3P(db->db_buf, !=, NULL);
 		ASSERT3U(txg, >, 0);
-		db->db_mixed_io_dio_wait = TRUE;
 		db->db_state = DB_CACHED;
 		while (dbuf_find_dirty_lte(db, txg) != NULL) {
 			DBUF_STAT_BUMP(direct_mixed_io_write_wait);
 			cv_wait(&db->db_changed, &db->db_mtx);
 		}
-		db->db_mixed_io_dio_wait = FALSE;
 	}
 }
 
@@ -3510,7 +3508,6 @@ dbuf_create(dnode_t *dn, uint8_t level, uint64_t blkid,
 	db->db_user_immediate_evict = FALSE;
 	db->db_freed_in_flight = FALSE;
 	db->db_pending_evict = FALSE;
-	db->db_mixed_io_dio_wait = FALSE;
 
 	if (blkid == DMU_BONUS_BLKID) {
 		ASSERT3P(parent, ==, dn->dn_dbuf);
