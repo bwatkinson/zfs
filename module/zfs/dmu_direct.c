@@ -145,15 +145,27 @@ dmu_write_direct_done(zio_t *zio)
 		 * record we will stall just like on a successful Direct I/O
 		 * write to make sure all TXG's are consistent. See comment
 		 * above.
+		 *
+		 * Since we are undirtying the record for the Direct I/O in
+		 * open-context, we must have a hold on the db and
+		 * dbuf_undirty() must always return B_FALSE.
+		 *
+		 * In the event of an I/O error, we will handle the metaslab
+		 * cleanup in zio_done(). Also, the dirty record's
+		 * dr_overridden_by BP is not currently set as that is done in
+		 * dmu_sync_done(). Since the db_stat is still set to
+		 * DB_NOFILL, dbuf_unoverride() will not be called in
+		 * dbuf_undirty() and the dirty record's BP will not be added
+		 * to the SPA's spa_free_bplist via zio_free().
 		 */
 		if (db->db_buf) {
 			ASSERT3P(db->db_buf, ==, dr->dt.dl.dr_data);
 			dmu_buf_direct_mixed_io_wait(db, txg - 1, B_FALSE);
-			dmu_buf_undirty(db, dsa->dsa_tx);
+			VERIFY3B(dbuf_undirty(db, dsa->dsa_tx), ==, B_FALSE);
 			db->db_state = DB_CACHED;
 		} else {
 			ASSERT3P(dr->dt.dl.dr_data, ==, NULL);
-			dmu_buf_undirty(db, dsa->dsa_tx);
+			VERIFY3B(dbuf_undirty(db, dsa->dsa_tx), ==, B_FALSE);
 			db->db_state = DB_UNCACHED;
 		}
 
@@ -185,25 +197,10 @@ dmu_write_direct(zio_t *pio, dmu_buf_impl_t *db, abd_t *data, dmu_tx_t *tx)
 	DB_DNODE_EXIT(db);
 
 	/*
-	 * If we going to overwrite a previous Direct I/O write that is part of
-	 * the current TXG, then we can can go ahead and undirty it now. Part
-	 * of it being undirtied will be allowing for previously allocated
-	 * space in the dr_overridden_bp BP's DVAs to be freed. This avoids
-	 * ENOSPC errors from possibly occuring when trying to allocate new
-	 * metaslabs in open-context for Direct I/O writes.
-	 */
-	mutex_enter(&db->db_mtx);
-	dr_head = dbuf_find_dirty_eq(db, dmu_tx_get_txg(tx));
-	if (dbuf_dirty_is_direct_write(db, dr_head)) {
-		dmu_buf_undirty(db, tx);
-	}
-	mutex_exit(&db->db_mtx);
-
-	/*
 	 * Dirty this dbuf with DB_NOFILL since we will not have any data
 	 * associated with the dbuf.
 	 */
-	dmu_buf_will_not_fill(&db->db, tx);
+	dmu_buf_will_direct_io(&db->db, tx);
 
 	mutex_enter(&db->db_mtx);
 
@@ -290,7 +287,7 @@ dmu_write_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 
 	/*
 	 * The dbuf must be held until the Direct I/O write has completed in
-	 * the event there was any errors and dmu_buf_undirty() was called.
+	 * the event there was any errors and dbuf_undirty() was called.
 	 */
 	dmu_buf_rele_array(dbp, numbufs, FTAG);
 

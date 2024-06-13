@@ -1978,6 +1978,14 @@ dbuf_unoverride(dbuf_dirty_record_t *dr)
 	 * This assert is valid because dmu_sync() expects to be called by
 	 * a zilog's get_data while holding a range lock.  This call only
 	 * comes from dbuf_dirty() callers who must also hold a range lock.
+	 *
+	 * The one exception to this is if a Direct I/O write is taking place.
+	 * The rangelock will not be grabbed in zfs_get_data() to avoid a
+	 * race condition. However, dmu_buf_will_direct_io() will wait on
+	 * a dirty record that is being synced out in dmu_sync(). Because of
+	 * this, the ASSERT below is still valid even with the rangelock not
+	 * being held in zfs_get_data(). See comments in zfs_get_data() and
+	 * dmu_buf_direct_mixed_io_wait() for details over the race condition.
 	 */
 	ASSERT(dr->dt.dl.dr_override_state != DR_IN_DMU_SYNC);
 	ASSERT(db->db_level == 0);
@@ -2829,52 +2837,6 @@ dmu_buf_direct_mixed_io_wait(dmu_buf_impl_t *db, uint64_t txg, boolean_t read)
 }
 
 /*
- * Direct I/O writes may need to undirty the open-context dirty record
- * associated with it in the event of an I/O error.
- */
-void
-dmu_buf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
-{
-	/*
-	 * Direct I/O writes always happen in open-context.
-	 */
-	ASSERT(!dmu_tx_is_syncing(tx));
-	ASSERT(MUTEX_HELD(&db->db_mtx));
-	ASSERT(db->db_state == DB_NOFILL || db->db_state == DB_UNCACHED);
-
-
-	/*
-	 * In the event of an I/O error we will handle the metaslab clean up in
-	 * zio_done(). Also, the dirty record's dr_overridden_by BP is not
-	 * currently set as that is done in dmu_sync_done(). Since the db_state
-	 * is still set to DB_NOFILL, dbuf_unoverride() will not be called in
-	 * dbuf_undirty() and the dirty record's BP will not be added the SPA's
-	 * spa_free_bplist via zio_free().
-	 *
-	 * This function can also be called in the event that a Direct I/O
-	 * write is overwriting a previous Direct I/O to the same block for
-	 * this TXG. It is important to go ahead and free up the space
-	 * accounting in this case through dbuf_undirty() -> dbuf_unoverride()
-	 * -> zio_free(). This is necessary because the space accounting for
-	 * determining if a write can occur in zfs_write() happens through
-	 * dmu_tx_assign(). This can cause an issue with Direct I/O writes in
-	 * the case of overwrites, because all DVA allocations are being done
-	 * in open-context. Constanstly allowing Direct I/O overwrites to the
-	 * same blocks can exhaust the pools available space leading to ENOSPC
-	 * errors at the DVA allcoation part of the ZIO pipeline, which will
-	 * eventually suspend the pool. By cleaning up space accounting now
-	 * the ENOSPC pool suspend can be avoided.
-	 *
-	 * Since we are undirtying the record for the Direct I/O in
-	 * open-context we must have a hold on the db, so it should never be
-	 * evicted after calling dbuf_undirty().
-	 */
-	VERIFY3B(dbuf_undirty(db, tx), ==, B_FALSE);
-
-	DBUF_STAT_BUMP(direct_undirty);
-}
-
-/*
  * Normally the db_blkptr points to the most recent on-disk content for the
  * dbuf (and anything newer will be cached in the dbuf). However, a recent
  * Direct I/O write could leave newer content on disk and the dbuf uncached.
@@ -2946,6 +2908,66 @@ dmu_buf_untransform_direct(dmu_buf_impl_t *db, spa_t *spa)
 	DBUF_STAT_BUMP(hash_hits);
 
 	return (err);
+}
+
+void
+dmu_buf_will_direct_io(dmu_buf_t *db_fake, dmu_tx_t *tx)
+{
+	dmu_buf_impl_t *db = (dmu_buf_impl_t *)db_fake;
+	dbuf_dirty_record_t *dr;
+
+	/*
+	 * Direct I/O writes always happen in open-context.
+	 */
+	ASSERT(!dmu_tx_is_syncing(tx));
+
+	mutex_enter(&db->db_mtx);
+	ASSERT3U(db->db_level, ==, 0);
+	dr = dbuf_find_dirty_eq(db, dmu_tx_get_txg(tx));
+
+	/*
+	 * It is possible a dirty record associated with this TXG is being
+	 * synced out through zfs_get_data(). This can occur because the
+	 * rangelock is not grabbed in zfs_get_data() when a Direct I/O write
+	 * is taking place to avoid a race condition when mixed I/O is taking
+	 * place. See the comments in zfs_get_data() and
+	 * dmu_buf_direct_mixed_io_wait() for more details.
+	 */
+	if (dr != NULL) {
+		while (dr->dt.dl.dr_override_state == DR_IN_DMU_SYNC)
+			cv_wait(&db->db_changed, &db->db_mtx);
+
+		/*
+		 * We can go ahead and undirty the block since we will be
+		 * overwriting it with a Direct I/O write.
+		 *
+		 * Since we are undirtying the record for the Direct I/O in
+		 * open-context, we must have a hold on the db and
+		 * dbuf_undirty() must always return B_FALSE.
+		 *
+		 * It is important to go ahead and free up the space accounting
+		 * through dbuf_undirty() -> dbuf_unoverride() -> zio_free().
+		 * This is necessary because the space accounting for
+		 * determining if a write can occur in zfs_write() happens
+		 * through dmu_tx_assign(). This can cause an issue with Direct
+		 * I/O writes in the case of overwrites, because all DVA
+		 * allocations are being done in open-context. Constanstly
+		 * allowing Direct I/O overwrites to the same blocks can exhaust
+		 * the pools available space leading to ENOSPC errors at the DVA
+		 * allcoation part of the ZIO pipeline, which will eventually
+		 * suspend the pool. By cleaning up space accounting now the
+		 * ENOSPC pool suspend can be avoided.
+		 */
+		VERIFY3B(dbuf_undirty(db, tx), ==, B_FALSE);
+		ASSERT0P(dbuf_find_dirty_eq(db, tx->tx_txg));
+	}
+
+	db->db_state = DB_NOFILL;
+	DTRACE_SET_STATE(db, "allocating NOFILL buffer for dirct I/O write");
+	mutex_exit(&db->db_mtx);
+
+	dbuf_noread(db);
+	(void) dbuf_dirty(db, tx);
 }
 
 void

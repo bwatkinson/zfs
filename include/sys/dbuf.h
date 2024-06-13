@@ -378,6 +378,7 @@ dmu_buf_impl_t *dbuf_find(struct objset *os, uint64_t object, uint8_t level,
     uint64_t blkid, uint64_t *hash_out);
 
 int dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags);
+void dmu_buf_will_direct_io(dmu_buf_t *db, dmu_tx_t *tx);
 void dmu_buf_will_clone(dmu_buf_t *db, dmu_tx_t *tx);
 void dmu_buf_will_not_fill(dmu_buf_t *db, dmu_tx_t *tx);
 void dmu_buf_will_fill(dmu_buf_t *db, dmu_tx_t *tx, boolean_t canfail);
@@ -389,7 +390,6 @@ dbuf_dirty_record_t *dbuf_dirty_lightweight(dnode_t *dn, uint64_t blkid,
 boolean_t dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx);
 void dmu_buf_direct_mixed_io_wait(dmu_buf_impl_t *db, uint64_t txg,
     boolean_t read);
-void dmu_buf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx);
 blkptr_t *dmu_buf_get_bp_from_dbuf(dmu_buf_impl_t *db);
 int dmu_buf_untransform_direct(dmu_buf_impl_t *db, spa_t *spa);
 arc_buf_t *dbuf_loan_arcbuf(dmu_buf_impl_t *db);
