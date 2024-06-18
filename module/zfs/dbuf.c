@@ -2951,10 +2951,10 @@ dmu_buf_will_direct_io(dmu_buf_t *db_fake, dmu_tx_t *tx)
 		 * determining if a write can occur in zfs_write() happens
 		 * through dmu_tx_assign(). This can cause an issue with Direct
 		 * I/O writes in the case of overwrites, because all DVA
-		 * allocations are being done in open-context. Constanstly
+		 * allocations are being done in open-context. Constantly
 		 * allowing Direct I/O overwrites to the same blocks can exhaust
 		 * the pools available space leading to ENOSPC errors at the DVA
-		 * allcoation part of the ZIO pipeline, which will eventually
+		 * allocation part of the ZIO pipeline, which will eventually
 		 * suspend the pool. By cleaning up space accounting now the
 		 * ENOSPC pool suspend can be avoided.
 		 */
