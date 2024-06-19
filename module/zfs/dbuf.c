@@ -85,10 +85,7 @@ typedef struct dbuf_stats {
 	/*
 	 * Statistics for Direct I/O.
 	 */
-	kstat_named_t direct_mixed_io_read_wait;
-	kstat_named_t direct_mixed_io_write_wait;
 	kstat_named_t direct_sync_wait;
-	kstat_named_t direct_undirty;
 	/*
 	 * Statistics about the dbuf hash table.
 	 */
@@ -137,10 +134,7 @@ dbuf_stats_t dbuf_stats = {
 	{ "cache_total_evicts",			KSTAT_DATA_UINT64 },
 	{ { "cache_levels_N",			KSTAT_DATA_UINT64 } },
 	{ { "cache_levels_bytes_N",		KSTAT_DATA_UINT64 } },
-	{ "direct_mixed_io_read_wait",		KSTAT_DATA_UINT64 },
-	{ "direct_mixed_io_write_wait",		KSTAT_DATA_UINT64 },
 	{ "direct_sync_wait",			KSTAT_DATA_UINT64 },
-	{ "direct_undirty",			KSTAT_DATA_UINT64 },
 	{ "hash_hits",				KSTAT_DATA_UINT64 },
 	{ "hash_misses",			KSTAT_DATA_UINT64 },
 	{ "hash_collisions",			KSTAT_DATA_UINT64 },
@@ -162,10 +156,7 @@ struct {
 	wmsum_t cache_total_evicts;
 	wmsum_t cache_levels[DN_MAX_LEVELS];
 	wmsum_t cache_levels_bytes[DN_MAX_LEVELS];
-	wmsum_t direct_mixed_io_read_wait;
-	wmsum_t direct_mixed_io_write_wait;
 	wmsum_t direct_sync_wait;
-	wmsum_t direct_undirty;
 	wmsum_t hash_hits;
 	wmsum_t hash_misses;
 	wmsum_t hash_collisions;
@@ -911,14 +902,8 @@ dbuf_kstat_update(kstat_t *ksp, int rw)
 		ds->cache_levels_bytes[i].value.ui64 =
 		    wmsum_value(&dbuf_sums.cache_levels_bytes[i]);
 	}
-	ds->direct_mixed_io_read_wait.value.ui64 =
-	    wmsum_value(&dbuf_sums.direct_mixed_io_read_wait);
-	ds->direct_mixed_io_write_wait.value.ui64 =
-	    wmsum_value(&dbuf_sums.direct_mixed_io_write_wait);
 	ds->direct_sync_wait.value.ui64 =
 	    wmsum_value(&dbuf_sums.direct_sync_wait);
-	ds->direct_undirty.value.ui64 =
-	    wmsum_value(&dbuf_sums.direct_undirty);
 	ds->hash_hits.value.ui64 =
 	    wmsum_value(&dbuf_sums.hash_hits);
 	ds->hash_misses.value.ui64 =
@@ -1021,10 +1006,7 @@ dbuf_init(void)
 		wmsum_init(&dbuf_sums.cache_levels[i], 0);
 		wmsum_init(&dbuf_sums.cache_levels_bytes[i], 0);
 	}
-	wmsum_init(&dbuf_sums.direct_mixed_io_read_wait, 0);
-	wmsum_init(&dbuf_sums.direct_mixed_io_write_wait, 0);
 	wmsum_init(&dbuf_sums.direct_sync_wait, 0);
-	wmsum_init(&dbuf_sums.direct_undirty, 0);
 	wmsum_init(&dbuf_sums.hash_hits, 0);
 	wmsum_init(&dbuf_sums.hash_misses, 0);
 	wmsum_init(&dbuf_sums.hash_collisions, 0);
@@ -1097,10 +1079,7 @@ dbuf_fini(void)
 		wmsum_fini(&dbuf_sums.cache_levels[i]);
 		wmsum_fini(&dbuf_sums.cache_levels_bytes[i]);
 	}
-	wmsum_fini(&dbuf_sums.direct_mixed_io_read_wait);
-	wmsum_fini(&dbuf_sums.direct_mixed_io_write_wait);
 	wmsum_fini(&dbuf_sums.direct_sync_wait);
-	wmsum_fini(&dbuf_sums.direct_undirty);
 	wmsum_fini(&dbuf_sums.hash_hits);
 	wmsum_fini(&dbuf_sums.hash_misses);
 	wmsum_fini(&dbuf_sums.hash_collisions);
@@ -1271,9 +1250,8 @@ dbuf_clear_data(dmu_buf_impl_t *db)
 {
 	ASSERT(MUTEX_HELD(&db->db_mtx));
 	dbuf_evict_user(db);
-	/* Direct I/O writes may have data */
-	if (db->db_buf == NULL)
-		db->db.db_data = NULL;
+	ASSERT3P(db->db_buf, ==, NULL);
+	db->db.db_data = NULL;
 	if (db->db_state != DB_NOFILL) {
 		db->db_state = DB_UNCACHED;
 		DTRACE_SET_STATE(db, "clear data");
@@ -2789,93 +2767,6 @@ dmu_buf_is_dirty(dmu_buf_t *db_fake, dmu_tx_t *tx)
 	return (dr != NULL);
 }
 
-void
-dmu_buf_direct_mixed_io_wait(dmu_buf_impl_t *db, uint64_t txg, boolean_t read)
-{
-	ASSERT(MUTEX_HELD(&db->db_mtx));
-
-	if (read == B_TRUE) {
-		/*
-		 * If a buffered read is in process, a Direct I/O read will
-		 * wait for the buffered I/O to complete.
-		 */
-		ASSERT3U(txg, ==, 0);
-		while (db->db_state == DB_READ) {
-			DBUF_STAT_BUMP(direct_mixed_io_read_wait);
-			cv_wait(&db->db_changed, &db->db_mtx);
-		}
-	} else {
-		/*
-		 * There must be an ARC buf associated with this Direct I/O
-		 * write otherwise there is no reason to wait for previous
-		 * dirty records to sync out.
-		 *
-		 * The db_state will temporarily be set to DB_CACHED so that
-		 * that any synchronous writes issued through the ZIL will
-		 * still be handled properly. In particular, the call to
-		 * dbuf_read() in dmu_sync_late_arrival() must account for the
-		 * data still being in the ARC. After waiting here for previous
-		 * TXGs to sync out, dmu_write_direct_done() will update the
-		 * db_state.
-		 */
-		ASSERT3P(db->db_buf, !=, NULL);
-		ASSERT3U(txg, >, 0);
-		db->db_mixed_io_dio_wait = TRUE;
-		db->db_state = DB_CACHED;
-		while (dbuf_find_dirty_lte(db, txg) != NULL) {
-			DBUF_STAT_BUMP(direct_mixed_io_write_wait);
-			cv_wait(&db->db_changed, &db->db_mtx);
-		}
-		db->db_mixed_io_dio_wait = FALSE;
-	}
-}
-
-/*
- * Direct I/O writes may need to undirty the open-context dirty record
- * associated with it in the event of an I/O error.
- */
-void
-dmu_buf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
-{
-	/*
-	 * Direct I/O writes always happen in open-context.
-	 */
-	ASSERT(!dmu_tx_is_syncing(tx));
-	ASSERT(MUTEX_HELD(&db->db_mtx));
-	ASSERT(db->db_state == DB_NOFILL || db->db_state == DB_UNCACHED);
-
-
-	/*
-	 * In the event of an I/O error we will handle the metaslab clean up in
-	 * zio_done(). Also, the dirty record's dr_overridden_by BP is not
-	 * currently set as that is done in dmu_sync_done(). Since the db_state
-	 * is still set to DB_NOFILL, dbuf_unoverride() will not be called in
-	 * dbuf_undirty() and the dirty record's BP will not be added the SPA's
-	 * spa_free_bplist via zio_free().
-	 *
-	 * This function can also be called in the event that a Direct I/O
-	 * write is overwriting a previous Direct I/O to the same block for
-	 * this TXG. It is important to go ahead and free up the space
-	 * accounting in this case through dbuf_undirty() -> dbuf_unoverride()
-	 * -> zio_free(). This is necessary because the space accounting for
-	 * determining if a write can occur in zfs_write() happens through
-	 * dmu_tx_assign(). This can cause an issue with Direct I/O writes in
-	 * the case of overwrites, because all DVA allocations are being done
-	 * in open-context. Constanstly allowing Direct I/O overwrites to the
-	 * same blocks can exhaust the pools available space leading to ENOSPC
-	 * errors at the DVA allcoation part of the ZIO pipeline, which will
-	 * eventually suspend the pool. By cleaning up space accounting now
-	 * the ENOSPC pool suspend can be avoided.
-	 *
-	 * Since we are undirtying the record for the Direct I/O in
-	 * open-context we must have a hold on the db, so it should never be
-	 * evicted after calling dbuf_undirty().
-	 */
-	VERIFY3B(dbuf_undirty(db, tx), ==, B_FALSE);
-
-	DBUF_STAT_BUMP(direct_undirty);
-}
-
 /*
  * Normally the db_blkptr points to the most recent on-disk content for the
  * dbuf (and anything newer will be cached in the dbuf). However, a recent
@@ -2948,6 +2839,141 @@ dmu_buf_untransform_direct(dmu_buf_impl_t *db, spa_t *spa)
 	DBUF_STAT_BUMP(hash_hits);
 
 	return (err);
+}
+
+/*
+ * This will make a copy of the ARC buf associated with a dbuf into a dirty
+ * record in the event of a Direct I/O write. This is necessary because the
+ * Direct I/O write will destroy the ARC buf. This copy is valid as the
+ * Direct I/O write is holding the rangelock across the entire block, so the
+ * contents of the ARC buf can not change. This means even if a checksum has
+ * been calculated in the ZIO pipeline after the write has been issued
+ * through dbuf_write() -> arc_write() the contents of the ARC buffer will be
+ * the same as when the checksum was calculated.
+ */
+static void
+dbuf_dr_copy_arc_buf(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr)
+{
+	ASSERT(MUTEX_HELD(&db->db_mtx));
+	ASSERT(db->db.db_data != NULL);
+	ASSERT(db->db_level == 0);
+	ASSERT(db->db.db_object != DMU_META_DNODE_OBJECT);
+	ASSERT3P(dr, !=, NULL);
+	ASSERT3P(dr->dt.dl.dr_data, ==, db->db_buf);
+
+	if (db->db_blkid == DMU_BONUS_BLKID) {
+		dnode_t *dn = DB_DNODE(db);
+		int bonuslen = DN_SLOTS_TO_BONUSLEN(dn->dn_num_slots);
+		dr->dt.dl.dr_data = kmem_alloc(bonuslen, KM_SLEEP);
+		arc_space_consume(bonuslen, ARC_SPACE_BONUS);
+		memcpy(dr->dt.dl.dr_data, db->db.db_data, bonuslen);
+	} else {
+		dnode_t *dn = DB_DNODE(db);
+		int size = arc_buf_size(db->db_buf);
+		arc_buf_contents_t type = DBUF_GET_BUFC_TYPE(db);
+		spa_t *spa = db->db_objset->os_spa;
+		enum zio_compress compress_type =
+		    arc_get_compression(db->db_buf);
+		uint8_t complevel = arc_get_complevel(db->db_buf);
+
+		if (arc_is_encrypted(db->db_buf)) {
+			boolean_t byteorder;
+			uint8_t salt[ZIO_DATA_SALT_LEN];
+			uint8_t iv[ZIO_DATA_IV_LEN];
+			uint8_t mac[ZIO_DATA_MAC_LEN];
+
+			arc_get_raw_params(db->db_buf, &byteorder, salt,
+			    iv, mac);
+			dr->dt.dl.dr_data = arc_alloc_raw_buf(spa, db,
+			    dmu_objset_id(dn->dn_objset), byteorder, salt, iv,
+			    mac, dn->dn_type, size, arc_buf_lsize(db->db_buf),
+			    compress_type, complevel);
+		} else if (compress_type != ZIO_COMPRESS_OFF) {
+			ASSERT3U(type, ==, ARC_BUFC_DATA);
+			dr->dt.dl.dr_data = arc_alloc_compressed_buf(spa, db,
+			    size, arc_buf_lsize(db->db_buf), compress_type,
+			    complevel);
+		} else {
+			dr->dt.dl.dr_data = arc_alloc_buf(spa, db, type, size);
+		}
+		memcpy(dr->dt.dl.dr_data->b_data, db->db.db_data, size);
+	}
+}
+
+void
+dmu_buf_will_direct(dmu_buf_t *db_fake, dmu_tx_t *tx)
+{
+	dmu_buf_impl_t *db = (dmu_buf_impl_t *)db_fake;
+
+	/*
+	 * Direct I/O writes always happen in open-context.
+	 */
+	ASSERT(!dmu_tx_is_syncing(tx));
+
+	mutex_enter(&db->db_mtx);
+	DBUF_VERIFY(db);
+
+	/*
+	 * We will go ahead and undirty the the dbuf for this TXG. If there is
+	 * a dirty record for this TXG from a previous Direct I/O write then
+	 * space accounting cleanup takes place. It is important to go ahead
+	 * free up the space accounting through dbuf_undirty() ->
+	 * dbuf_unoverride() -> zio_free(). Space accountiung for determining
+	 * if a write can occur in zfs_write() happens through dmu_tx_assign().
+	 * This can cuase an issue with Direct I/O writes in the case of
+	 * overwriting the same block, because all DVA allocations are being
+	 * done in open-context. Constantly allowing Direct I/O overwrites to
+	 * the same block can exhaust the pools available space leading to
+	 * ENOSPC errors at the DVA allocation part of the ZIO pipeline, which
+	 * will eventually suspend the pool. By cleaning up sapce acccounting
+	 * now, the ENOSPC error can be avoided.
+	 *
+	 * Since we are undirtying the record in open-context, we must have a
+	 * hold on the db, so it should never be evicted after calling
+	 * dbuf_undirty().
+	 */
+	VERIFY3B(dbuf_undirty(db, tx), ==, B_FALSE);
+	ASSERT0P(dbuf_find_dirty_eq(db, tx->tx_txg));
+	if (db->db_buf != NULL) {
+		/*
+		 * If there is an associated ARC buffer with this dbuf we can
+		 * not just detroy it without checking if previous TXG dirtry
+		 * records reference it. Otherwise, there exists a race between
+		 * dbuf_write() where a NULL pointer dereference can happen as
+		 * the dirty record's dr_data is still point at the dbuf's ARC
+		 * buffer. In order to fix this, we can just force a copy of
+		 * the ARC buffer to the dirty record's dr_data right now.
+		 */
+		dbuf_dirty_record_t *dr;
+		for (dr = list_head(&db->db_dirty_records);
+		    dr != NULL;
+		    dr = list_next(&db->db_dirty_records, dr)) {
+			if (dr->dt.dl.dr_data == db->db_buf) {
+				ASSERT3U(dr->dr_txg, <, tx->tx_txg);
+				dbuf_dr_copy_arc_buf(db, dr);
+			}
+			ASSERT3P(dr->dt.dl.dr_data, !=, db->db_buf);
+		}
+
+		/*
+		 * We will go ahead and destroy the ARC buffer now. If the user
+		 * asked for Direct I/O, then the data should be removed from
+		 * the ARC so that on a successful write the most up to date
+		 * data is read from the underlying devices.
+		 */
+		arc_buf_destroy(db->db_buf, db);
+		db->db_buf = NULL;
+		dbuf_clear_data(db);
+	}
+
+	db->db_state = DB_NOFILL;
+	DTRACE_SET_STATE(db, "allocating NOFILL buffer for direct I/O write");
+
+	DBUF_VERIFY(db);
+	mutex_exit(&db->db_mtx);
+
+	dbuf_noread(db);
+	(void) dbuf_dirty(db, tx);
 }
 
 void
@@ -3510,7 +3536,6 @@ dbuf_create(dnode_t *dn, uint8_t level, uint64_t blkid,
 	db->db_user_immediate_evict = FALSE;
 	db->db_freed_in_flight = FALSE;
 	db->db_pending_evict = FALSE;
-	db->db_mixed_io_dio_wait = FALSE;
 
 	if (blkid == DMU_BONUS_BLKID) {
 		ASSERT3P(parent, ==, dn->dn_dbuf);
@@ -4766,25 +4791,6 @@ dbuf_sync_leaf(dbuf_dirty_record_t *dr, dmu_tx_t *tx)
 	dprintf_dbuf_bp(db, db->db_blkptr, "blkptr=%p", db->db_blkptr);
 
 	mutex_enter(&db->db_mtx);
-
-	/*
-	 * It is possible a buffered read has come in after a Direct I/O
-	 * write and is currently transistioning the db_state from DB_READ
-	 * in dbuf_read_impl() to another state in dbuf_read_done().  We
-	 * have to wait in order for the dbuf state to change from DB_READ
-	 * before syncing the dirty record of the Direct I/O write.
-	 */
-	if (db->db_state == DB_READ && !dr->dt.dl.dr_brtwrite) {
-		ASSERT3P(*datap, ==, NULL);
-		ASSERT3P(db->db_buf, ==, NULL);
-		ASSERT3P(db->db.db_data, ==, NULL);
-		ASSERT3U(dr->dt.dl.dr_override_state, ==, DR_OVERRIDDEN);
-		while (db->db_state == DB_READ) {
-			DBUF_STAT_BUMP(direct_sync_wait);
-			cv_wait(&db->db_changed, &db->db_mtx);
-		}
-	}
-
 	/*
 	 * To be synced, we must be dirtied.  But we might have been freed
 	 * after the dirty.
@@ -4797,13 +4803,21 @@ dbuf_sync_leaf(dbuf_dirty_record_t *dr, dmu_tx_t *tx)
 		ASSERT(db->db.db_data != dr->dt.dl.dr_data);
 	} else if (db->db_state == DB_READ) {
 		/*
-		 * This buffer has a clone we need to write, and an in-flight
-		 * read on the BP we're about to clone. Its safe to issue the
-		 * write here because the read has already been issued and the
-		 * contents won't change.
+		 * This buffer was either cloned or had a Direct I/O write
+		 * occur and has an in-flgiht read on the BP. It is safe to
+		 * issue the write here, because the read has already been
+		 * issued and the contents won't change.
+		 *
+		 * We can verify the case of both the clone and Direct I/O
+		 * write by making sure the first dirty record for the dbuf
+		 * has no ARC buffer associated with it.
 		 */
-		ASSERT(dr->dt.dl.dr_brtwrite &&
-		    dr->dt.dl.dr_override_state == DR_OVERRIDDEN);
+		dbuf_dirty_record_t *dr_head =
+		    list_head(&db->db_dirty_records);
+		ASSERT3P(db->db_buf, ==, NULL);
+		ASSERT3P(db->db.db_data, ==, NULL);
+		ASSERT3P(dr_head->dt.dl.dr_data, ==, NULL);
+		ASSERT3U(dr_head->dt.dl.dr_override_state, ==, DR_OVERRIDDEN);
 	} else {
 		ASSERT(db->db_state == DB_CACHED || db->db_state == DB_NOFILL);
 	}
