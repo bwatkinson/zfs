@@ -119,7 +119,7 @@ zfs_uio_page_aligned(zfs_uio_t *uio)
 	const struct iovec *iov = GET_UIO_STRUCT(uio)->uio_iov;
 
 	for (int i = zfs_uio_iovcnt(uio); i > 0; iov++, i--) {
-		unsigned long addr = (unsigned long)iov->iov_base;
+		uintptr_t addr = (uintptr_t)iov->iov_base;
 		size_t size = iov->iov_len;
 		if ((addr & (PAGE_SIZE - 1)) || (size & (PAGE_SIZE - 1))) {
 				return (B_FALSE);
@@ -343,7 +343,7 @@ zfs_uio_get_dio_pages_impl(zfs_uio_t *uio)
 
 /*
  * This function maps user pages into the kernel. In the event that the user
- * pages were not mapped successfully an error value is reutrned.
+ * pages were not mapped successfully an error value is returned.
  *
  * On success, 0 is returned.
  */

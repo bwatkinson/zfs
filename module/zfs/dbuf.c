@@ -2584,12 +2584,8 @@ dbuf_undirty_bonus(dbuf_dirty_record_t *dr)
 boolean_t
 dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 {
-	uint64_t txg;
+	uint64_t txg = tx->tx_txg;
 	boolean_t brtwrite;
-	dbuf_dirty_record_t *dr;
-
-	txg = tx->tx_txg;
-	dr = dbuf_find_dirty_eq(db, txg);
 
 	ASSERT(txg != 0);
 
@@ -2609,6 +2605,7 @@ dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	/*
 	 * If this buffer is not dirty, we're done.
 	 */
+	dbuf_dirty_record_t *dr = dbuf_find_dirty_eq(db, txg);
 	if (dr == NULL)
 		return (B_FALSE);
 	ASSERT(dr->dr_dbuf == db);
