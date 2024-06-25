@@ -708,8 +708,6 @@ abd_free_linear_page(abd_t *abd)
 	ABD_SCATTER(abd).abd_offset = 0;
 	ABD_SCATTER(abd).abd_sgl = sg;
 	abd_free_chunks(abd);
-
-	abd_update_scatter_stats(abd, ABDSTAT_DECR);
 }
 
 /*
@@ -742,7 +740,7 @@ abd_alloc_from_pages(struct page **pages, unsigned long offset, uint64_t size)
 		schedule_timeout_interruptible(1);
 	}
 
-	if (size < PAGE_SIZE) {
+	if ((offset + size) <= PAGE_SIZE) {
 		/*
 		 * Since there is only one entry, this ABD can be represented
 		 * as a linear buffer. All single-page (4K) ABD's constructed
@@ -754,7 +752,6 @@ abd_alloc_from_pages(struct page **pages, unsigned long offset, uint64_t size)
 		 * the mapping needs to bet set up on all CPUs. Using kmap()
 		 * also enables the user of highmem pages when required.
 		 */
-		ASSERT3U(offset + size, <=, PAGE_SIZE);
 		abd->abd_flags |= ABD_FLAG_LINEAR | ABD_FLAG_LINEAR_PAGE;
 		abd->abd_u.abd_linear.abd_sgl = table.sgl;
 		zfs_kmap(sg_page(table.sgl));
@@ -769,8 +766,6 @@ abd_alloc_from_pages(struct page **pages, unsigned long offset, uint64_t size)
 
 		ASSERT0(ABD_SCATTER(abd).abd_offset);
 	}
-
-	abd_update_scatter_stats(abd, ABDSTAT_INCR);
 
 	return (abd);
 }
