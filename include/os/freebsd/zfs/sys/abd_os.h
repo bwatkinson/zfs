@@ -42,7 +42,9 @@ struct abd_scatter {
 
 struct abd_linear {
 	void		*abd_buf;
+#if defined(_KERNEL)
 	struct sf_buf 	*sf; /* for LINEAR_PAGE FreeBSD */
+#endif
 };
 
 __attribute__((malloc))
