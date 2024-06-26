@@ -469,8 +469,7 @@ zfs_uio_page_aligned(zfs_uio_t *uio)
 		size_t skip = uio->uio_skip;
 
 		for (int i = uio->uio_iovcnt; i > 0; iov++, i--) {
-			unsigned long addr =
-			    (unsigned long)(iov->iov_base + skip);
+			uintptr_t addr = (uintptr_t)(iov->iov_base + skip);
 			size_t size = iov->iov_len - skip;
 			if ((addr & (PAGE_SIZE - 1)) ||
 			    (size & (PAGE_SIZE - 1))) {

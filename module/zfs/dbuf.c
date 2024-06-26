@@ -2579,7 +2579,7 @@ dbuf_undirty_bonus(dbuf_dirty_record_t *dr)
 
 /*
  * Undirty a buffer in the transaction group referenced by the given
- * transaction. Return whether this evicted the dbuf.
+ * transaction.  Return whether this evicted the dbuf.
  */
 boolean_t
 dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)

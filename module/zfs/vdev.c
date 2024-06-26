@@ -6525,6 +6525,10 @@ ZFS_MODULE_PARAM(zfs, zfs_, nocacheflush, INT, ZMOD_RW,
 ZFS_MODULE_PARAM(zfs, zfs_, embedded_slog_min_ms, UINT, ZMOD_RW,
 	"Minimum number of metaslabs required to dedicate one for log blocks");
 
+ZFS_MODULE_PARAM(zfs_vdev, zfs_vdev_, direct_write_verify_pct, UINT, ZMOD_RW,
+	"Percentage of Direct I/O writes per top-level VDEV for checksum "
+	"verification to be performed");
+
 /* BEGIN CSTYLED */
 ZFS_MODULE_PARAM_CALL(zfs_vdev, zfs_vdev_, min_auto_ashift,
 	param_set_min_auto_ashift, param_get_uint, ZMOD_RW,
@@ -6534,9 +6538,4 @@ ZFS_MODULE_PARAM_CALL(zfs_vdev, zfs_vdev_, max_auto_ashift,
 	param_set_max_auto_ashift, param_get_uint, ZMOD_RW,
 	"Maximum ashift used when optimizing for logical -> physical sector "
 	"size on new top-level vdevs");
-
-ZFS_MODULE_PARAM_CALL(zfs_vdev, zfs_vdev_, direct_write_verify_pct,
-	param_set_direct_write_verify_pct, param_get_uint, ZMOD_RW,
-	"Percentage of Direct I/O writes per top-level VDEV for checksum "
-	"verification to be performed");
 /* END CSTYLED */
