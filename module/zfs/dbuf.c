@@ -2934,21 +2934,23 @@ dmu_buf_will_direct(dmu_buf_t *db_fake, dmu_tx_t *tx)
 	 */
 	VERIFY3B(dbuf_undirty(db, tx), ==, B_FALSE);
 	ASSERT0P(dbuf_find_dirty_eq(db, tx->tx_txg));
-	if (db->db_buf != NULL) {
+	if (db->db_buf != NULL || db->db.db_data != NULL) {
 		/*
 		 * If there is an associated ARC buffer with this dbuf we can
-		 * not just detroy it without checking if previous TXG dirtry
+		 * not just destroy it without checking if previous TXG dirtry
 		 * records reference it. Otherwise, there exists a race between
 		 * dbuf_write() where a NULL pointer dereference can happen as
-		 * the dirty record's dr_data is still point at the dbuf's ARC
-		 * buffer. In order to fix this, we can just force a copy of
-		 * the ARC buffer to the dirty record's dr_data right now.
+		 * the dirty record's dr_data is stil pointing at the dbuf's
+		 * ARC buffer. In order to fix this, we can just force a copy
+		 * of the ARC buffer to the dirty record's dr_data right now.
 		 */
 		dbuf_dirty_record_t *dr;
 		for (dr = list_head(&db->db_dirty_records);
 		    dr != NULL;
 		    dr = list_next(&db->db_dirty_records, dr)) {
-			if (dr->dt.dl.dr_data == db->db_buf) {
+			if (((db->db_blkid == DMU_BONUS_BLKID) &&
+			    dr->dt.dl.dr_data == db->db.db_data) ||
+			    dr->dt.dl.dr_data == db->db_buf) {
 				ASSERT3U(dr->dr_txg, <, tx->tx_txg);
 				dbuf_dr_copy_arc_buf(db, dr);
 			}
