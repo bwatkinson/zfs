@@ -145,7 +145,7 @@ dmu_write_direct(zio_t *pio, dmu_buf_impl_t *db, abd_t *data, dmu_tx_t *tx)
 	 * Dirty this dbuf with DB_NOFILL since we will not have any data
 	 * associated with the dbuf.
 	 */
-	dmu_buf_will_direct(&db->db, tx);
+	dmu_buf_will_clone_or_dio(&db->db, tx);
 
 	mutex_enter(&db->db_mtx);
 

@@ -1711,10 +1711,11 @@ early_unlock:
  * have been modified in a previous transaction group before we access them in
  * the current active group.
  *
- * This function is used in three places: when we are dirtying a buffer for the
+ * This function is used in four places: when we are dirtying a buffer for the
  * first time in a txg, when we are freeing a range in a dnode that includes
- * this buffer, and when we are accessing a buffer which was received compressed
- * and later referenced in a WRITE_BYREF record.
+ * this buffer, when doing block cloning or issuing a Direct I/O write with
+ * abuffer, and when we are accessing a buffer which was received compressed and
+ * later referenced in a WRITE_BYREF record.
  *
  * Note that when we are called from dbuf_free_range() we do not put a hold on
  * the buffer, we just traverse the active dbuf list for the dnode.
@@ -2841,67 +2842,8 @@ dmu_buf_untransform_direct(dmu_buf_impl_t *db, spa_t *spa)
 	return (err);
 }
 
-/*
- * This will make a copy of the ARC buf associated with a dbuf into a dirty
- * record in the event of a Direct I/O write. This is necessary because the
- * Direct I/O write will destroy the ARC buf. This copy is valid as the
- * Direct I/O write is holding the rangelock across the entire block, so the
- * contents of the ARC buf can not change. This means even if a checksum has
- * been calculated in the ZIO pipeline after the write has been issued
- * through dbuf_write() -> arc_write() the contents of the ARC buffer will be
- * the same as when the checksum was calculated.
- */
-static void
-dbuf_dr_copy_arc_buf(dmu_buf_impl_t *db, dbuf_dirty_record_t *dr)
-{
-	ASSERT(MUTEX_HELD(&db->db_mtx));
-	ASSERT(db->db.db_data != NULL);
-	ASSERT(db->db_level == 0);
-	ASSERT(db->db.db_object != DMU_META_DNODE_OBJECT);
-	ASSERT3P(dr, !=, NULL);
-	ASSERT3P(dr->dt.dl.dr_data, ==, db->db_buf);
-
-	if (db->db_blkid == DMU_BONUS_BLKID) {
-		dnode_t *dn = DB_DNODE(db);
-		int bonuslen = DN_SLOTS_TO_BONUSLEN(dn->dn_num_slots);
-		dr->dt.dl.dr_data = kmem_alloc(bonuslen, KM_SLEEP);
-		arc_space_consume(bonuslen, ARC_SPACE_BONUS);
-		memcpy(dr->dt.dl.dr_data, db->db.db_data, bonuslen);
-	} else {
-		dnode_t *dn = DB_DNODE(db);
-		int size = arc_buf_size(db->db_buf);
-		arc_buf_contents_t type = DBUF_GET_BUFC_TYPE(db);
-		spa_t *spa = db->db_objset->os_spa;
-		enum zio_compress compress_type =
-		    arc_get_compression(db->db_buf);
-		uint8_t complevel = arc_get_complevel(db->db_buf);
-
-		if (arc_is_encrypted(db->db_buf)) {
-			boolean_t byteorder;
-			uint8_t salt[ZIO_DATA_SALT_LEN];
-			uint8_t iv[ZIO_DATA_IV_LEN];
-			uint8_t mac[ZIO_DATA_MAC_LEN];
-
-			arc_get_raw_params(db->db_buf, &byteorder, salt,
-			    iv, mac);
-			dr->dt.dl.dr_data = arc_alloc_raw_buf(spa, db,
-			    dmu_objset_id(dn->dn_objset), byteorder, salt, iv,
-			    mac, dn->dn_type, size, arc_buf_lsize(db->db_buf),
-			    compress_type, complevel);
-		} else if (compress_type != ZIO_COMPRESS_OFF) {
-			ASSERT3U(type, ==, ARC_BUFC_DATA);
-			dr->dt.dl.dr_data = arc_alloc_compressed_buf(spa, db,
-			    size, arc_buf_lsize(db->db_buf), compress_type,
-			    complevel);
-		} else {
-			dr->dt.dl.dr_data = arc_alloc_buf(spa, db, type, size);
-		}
-		memcpy(dr->dt.dl.dr_data->b_data, db->db.db_data, size);
-	}
-}
-
 void
-dmu_buf_will_direct(dmu_buf_t *db_fake, dmu_tx_t *tx)
+dmu_buf_will_clone_or_dio(dmu_buf_t *db_fake, dmu_tx_t *tx)
 {
 	dmu_buf_impl_t *db = (dmu_buf_impl_t *)db_fake;
 
@@ -2914,10 +2856,13 @@ dmu_buf_will_direct(dmu_buf_t *db_fake, dmu_tx_t *tx)
 	DBUF_VERIFY(db);
 
 	/*
-	 * We will go ahead and undirty the the dbuf for this TXG. If there is
-	 * a dirty record for this TXG from a previous Direct I/O write then
-	 * space accounting cleanup takes place. It is important to go ahead
-	 * free up the space accounting through dbuf_undirty() ->
+	 * We are going to clone or issue a Direct I/O write on this block, so
+	 * undirty modifications done to this block so far in this txg. This
+	 * includes writes and clones into this block.
+	 *
+	 * If there dirty record associated with this txg from a previous Direct
+	 * I/O write then space accounting cleanup takes place. It is important
+	 * to go ahead free up the space accounting through dbuf_undirty() ->
 	 * dbuf_unoverride() -> zio_free(). Space accountiung for determining
 	 * if a write can occur in zfs_write() happens through dmu_tx_assign().
 	 * This can cuase an issue with Direct I/O writes in the case of
@@ -2934,72 +2879,37 @@ dmu_buf_will_direct(dmu_buf_t *db_fake, dmu_tx_t *tx)
 	 */
 	VERIFY3B(dbuf_undirty(db, tx), ==, B_FALSE);
 	ASSERT0P(dbuf_find_dirty_eq(db, tx->tx_txg));
-	if (db->db_buf != NULL || db->db.db_data != NULL) {
+
+	if (db->db_buf != NULL) {
 		/*
 		 * If there is an associated ARC buffer with this dbuf we can
-		 * not just destroy it without checking if previous TXG dirtry
-		 * records reference it. Otherwise, there exists a race between
-		 * dbuf_write() where a NULL pointer dereference can happen as
-		 * the dirty record's dr_data is stil pointing at the dbuf's
-		 * ARC buffer. In order to fix this, we can just force a copy
-		 * of the ARC buffer to the dirty record's dr_data right now.
+		 * not just destroy it without checking if the previous txg
+		 * dirtry record references it. We will call
+		 * dbuf_fix_old_data() to make a just in time copy of the ARC
+		 * buf into the dirty records dr_data if that is necessary.
 		 */
-		dbuf_dirty_record_t *dr;
-		for (dr = list_head(&db->db_dirty_records);
-		    dr != NULL;
-		    dr = list_next(&db->db_dirty_records, dr)) {
-			if (((db->db_blkid == DMU_BONUS_BLKID) &&
-			    dr->dt.dl.dr_data == db->db.db_data) ||
-			    dr->dt.dl.dr_data == db->db_buf) {
-				ASSERT3U(dr->dr_txg, <, tx->tx_txg);
-				dbuf_dr_copy_arc_buf(db, dr);
-			}
-			ASSERT3P(dr->dt.dl.dr_data, !=, db->db_buf);
-		}
+		if (db->db.db_object != DMU_META_DNODE_OBJECT)
+			arc_release(db->db_buf, db);
+		dbuf_fix_old_data(db, tx->tx_txg);
 
 		/*
-		 * We will go ahead and destroy the ARC buffer now. If the user
-		 * asked for Direct I/O, then the data should be removed from
-		 * the ARC so that on a successful write the most up to date
-		 * data is read from the underlying devices.
+		 * Removing the ARC buf now will force all future reads down to
+		 * the devices to get the most up to date version of the data
+		 * after a Direct I/O write has completed.
 		 */
-		arc_buf_destroy(db->db_buf, db);
-		db->db_buf = NULL;
-		dbuf_clear_data(db);
+		if (db->db_buf != NULL) {
+			arc_buf_destroy(db->db_buf, db);
+			db->db_buf = NULL;
+			dbuf_clear_data(db);
+		}
 	}
 
-	db->db_state = DB_NOFILL;
-	DTRACE_SET_STATE(db, "allocating NOFILL buffer for direct I/O write");
-
-	DBUF_VERIFY(db);
-	mutex_exit(&db->db_mtx);
-
-	dbuf_noread(db);
-	(void) dbuf_dirty(db, tx);
-}
-
-void
-dmu_buf_will_clone(dmu_buf_t *db_fake, dmu_tx_t *tx)
-{
-	dmu_buf_impl_t *db = (dmu_buf_impl_t *)db_fake;
-
-	/*
-	 * Block cloning: We are going to clone into this block, so undirty
-	 * modifications done to this block so far in this txg. This includes
-	 * writes and clones into this block.
-	 */
-	mutex_enter(&db->db_mtx);
-	DBUF_VERIFY(db);
-	VERIFY(!dbuf_undirty(db, tx));
-	ASSERT0P(dbuf_find_dirty_eq(db, tx->tx_txg));
-	if (db->db_buf != NULL) {
-		arc_buf_destroy(db->db_buf, db);
-		db->db_buf = NULL;
-		dbuf_clear_data(db);
-	}
+	ASSERT3P(db->db_buf, ==, NULL);
+	ASSERT3P(db->db.db_data, ==, NULL);
 
 	db->db_state = DB_NOFILL;
-	DTRACE_SET_STATE(db, "allocating NOFILL buffer for clone");
+	DTRACE_SET_STATE(db,
+	    "allocating NOFILL buffer for clone or direct I/O write");
 
 	DBUF_VERIFY(db);
 	mutex_exit(&db->db_mtx);
@@ -5519,7 +5429,7 @@ EXPORT_SYMBOL(dbuf_dirty);
 EXPORT_SYMBOL(dmu_buf_set_crypt_params);
 EXPORT_SYMBOL(dmu_buf_will_dirty);
 EXPORT_SYMBOL(dmu_buf_is_dirty);
-EXPORT_SYMBOL(dmu_buf_will_clone);
+EXPORT_SYMBOL(dmu_buf_will_clone_or_dio);
 EXPORT_SYMBOL(dmu_buf_will_not_fill);
 EXPORT_SYMBOL(dmu_buf_will_fill);
 EXPORT_SYMBOL(dmu_buf_fill_done);
