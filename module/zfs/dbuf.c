@@ -2848,9 +2848,12 @@ dmu_buf_will_clone_or_dio(dmu_buf_t *db_fake, dmu_tx_t *tx)
 	dmu_buf_impl_t *db = (dmu_buf_impl_t *)db_fake;
 
 	/*
-	 * Direct I/O writes always happen in open-context.
+	 * Block clones and Direct I/O writes always happen in open-context.
 	 */
 	ASSERT(!dmu_tx_is_syncing(tx));
+	ASSERT(db->db_level == 0);
+	ASSERT(db->db_blkid != DMU_BONUS_BLKID);
+	ASSERT(db->db.db_object != DMU_META_DNODE_OBJECT);
 
 	mutex_enter(&db->db_mtx);
 	DBUF_VERIFY(db);
@@ -2883,25 +2886,20 @@ dmu_buf_will_clone_or_dio(dmu_buf_t *db_fake, dmu_tx_t *tx)
 	if (db->db_buf != NULL) {
 		/*
 		 * If there is an associated ARC buffer with this dbuf we can
-		 * not just destroy it without checking if the previous txg
-		 * dirtry record references it. We will call
-		 * dbuf_fix_old_data() to make a just in time copy of the ARC
-		 * buf into the dirty records dr_data if that is necessary.
+		 * only destroy it if  the previous dirty record does not
+		 * reference it.
 		 */
-		if (db->db.db_object != DMU_META_DNODE_OBJECT)
-			arc_release(db->db_buf, db);
-		dbuf_fix_old_data(db, tx->tx_txg);
+		dbuf_dirty_record_t *dr = list_head(&db->db_dirty_records);
+		if (dr == NULL || dr->dt.dl.dr_data != db->db_buf)
+			arc_buf_destroy(db->db_buf, db);
 
 		/*
-		 * Removing the ARC buf now will force all future reads down to
-		 * the devices to get the most up to date version of the data
-		 * after a Direct I/O write has completed.
+		 * Setting the dbuf's data pointers to NULL will force all
+		 * future reads down to the devices to get the most up to date
+		 * version of the data after a Direct I/O write has completed.
 		 */
-		if (db->db_buf != NULL) {
-			arc_buf_destroy(db->db_buf, db);
-			db->db_buf = NULL;
-			dbuf_clear_data(db);
-		}
+		db->db_buf = NULL;
+		dbuf_clear_data(db);
 	}
 
 	ASSERT3P(db->db_buf, ==, NULL);
