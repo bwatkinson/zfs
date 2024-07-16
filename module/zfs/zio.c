@@ -1317,7 +1317,7 @@ zio_rewrite(zio_t *pio, spa_t *spa, uint64_t txg, blkptr_t *bp, abd_t *data,
 
 void
 zio_write_override(zio_t *zio, blkptr_t *bp, int copies, boolean_t nopwrite,
-    boolean_t brtwrite)
+    boolean_t brtwrite, boolean_t diowrite)
 {
 	ASSERT(zio->io_type == ZIO_TYPE_WRITE);
 	ASSERT(zio->io_child_type == ZIO_CHILD_LOGICAL);
@@ -1333,6 +1333,7 @@ zio_write_override(zio_t *zio, blkptr_t *bp, int copies, boolean_t nopwrite,
 	zio->io_prop.zp_dedup = nopwrite ? B_FALSE : zio->io_prop.zp_dedup;
 	zio->io_prop.zp_nopwrite = nopwrite;
 	zio->io_prop.zp_brtwrite = brtwrite;
+	zio->io_prop.zp_direct_write = diowrite;
 	zio->io_prop.zp_copies = copies;
 	zio->io_bp_override = bp;
 }
@@ -1751,7 +1752,7 @@ zio_write_bp_init(zio_t *zio)
 		*bp = *zio->io_bp_override;
 		zio->io_pipeline = ZIO_INTERLOCK_PIPELINE;
 
-		if (zp->zp_brtwrite)
+		if (zp->zp_brtwrite || zp->zp_direct_write)
 			return (zio);
 
 		ASSERT(!BP_GET_DEDUP(zio->io_bp_override));
