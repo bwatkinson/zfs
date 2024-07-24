@@ -1938,14 +1938,13 @@ dbuf_unoverride(dbuf_dirty_record_t *dr)
 	if (!BP_IS_HOLE(bp) && !dr->dt.dl.dr_nopwrite)
 		zio_free(db->db_objset->os_spa, txg, bp);
 
-	if (dr->dt.dl.dr_brtwrite || dr->dt.dl.dr_diowrite) {
+	if (dr_is_brtwrite(dr) || dr_is_diowrite(dr)) {
 		ASSERT0P(dr->dt.dl.dr_data);
 		dr->dt.dl.dr_data = db->db_buf;
+		dr->dt.dl.dl_flags = 0;
 	}
 	dr->dt.dl.dr_override_state = DR_NOT_OVERRIDDEN;
 	dr->dt.dl.dr_nopwrite = B_FALSE;
-	dr->dt.dl.dr_brtwrite = B_FALSE;
-	dr->dt.dl.dr_diowrite = B_FALSE;
 	dr->dt.dl.dr_has_raw_params = B_FALSE;
 
 	/*
@@ -2565,10 +2564,9 @@ dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 		return (B_FALSE);
 	ASSERT(dr->dr_dbuf == db);
 
-	brtwrite = dr->dt.dl.dr_brtwrite;
-	diowrite = dr->dt.dl.dr_diowrite;
+	brtwrite = dr_is_brtwrite(dr);
+	diowrite = dr_is_diowrite(dr);
 	if (brtwrite) {
-		ASSERT3B(diowrite, ==, B_FALSE);
 		/*
 		 * We are freeing a block that we cloned in the same
 		 * transaction group.
@@ -2654,7 +2652,7 @@ dmu_buf_will_dirty_impl(dmu_buf_t *db_fake, int flags, dmu_tx_t *tx)
 		dbuf_dirty_record_t *dr = dbuf_find_dirty_eq(db, tx->tx_txg);
 		if (dr != NULL) {
 			if (db->db_level == 0 &&
-			    dr->dt.dl.dr_brtwrite) {
+			    dr_is_brtwrite(dr)) {
 				/*
 				 * Block cloning: If we are dirtying a cloned
 				 * level 0 block, we cannot simply redirty it,
@@ -2733,13 +2731,13 @@ dmu_buf_get_bp_from_dbuf(dmu_buf_impl_t *db, blkptr_t **bp)
 	dbuf_dirty_record_t *dr = list_head(&db->db_dirty_records);
 	if (dr && db->db_state == DB_NOFILL) {
 		/* Block clone */
-		if (!dr->dt.dl.dr_brtwrite)
+		if (!dr_is_brtwrite(dr))
 			error = EIO;
 		else
 			*bp = &dr->dt.dl.dr_overridden_by;
 	} else if (dr && db->db_state == DB_UNCACHED) {
 		/* Direct I/O write */
-		if (dr->dt.dl.dr_diowrite)
+		if (dr_is_diowrite(dr))
 			*bp = &dr->dt.dl.dr_overridden_by;
 	}
 
@@ -2895,7 +2893,7 @@ dmu_buf_will_fill(dmu_buf_t *db_fake, dmu_tx_t *tx, boolean_t canfail)
 	mutex_enter(&db->db_mtx);
 	dbuf_dirty_record_t *dr = dbuf_find_dirty_eq(db, tx->tx_txg);
 	if (db->db_state == DB_NOFILL ||
-	    (db->db_state == DB_UNCACHED && dr && dr->dt.dl.dr_diowrite)) {
+	    (db->db_state == DB_UNCACHED && dr && dr_is_diowrite(dr))) {
 		/*
 		 * If the fill can fail we should have a way to return back to
 		 * the cloned or Direct I/O write data.
@@ -2911,7 +2909,7 @@ dmu_buf_will_fill(dmu_buf_t *db_fake, dmu_tx_t *tx, boolean_t canfail)
 		 * pending clone and mark the block as uncached. This will be
 		 * as if the clone was never done.
 		 */
-		if (dr && dr->dt.dl.dr_brtwrite) {
+		if (dr && dr_is_brtwrite(dr)) {
 			VERIFY(!dbuf_undirty(db, tx));
 			db->db_state = DB_UNCACHED;
 		}
@@ -5049,8 +5047,8 @@ dbuf_write_done(zio_t *zio, arc_buf_t *buf, void *vdb)
 		/* no dr_data if this is a NO_FILL or Direct I/O */
 		if (dr->dt.dl.dr_data != NULL &&
 		    dr->dt.dl.dr_data != db->db_buf) {
-			ASSERT3B(dr->dt.dl.dr_brtwrite, ==, B_FALSE);
-			ASSERT3B(dr->dt.dl.dr_diowrite, ==, B_FALSE);
+			ASSERT3B(dr_is_brtwrite(dr), ==, B_FALSE);
+			ASSERT3B(dr_is_diowrite(dr), ==, B_FALSE);
 			arc_buf_destroy(dr->dt.dl.dr_data, db);
 		}
 	} else {
@@ -5332,7 +5330,7 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 		dr->dt.dl.dr_override_state = DR_NOT_OVERRIDDEN;
 		zio_write_override(dr->dr_zio, &dr->dt.dl.dr_overridden_by,
 		    dr->dt.dl.dr_copies, dr->dt.dl.dr_nopwrite,
-		    dr->dt.dl.dr_brtwrite);
+		    dr_is_brtwrite(dr));
 		mutex_exit(&db->db_mtx);
 	} else if (data == NULL) {
 		ASSERT(zp.zp_checksum == ZIO_CHECKSUM_OFF ||

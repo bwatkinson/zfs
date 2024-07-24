@@ -1158,7 +1158,7 @@ zfs_get_data(void *arg, uint64_t gen, lr_write_t *lr, char *buf,
 			mutex_enter(&db->db_mtx);
 			dbuf_dirty_record_t *dr =
 			    dbuf_find_dirty_eq(db, lr->lr_common.lrc_txg);
-			if (dr != NULL && dr->dt.dl.dr_diowrite)
+			if (dr != NULL && dr_is_diowrite(dr))
 				direct_write = B_TRUE;
 			mutex_exit(&db->db_mtx);
 

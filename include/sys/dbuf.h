@@ -119,6 +119,9 @@ typedef enum db_lock_type {
 	DLT_OBJSET
 } db_lock_type_t;
 
+#define	BRTWRITE 0x1
+#define	DIOWRITE 0x2
+
 typedef struct dbuf_dirty_record {
 	/* link on our parents dirty list */
 	list_node_t dr_dirty_node;
@@ -175,8 +178,7 @@ typedef struct dbuf_dirty_record {
 			override_states_t dr_override_state;
 			uint8_t dr_copies;
 			boolean_t dr_nopwrite;
-			boolean_t dr_brtwrite;
-			boolean_t dr_diowrite;
+			uint8_t dl_flags;
 			boolean_t dr_has_raw_params;
 
 			/*
@@ -452,6 +454,38 @@ dbuf_find_dirty_eq(dmu_buf_impl_t *db, uint64_t txg)
 	if (dr && dr->dr_txg == txg)
 		return (dr);
 	return (NULL);
+}
+
+static inline void
+dr_set_brtwrite(dbuf_dirty_record_t *dr)
+{
+	ASSERT0(dr->dt.dl.dl_flags & DIOWRITE);
+	dr->dt.dl.dl_flags |= BRTWRITE;
+}
+
+static inline void
+dr_set_diowrite(dbuf_dirty_record_t *dr)
+{
+	ASSERT0(dr->dt.dl.dl_flags & BRTWRITE);
+	dr->dt.dl.dl_flags |= DIOWRITE;
+}
+
+static inline boolean_t
+dr_is_brtwrite(dbuf_dirty_record_t *dr)
+{
+	boolean_t brtwrite = dr->dt.dl.dl_flags & BRTWRITE;
+	IMPLY(brtwrite == B_TRUE,
+	    (dr->dt.dl.dl_flags & DIOWRITE) == 0);
+	return (brtwrite);
+}
+
+static inline boolean_t
+dr_is_diowrite(dbuf_dirty_record_t *dr)
+{
+	boolean_t diowrite = dr->dt.dl.dl_flags & DIOWRITE;
+	IMPLY(diowrite == B_TRUE,
+	    (dr->dt.dl.dl_flags & BRTWRITE) == 0);
+	return (diowrite);
 }
 
 #define	DBUF_GET_BUFC_TYPE(_db)	\

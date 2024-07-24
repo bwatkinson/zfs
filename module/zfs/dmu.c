@@ -2333,7 +2333,7 @@ dmu_read_l0_bps(objset_t *os, uint64_t object, uint64_t offset, uint64_t length,
 			dbuf_dirty_record_t *dr;
 
 			dr = list_head(&db->db_dirty_records);
-			if (dr->dt.dl.dr_brtwrite) {
+			if (dr_is_brtwrite(dr)) {
 				/*
 				 * This is very special case where we clone a
 				 * block and in the same transaction group we
@@ -2464,7 +2464,7 @@ dmu_brt_clone(objset_t *os, uint64_t object, uint64_t offset, uint64_t length,
 				    dr->dr_txg);
 			}
 		}
-		dl->dr_brtwrite = B_TRUE;
+		dr_set_brtwrite(dr);
 		dl->dr_override_state = DR_OVERRIDDEN;
 
 		mutex_exit(&db->db_mtx);

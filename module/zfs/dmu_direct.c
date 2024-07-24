@@ -159,7 +159,7 @@ dmu_write_direct(zio_t *pio, dmu_buf_impl_t *db, abd_t *data, dmu_tx_t *tx)
 
 	dr_head = list_head(&db->db_dirty_records);
 	ASSERT3U(dr_head->dr_txg, ==, txg);
-	dr_head->dt.dl.dr_diowrite = B_TRUE;
+	dr_set_diowrite(dr_head);
 	dr_head->dr_accounted = db->db.db_size;
 
 	blkptr_t *bp = kmem_alloc(sizeof (blkptr_t), KM_SLEEP);
