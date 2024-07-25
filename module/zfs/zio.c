@@ -793,7 +793,7 @@ zio_notify_parent(zio_t *pio, zio_t *zio, enum zio_wait_type wait,
 	ASSERT3U(*countp, >, 0);
 
 	if (zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR) {
-		ASSERT3U(*errorp, ==, EAGAIN);
+		ASSERT3U(*errorp, ==, EIO);
 		ASSERT3U(pio->io_child_type, ==, ZIO_CHILD_LOGICAL);
 		pio->io_flags |= ZIO_FLAG_DIO_CHKSUM_ERR;
 	}
@@ -4216,13 +4216,12 @@ zio_vdev_io_assess(zio_t *zio)
 
 	/*
 	 * If a Direct I/O write checksum verify error has occurred then this
-	 * I/O should not attempt to be issued again. Instead the EAGAIN will
-	 * be returned and this write will attempt to be issued through the
-	 * ARC instead.
+	 * I/O should not attempt to be issued again. Instead the EIO will
+	 * be returned.
 	 */
 	if (zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR) {
 		ASSERT3U(zio->io_child_type, ==, ZIO_CHILD_LOGICAL);
-		ASSERT3U(zio->io_error, ==, EAGAIN);
+		ASSERT3U(zio->io_error, ==, EIO);
 		zio->io_pipeline = ZIO_INTERLOCK_PIPELINE;
 		return (zio);
 	}
@@ -4545,6 +4544,7 @@ static zio_t *
 zio_dio_checksum_verify(zio_t *zio)
 {
 	zio_t *pio = zio_unique_parent(zio);
+	int error;
 
 	ASSERT3P(zio->io_vd, !=, NULL);
 	ASSERT3P(zio->io_bp, !=, NULL);
@@ -4553,38 +4553,28 @@ zio_dio_checksum_verify(zio_t *zio)
 	ASSERT3B(pio->io_prop.zp_direct_write, ==, B_TRUE);
 	ASSERT3U(pio->io_child_type, ==, ZIO_CHILD_LOGICAL);
 
-	if (zfs_vdev_direct_write_verify_pct == 0 || zio->io_error != 0)
+	if (zfs_vdev_direct_write_verify == 0 || zio->io_error != 0)
 		goto out;
 
-	/*
-	 * A Direct I/O write checksum verification will only be
-	 * performed based on the top-level VDEV percentage for checks.
-	 */
-	uint32_t rand = random_in_range(100);
-	int error;
+	if ((error = zio_checksum_error(zio, NULL)) != 0) {
+		zio->io_error = error;
+		if (error == ECKSUM) {
+			mutex_enter(&zio->io_vd->vdev_stat_lock);
+			zio->io_vd->vdev_stat.vs_dio_verify_errors++;
+			mutex_exit(&zio->io_vd->vdev_stat_lock);
+			zio->io_error = SET_ERROR(EIO);
+			zio->io_flags |= ZIO_FLAG_DIO_CHKSUM_ERR;
 
-	if (rand < zfs_vdev_direct_write_verify_pct) {
-		if ((error = zio_checksum_error(zio, NULL)) != 0) {
-			zio->io_error = error;
-			if (error == ECKSUM) {
-				mutex_enter(&zio->io_vd->vdev_stat_lock);
-				zio->io_vd->vdev_stat.vs_dio_verify_errors++;
-				mutex_exit(&zio->io_vd->vdev_stat_lock);
-				zio->io_error = SET_ERROR(EAGAIN);
-				zio->io_flags |= ZIO_FLAG_DIO_CHKSUM_ERR;
+			/*
+			 * The EIO error must be propagated up to the logical
+			 * parent ZIO in zio_notify_parent() so it can be
+			 * returned to dmu_write_abd().
+			 */
+			zio->io_flags &= ~ZIO_FLAG_DONT_PROPAGATE;
 
-				/*
-				 * The EAGAIN error must be propagated up to the
-				 * logical parent ZIO in zio_notify_parent() so
-				 * it can be returned to dmu_write_abd().
-				 */
-				zio->io_flags &= ~ZIO_FLAG_DONT_PROPAGATE;
-
-				(void) zfs_ereport_post(
-				    FM_EREPORT_ZFS_DIO_VERIFY,
-				    zio->io_spa, zio->io_vd, &zio->io_bookmark,
-				    zio, 0);
-			}
+			(void) zfs_ereport_post(FM_EREPORT_ZFS_DIO_VERIFY,
+			    zio->io_spa, zio->io_vd, &zio->io_bookmark,
+			    zio, 0);
 		}
 	}
 
@@ -4938,8 +4928,8 @@ zio_done(zio_t *zio)
 		}
 
 		if ((zio->io_error == EIO || !(zio->io_flags &
-		    (ZIO_FLAG_SPECULATIVE | ZIO_FLAG_DONT_PROPAGATE |
-		    ZIO_FLAG_DIO_CHKSUM_ERR))) &&
+		    (ZIO_FLAG_SPECULATIVE | ZIO_FLAG_DONT_PROPAGATE))) &&
+		    !(zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR) &&
 		    zio == zio->io_logical) {
 			/*
 			 * For logical I/O requests, tell the SPA to log the

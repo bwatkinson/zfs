@@ -104,7 +104,7 @@ dmu_write_direct_done(zio_t *zio)
 
 	if (zio->io_error != 0) {
 		if (zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR)
-			ASSERT3U(zio->io_error, ==, EAGAIN);
+			ASSERT3U(zio->io_error, ==, EIO);
 
 		/*
 		 * In the event of an I/O error this block has been freed in
