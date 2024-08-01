@@ -654,8 +654,49 @@ zfs_uio_get_dio_pages_iov_iter(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	ssize_t rollback = 0;
 	ssize_t cnt;
 	unsigned maxpages = DIV_ROUND_UP(wanted, PAGE_SIZE);
+	zfs_dbgmsg("BEGINNING of function uio = %p, "
+	    "skip = %lu, "
+	    "wanted = %lu, "
+	    "uio->uio_resid = %lu, "
+	    "rollback = %ld, "
+	    "maxpages = %u, "
+	    "cnt = %ld, "
+	    "uio->uio_dio.npages = %ld, "
+	    "uio->uio_dio.pages = %p, "
+	    "iov_iter_type(uio->uio_iter) = %d",
+	    uio,
+	    skip,
+	    wanted,
+	    uio->uio_resid,
+	    rollback,
+	    maxpages,
+	    cnt,
+	    uio->uio_dio.npages,
+	    uio->uio_dio.pages,
+	    iov_iter_type(uio->uio_iter));
 
+	ASSERT0(uio->uio_dio.npages);
 	while (wanted) {
+		zfs_dbgmsg("TOP of WHILE loop uio = %p, "
+		    "skip = %lu, "
+		    "wanted = %lu, "
+		    "uio->uio_resid = %lu, "
+		    "rollback = %ld, "
+		    "maxpages = %u, "
+		    "cnt = %ld, "
+		    "uio->uio_dio.npages = %ld, "
+		    "uio->uio_dio.pages = %p, "
+		    "iov_iter_type(uio->uio_iter) = %d",
+		    uio,
+		    skip,
+		    wanted,
+		    uio->uio_resid,
+		    rollback,
+		    maxpages,
+		    cnt,
+		    uio->uio_dio.npages,
+		    uio->uio_dio.pages,
+		    iov_iter_type(uio->uio_iter));
 #if defined(HAVE_IOV_ITER_GET_PAGES2)
 		cnt = iov_iter_get_pages2(uio->uio_iter,
 		    &uio->uio_dio.pages[uio->uio_dio.npages],
@@ -666,6 +707,26 @@ zfs_uio_get_dio_pages_iov_iter(zfs_uio_t *uio, zfs_uio_rw_t rw)
 		    wanted, maxpages, &skip);
 #endif
 		if (cnt < 0) {
+			zfs_dbgmsg("ERROR uio = %p, "
+			    "skip = %lu, "
+			    "wanted = %lu, "
+			    "uio->uio_resid = %lu, "
+			    "rollback = %ld, "
+			    "maxpages = %u, "
+			    "cnt = %ld, "
+			    "uio->uio_dio.npages = %ld, "
+			    "uio->uio_dio.pages = %p, "
+			    "iov_iter_type(uio->uio_iter) = %d",
+			    uio,
+			    skip,
+			    wanted,
+			    uio->uio_resid,
+			    rollback,
+			    maxpages,
+			    cnt,
+			    uio->uio_dio.npages,
+			    uio->uio_dio.pages,
+			    iov_iter_type(uio->uio_iter));
 			iov_iter_revert(uio->uio_iter, rollback);
 			return (SET_ERROR(-cnt));
 		}
@@ -673,7 +734,36 @@ zfs_uio_get_dio_pages_iov_iter(zfs_uio_t *uio, zfs_uio_rw_t rw)
 		rollback += cnt;
 		wanted -= cnt;
 		skip = 0;
+		zfs_dbgmsg("AFTER calling iov_iter_get_pages2() uio = %p, "
+		    "skip = %lu, "
+		    "wanted = %lu, "
+		    "uio->uio_resid = %lu, "
+		    "rollback = %ld, "
+		    "maxpages = %u, "
+		    "cnt = %ld, "
+		    "uio->uio_dio.npages = %ld, "
+		    "uio->uio_dio.pages = %p, "
+		    "iov_iter_type(uio->uio_iter) = %d",
+		    uio,
+		    skip,
+		    wanted,
+		    uio->uio_resid,
+		    rollback,
+		    maxpages,
+		    cnt,
+		    uio->uio_dio.npages,
+		    uio->uio_dio.pages,
+		    iov_iter_type(uio->uio_iter));
+#if !defined(HAVE_IOV_ITER_GET_PAGES2)
+		/*
+		 * This zfs_dbgmsg() statement should never be called after
+		 * calling iov_iter_get_pages2(). That interface calls
+		 * iov_iter_advance on successs. So, there is no need to call
+		 * it here.
+		 */
+		zfs_dbgmsg("ABOUT to call iov_iter_advance()");
 		iov_iter_advance(uio->uio_iter, cnt);
+#endif
 
 	}
 	ASSERT3U(rollback, ==, uio->uio_resid - uio->uio_skip);
