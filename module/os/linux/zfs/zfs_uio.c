@@ -657,6 +657,30 @@ zfs_uio_get_dio_pages_iov_iter(zfs_uio_t *uio, zfs_uio_rw_t rw)
 
 	while (wanted) {
 #if defined(HAVE_IOV_ITER_GET_PAGES2)
+//		zfs_dbgmsg("uio = %p, "
+//		     "skip = %lu, "
+//		     "wanted = %lu, "
+//		     "uio->uio_resid = %lu, "
+//		     "rollback = %ld, "
+//		     "maxpages = %u, "
+//		     "uio->uio_dio.npages = %ld, "
+//		     "uio->uio_dio.pages = %p, "
+//		     "user_backed_iter(uio->uio_iter) = %d, "
+//		     "iov_iter_is_bvec(uio->uio_iter) = %d, "
+//		     "iov_iter_is_xarray(uio->uio_iter) = %d, "
+//		     "iov_iter_type(uio->uio_iter) = %d",
+//		     uio,
+//		     skip,
+//		     wanted,
+//		     uio->uio_resid,
+//		     rollback,
+//		     maxpages,
+//		     uio->uio_dio.npages,
+//		     uio->uio_dio.pages,
+//		     user_backed_iter(uio->uio_iter),
+//		     iov_iter_is_bvec(uio->uio_iter),
+//		     iov_iter_is_xarray(uio->uio_iter),
+//		     iov_iter_type(uio->uio_iter));
 		cnt = iov_iter_get_pages2(uio->uio_iter,
 		    &uio->uio_dio.pages[uio->uio_dio.npages],
 		    wanted, maxpages, &skip);
@@ -666,6 +690,22 @@ zfs_uio_get_dio_pages_iov_iter(zfs_uio_t *uio, zfs_uio_rw_t rw)
 		    wanted, maxpages, &skip);
 #endif
 		if (cnt < 0) {
+			zfs_dbgmsg("uio = %p, "
+			    "cnt = %ld, "
+			    "wanted = %lu, "
+			    "rollback = %ld, "
+			    "uio->uio_resid = %lu, "
+			    "uio->uio_dio.npages = %ld, "
+			    "uio->uio_dio.pages = %p, "
+			    "iov_iter_type(uio->uio_iter) = %d",
+			    uio,
+			    cnt,
+			    wanted,
+			    rollback,
+			    uio->uio_resid,
+			    uio->uio_dio.npages,
+			    uio->uio_dio.pages,
+			    iov_iter_type(uio->uio_iter));
 			iov_iter_revert(uio->uio_iter, rollback);
 			return (SET_ERROR(-cnt));
 		}
