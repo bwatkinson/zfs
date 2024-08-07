@@ -67,10 +67,10 @@ if is_linux; then
 	if $(grep -q "CONFIG_IO_URING=y" /boot/config-$(uname -r)); then
 		if [ -e /etc/os-release ] ; then
 			source /etc/os-release
-			if [ -n "$REDHAT_SUPPORT_PRODUCT_VERSION" ] &&
-			    ((floor($REDHAT_SUPPORT_PRODUCT_VERSION) == 9)) ; then
-				log_note "io_uring disabled on CentOS 9, fails " \
-				"with 'Operation not permitted'"
+			if [ $PLATFORM_ID = "platform:el9" ] ; then
+				log_note "io_uring disabled on RHEL 9 " \
+				"variants: fails with " \
+				"'Operation not permitted'"
 			elif $(check_fio_ioengine -eq 0); then
 				fio_async_ioengines+=" io_uring"
 			else
