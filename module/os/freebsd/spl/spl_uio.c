@@ -139,48 +139,6 @@ zfs_uio_page_aligned(zfs_uio_t *uio)
 	return (B_TRUE);
 }
 
-#if __FreeBSD_version < 1300050
-static void
-zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
-{
-	vm_object_t obj;
-
-	ASSERT3P(uio->uio_dio.pages, !=, NULL);
-	ASSERT3U(uio->uio_dio.npages, >, 0);
-
-	obj = uio->uio_dio.pages[0]->object;
-	zfs_vmobject_wlock(obj);
-	for (int i = 0; i < uio->uio_dio.npages; i++) {
-		vm_page_t page = uio->uio_dio.pages[i];
-
-		ASSERT3P(page, !=, NULL);
-		vm_page_sbusy(page);
-		MPASS(page == PHYS_TO_VM_PAGE(VM_PAGE_TO_PHYS(page)));
-		if (page->object != obj) {
-			zfs_vmobject_wunlock(obj);
-			obj = page->object;
-			zfs_vmobject_wlock(obj);
-		}
-		pmap_remove_write(page);
-	}
-	zfs_vmobject_wunlock(obj);
-}
-
-static void
-zfs_uio_release_stable_pages(zfs_uio_t *uio)
-{
-	ASSERT3P(uio->uio_dio.pages, !=, NULL);
-	for (int i = 0; i < uio->uio_dio.npages; i++) {
-		vm_page_t page = uio->uio_dio.pages[i];
-
-		ASSERT3P(page, !=, NULL);
-		ASSERT(vm_page_sbusied(page));
-		vm_page_sunbusy(page);
-	}
-}
-
-#else
-
 static void
 zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 {
@@ -209,8 +167,6 @@ zfs_uio_release_stable_pages(zfs_uio_t *uio)
 	}
 }
 
-#endif
-
 /*
  * If the operation is marked as read, then we are stating the pages will be
  * written to and must be given write access.
@@ -233,22 +189,6 @@ zfs_uio_hold_pages(unsigned long start, size_t len, unsigned long nr_pages,
 	return (count);
 }
 
-static void
-zfs_uio_unhold_pages(vm_page_t *m, int count)
-{
-#if __FreeBSD_version < 1300050
-	for (int i = 0; i < count; i++) {
-		vm_page_t page = m[i];
-		ASSERT3P(page, !=, NULL);
-		vm_page_lock(page);
-		vm_page_unwire_noq(page);
-		vm_page_unlock(page);
-	}
-#else
-	vm_page_unhold_pages(m, count);
-#endif
-}
-
 void
 zfs_uio_free_dio_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
 {
@@ -259,7 +199,7 @@ zfs_uio_free_dio_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	if (rw == UIO_WRITE)
 		zfs_uio_release_stable_pages(uio);
 
-	zfs_uio_unhold_pages(&uio->uio_dio.pages[0],
+	vm_page_unhold_pages(&uio->uio_dio.pages[0],
 	    uio->uio_dio.npages);
 
 	kmem_free(uio->uio_dio.pages,
@@ -281,16 +221,6 @@ zfs_uio_get_user_pages(unsigned long start, unsigned long nr_pages,
 	}
 
 	ASSERT3U(count, ==, nr_pages);
-
-#if __FreeBSD_version < 1300050
-	for (int i = 0; i < count; i++) {
-		vm_page_t page = pages[i];
-		vm_page_lock(page);
-		vm_page_wire(page);
-		vm_page_unhold(page);
-		vm_page_unlock(page);
-	}
-#endif
 
 	return (count);
 }
