@@ -44,7 +44,6 @@ function cleanup
 {
 	zfs set direct=standard $TESTPOOL/$TESTFS
 	log_must rm -f $tmp_file
-	check_dio_write_chksum_verify_failures $TESTPOOL "raidz" 0
 }
 
 log_assert "Verify the direct=always|disabled|standard property"
@@ -61,7 +60,8 @@ count=8
 
 #
 # Check when "direct=always" any aligned IO is done as direct.
-# Note that "flag=direct" is not set in the following calls to dd(1).
+# Note that the "-D" and "-d" flags are not set in the following calls to
+# stride_dd.
 #
 log_must zfs set direct=always $TESTPOOL/$TESTFS
 
@@ -92,7 +92,8 @@ log_must rm -f $tmp_file
 
 #
 # Check when "direct=disabled" there are never any direct requests.
-# Note that "flag=direct" is always set in the following calls to dd(1).
+# Note that the "-D" and "-d" flags are always set in the following calls to
+# stride_dd.
 #
 log_must zfs set direct=disabled $TESTPOOL/$TESTFS
 

@@ -4274,29 +4274,6 @@ ioflags(int ioflags)
 	return (flags);
 }
 
-static int
-zfs_freebsd_read_direct(znode_t *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
-    int ioflag, cred_t *cr)
-{
-	int ret;
-	int flags = ioflag;
-
-	ASSERT3U(rw, ==, UIO_READ);
-
-	/* On error, return to fallback to the buffred path */
-	ret = zfs_setup_direct(zp, uio, rw, &flags);
-	if (ret)
-		return (ret);
-
-	ASSERT(uio->uio_extflg & UIO_DIRECT);
-
-	ret = zfs_read(zp, uio, flags, cr);
-
-	zfs_uio_free_dio_pages(uio, rw);
-
-	return (ret);
-}
-
 #ifndef _SYS_SYSPROTO_H_
 struct vop_read_args {
 	struct vnode *a_vp;
@@ -4311,83 +4288,35 @@ zfs_freebsd_read(struct vop_read_args *ap)
 {
 	zfs_uio_t uio;
 	int error = 0;
-	znode_t *zp = VTOZ(ap->a_vp);
-	int ioflag = ioflags(ap->a_ioflag);
-	boolean_t is_direct;
-
 	zfs_uio_init(&uio, ap->a_uio);
-
-	error = zfs_check_direct_enabled(zp, ioflag, &is_direct);
-
-	if (error) {
-		return (error);
-	} else if (is_direct) {
-		error =
-		    zfs_freebsd_read_direct(zp, &uio, UIO_READ, ioflag,
-		    ap->a_cred);
-		/*
-		 * XXX We occasionally get an EFAULT for Direct I/O reads on
-		 * FreeBSD 13. This still needs to be resolved. The EFAULT comes
-		 * from:
-		 * zfs_uio_get__dio_pages_alloc() ->
-		 * zfs_uio_get_dio_pages_impl() ->
-		 * zfs_uio_iov_step() ->
-		 * zfs_uio_get_user_pages().
-		 * We return EFAULT from zfs_uio_iov_step(). When a Direct I/O
-		 * read fails to map in the user pages (returning EFAULT) the
-		 * Direct I/O request is broken up into two separate IO requests
-		 * and issued separately using Direct I/O.
-		 */
+	error = zfs_read(VTOZ(ap->a_vp), &uio, ioflags(ap->a_ioflag),
+	    ap->a_cred);
+	/*
+	 * XXX We occasionally get an EFAULT for Direct I/O reads on
+	 * FreeBSD 13. This still needs to be resolved. The EFAULT comes
+	 * from:
+	 * zfs_uio_get__dio_pages_alloc() ->
+	 * zfs_uio_get_dio_pages_impl() ->
+	 * zfs_uio_iov_step() ->
+	 * zfs_uio_get_user_pages().
+	 * We return EFAULT from zfs_uio_iov_step(). When a Direct I/O
+	 * read fails to map in the user pages (returning EFAULT) the
+	 * Direct I/O request is broken up into two separate IO requests
+	 * and issued separately using Direct I/O.
+	 */
 #ifdef ZFS_DEBUG
-		if (error == EFAULT) {
+	if (error == EFAULT && uio.uio_extflg & UIO_DIRECT) {
 #if 0
-			printf("%s(%d): Direct I/O read returning EFAULT "
-			    "uio = %p, zfs_uio_offset(uio) = %lu "
-			    "zfs_uio_resid(uio) = %lu\n",
-			    __FUNCTION__, __LINE__, &uio, zfs_uio_offset(&uio),
-			    zfs_uio_resid(&uio));
+		printf("%s(%d): Direct I/O read returning EFAULT "
+		    "uio = %p, zfs_uio_offset(uio) = %lu "
+		    "zfs_uio_resid(uio) = %lu\n",
+		    __FUNCTION__, __LINE__, &uio, zfs_uio_offset(&uio),
+		    zfs_uio_resid(&uio));
 #endif
-		}
-
-#endif
-
-		/*
-		 * On error we will return unless the error is EAGAIN, which
-		 * just tells us to fallback to the buffered path.
-		 */
-		if (error != EAGAIN)
-			return (error);
-		else
-			ioflag &= ~O_DIRECT;
 	}
 
-
-	error = zfs_read(zp, &uio, ioflag, ap->a_cred);
-
+#endif
 	return (error);
-}
-
-static int
-zfs_freebsd_write_direct(znode_t *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
-    int ioflag, cred_t *cr)
-{
-	int ret;
-	int flags = ioflag;
-
-	ASSERT3U(rw, ==, UIO_WRITE);
-
-	/* On error, return to fallback to the buffred path */
-	ret = zfs_setup_direct(zp, uio, rw, &flags);
-	if (ret)
-		return (ret);
-
-	ASSERT(uio->uio_extflg & UIO_DIRECT);
-
-	ret = zfs_write(zp, uio, flags, cr);
-
-	zfs_uio_free_dio_pages(uio, rw);
-
-	return (ret);
 }
 
 #ifndef _SYS_SYSPROTO_H_
@@ -4403,36 +4332,9 @@ static int
 zfs_freebsd_write(struct vop_write_args *ap)
 {
 	zfs_uio_t uio;
-	int error = 0;
-	znode_t *zp = VTOZ(ap->a_vp);
-	int ioflag = ioflags(ap->a_ioflag);
-	boolean_t is_direct;
-
 	zfs_uio_init(&uio, ap->a_uio);
-
-	error = zfs_check_direct_enabled(zp, ioflag, &is_direct);
-
-	if (error) {
-		return (error);
-	} else if (is_direct) {
-		error =
-		    zfs_freebsd_write_direct(zp, &uio, UIO_WRITE, ioflag,
-		    ap->a_cred);
-
-		/*
-		 * On error we will return unless the error is EAGAIN, which
-		 * just tells us to fallback to the buffered path.
-		 */
-		if (error != EAGAIN)
-			return (error);
-		else
-			ioflag &= ~O_DIRECT;
-
-	}
-
-	error = zfs_write(zp, &uio, ioflag, ap->a_cred);
-
-	return (error);
+	return (zfs_write(VTOZ(ap->a_vp), &uio, ioflags(ap->a_ioflag),
+	    ap->a_cred));
 }
 
 /*

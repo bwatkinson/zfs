@@ -159,14 +159,14 @@ uint_t zfs_vdev_max_auto_ashift = 14;
 uint_t zfs_vdev_min_auto_ashift = ASHIFT_MIN;
 
 /*
- * VDEV checksum verification percentage for Direct I/O writes. This is
- * neccessary for Linux, because user pages can not be placed under write
- * protection during Direct I/O writes.
+ * VDEV checksum verification for Direct I/O writes. This is neccessary for
+ * Linux, because anonymous pages can not be placed under write protection
+ * during Direct I/O writes.
  */
 #if !defined(__FreeBSD__)
-uint_t zfs_vdev_direct_write_verify_pct = 2;
+uint_t zfs_vdev_direct_write_verify = 1;
 #else
-uint_t zfs_vdev_direct_write_verify_pct = 0;
+uint_t zfs_vdev_direct_write_verify = 0;
 #endif
 
 void
@@ -6527,9 +6527,9 @@ ZFS_MODULE_PARAM(zfs, zfs_, dio_write_verify_events_per_second, UINT, ZMOD_RW,
 	"Rate Direct I/O write verify events to this many per second");
 
 /* BEGIN CSTYLED */
-ZFS_MODULE_PARAM(zfs_vdev, zfs_vdev_, direct_write_verify_pct, UINT, ZMOD_RW,
-	"Percentage of Direct I/O writes per top-level VDEV for checksum "
-	"verification to be performed");
+ZFS_MODULE_PARAM(zfs_vdev, zfs_vdev_, direct_write_verify, UINT, ZMOD_RW,
+	"Direct I/O writes will perform for checksum verification before "
+	"commiting write");
 
 ZFS_MODULE_PARAM(zfs, zfs_, checksum_events_per_second, UINT, ZMOD_RW,
 	"Rate limit checksum events to this many checksum errors per second "
