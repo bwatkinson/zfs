@@ -212,7 +212,6 @@ read_entire_file(int ifd, int ofd, void *buf)
 			}
 
 		}
-
 		if (stride > 1) {
 			if (lseek(ifd, (stride - 1) * bsize, SEEK_CUR) == -1) {
 				perror("input lseek");

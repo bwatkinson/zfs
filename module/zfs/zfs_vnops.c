@@ -234,14 +234,8 @@ zfs_check_direct_enabled(znode_t *zp, int ioflags, boolean_t *is_direct)
  * request is unaligned.  In all cases, if the range for this request has
  * been mmap'ed then we will perform buffered I/O to keep the mapped region
  * synhronized with the ARC.
- *
- * It is possible that a file's pages could be mmap'ed after it is checked
- * here. If so, that is handled according in zfs_read() and zfs_write(). See
- * comments in the following two areas for how this handled:
- * zfs_read() -> mappedread()
- * zfs_write() -> update_pages()
  */
-int
+static int
 zfs_setup_direct(struct znode *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
     int *ioflagp)
 {
@@ -250,25 +244,39 @@ zfs_setup_direct(struct znode *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
 	int ioflag = *ioflagp;
 	int error = 0;
 
-	if ((error = zfs_enter_verify_zp(zfsvfs, zp, FTAG)) != 0)
-		return (error);
-
-	if (os->os_direct == ZFS_DIRECT_DISABLED) {
+	if (os->os_direct == ZFS_DIRECT_DISABLED && (ioflag & O_DIRECT)) {
 		error = EAGAIN;
 		goto out;
-
 	} else if (os->os_direct == ZFS_DIRECT_ALWAYS &&
 	    zfs_uio_page_aligned(uio) &&
-	    zfs_uio_aligned(uio, SPA_MINBLOCKSIZE)) {
+	    zfs_uio_aligned(uio, PAGE_SIZE)) {
 		if ((rw == UIO_WRITE && zfs_uio_resid(uio) >= zp->z_blksz) ||
 		    (rw == UIO_READ)) {
 			ioflag |= O_DIRECT;
 		}
+	} else if (os->os_direct == ZFS_DIRECT_ALWAYS && (ioflag & O_DIRECT)) {
+		/*
+		 * Direct I/O was requested through the direct=always, but it
+		 * is not properly PAGE_SIZE aligned. The request will be
+		 * redirected through the ARC.
+		 */
+		ioflag &= ~O_DIRECT;
 	}
 
 	if (ioflag & O_DIRECT) {
+		zfs_dbgmsg("zfs_uio_offset(uio) = %llu, "
+		    "zfs_uio_resid(uio) = %llu, "
+		    "zfs_uio_offset(uio) + zfs_uio_resid(uio) - 1 = %llu, "
+		    "zn_has_cached_data(zp, zfs_uio_offset(uio), zfs_uio_offset(uio) + zfs_uio_resid(uio) - 1) = %d, "
+		    "uio = %p",
+		    (u_longlong_t)zfs_uio_offset(uio),
+		    (u_longlong_t)zfs_uio_resid(uio),
+		    (u_longlong_t)(zfs_uio_offset(uio) + zfs_uio_resid(uio) - 1),
+		    zn_has_cached_data(zp, zfs_uio_offset(uio), zfs_uio_offset(uio) + zfs_uio_resid(uio) - 1),
+		    uio);
+
 		if (!zfs_uio_page_aligned(uio) ||
-		    !zfs_uio_aligned(uio, SPA_MINBLOCKSIZE)) {
+		    !zfs_uio_aligned(uio, PAGE_SIZE)) {
 			error = SET_ERROR(EINVAL);
 			goto out;
 		}
@@ -280,11 +288,9 @@ zfs_setup_direct(struct znode *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
 		}
 
 		error = zfs_uio_get_dio_pages_alloc(uio, rw);
-		if (error)
+		if (error) {
 			goto out;
-	} else {
-		error = EAGAIN;
-		goto out;
+		}
 	}
 
 	IMPLY(ioflag & O_DIRECT, uio->uio_extflg & UIO_DIRECT);
@@ -292,7 +298,6 @@ zfs_setup_direct(struct znode *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
 
 	*ioflagp = ioflag;
 out:
-	zfs_exit(zfsvfs, FTAG);
 	return (error);
 }
 
@@ -380,8 +385,16 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		error = 0;
 		goto out;
 	}
-
 	ASSERT(zfs_uio_offset(uio) < zp->z_size);
+
+	/*
+	 * Setting up Direct I/O if requested.
+	 */
+	error = zfs_setup_direct(zp, uio, UIO_READ, &ioflag);
+	if (error) {
+		goto out;
+	}
+
 #if defined(__linux__)
 	ssize_t start_offset = zfs_uio_offset(uio);
 #endif
@@ -424,22 +437,18 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 #endif
 		if (zn_has_cached_data(zp, zfs_uio_offset(uio),
 		    zfs_uio_offset(uio) + nbytes - 1)) {
-			/*
-			 * It is possible that a files pages have been mmap'ed
-			 * since our check for Direct I/O reads and the read
-			 * being issued. In this case, we will use the ARC to
-			 * keep it synchronized with the page cache. In order
-			 * to do this we temporarily remove the UIO_DIRECT
-			 * flag.
-			 */
-			boolean_t uio_direct_mmap = B_FALSE;
-			if (uio->uio_extflg & UIO_DIRECT) {
-				uio->uio_extflg &= ~UIO_DIRECT;
-				uio_direct_mmap = B_TRUE;
+			if (ioflag & O_DIRECT) {
+				zfs_dbgmsg("zfs_uio_offset(uio) = %llu, "
+				    "nbytes = %llu, "
+				    "zfs_uio_offset(uio) + nbytes - 1 = %llu, "
+				    "uio = %p",
+				    (u_longlong_t)zfs_uio_offset(uio),
+				    (u_longlong_t)nbytes,
+				    (u_longlong_t)(zfs_uio_offset(uio) + nbytes - 1),
+				    uio);
+				ASSERT0(ioflag & O_DIRECT);
 			}
 			error = mappedread(zp, nbytes, uio);
-			if (uio_direct_mmap)
-				uio->uio_extflg |= UIO_DIRECT;
 		} else {
 			error = dmu_read_uio_dbuf(sa_get_db(zp->z_sa_hdl),
 			    uio, nbytes);
@@ -632,16 +641,6 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 	}
 
 	/*
-	 * Pre-fault the pages to ensure slow (eg NFS) pages
-	 * don't hold up txg.
-	 */
-	ssize_t pfbytes = MIN(n, DMU_MAX_ACCESS >> 1);
-	if (zfs_uio_prefaultpages(pfbytes, uio)) {
-		zfs_exit(zfsvfs, FTAG);
-		return (SET_ERROR(EFAULT));
-	}
-
-	/*
 	 * If in append mode, set the io offset pointer to eof.
 	 */
 	zfs_locked_range_t *lr;
@@ -675,6 +674,28 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		 */
 		lr = zfs_rangelock_enter(&zp->z_rangelock, woff, n, RL_WRITER);
 	}
+
+	/*
+	 * Setting up Direct I/O if requested.
+	 */
+	error = zfs_setup_direct(zp, uio, UIO_WRITE, &ioflag);
+	if (error) {
+		zfs_rangelock_exit(lr);
+		zfs_exit(zfsvfs, FTAG);
+		return (SET_ERROR(error));
+	}
+
+	/*
+	 * Pre-fault the pages to ensure slow (eg NFS) pages
+	 * don't hold up txg.
+	 */
+	ssize_t pfbytes = MIN(n, DMU_MAX_ACCESS >> 1);
+	if (zfs_uio_prefaultpages(pfbytes, uio)) {
+		zfs_rangelock_exit(lr);
+		zfs_exit(zfsvfs, FTAG);
+		return (SET_ERROR(EFAULT));
+	}
+
 
 	if (zn_rlimit_fsize_uio(zp, uio)) {
 		zfs_rangelock_exit(lr);
@@ -896,18 +917,19 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 			zfs_uioskip(uio, nbytes);
 			tx_bytes = nbytes;
 		}
-
-		/*
-		 * There is a a window where a file's pages can be mmap'ed after
-		 * the Direct I/O write has started. In this case we will still
-		 * call update_pages() to make sure there is consistency
-		 * between the ARC and the page cache. This is unfortunate
-		 * situation as the data will be read back into the ARC after
-		 * the Direct I/O write has completed, but this is the pentalty
-		 * for writing to a mmap'ed region of the file using O_DIRECT.
-		 */
 		if (tx_bytes &&
 		    zn_has_cached_data(zp, woff, woff + tx_bytes - 1)) {
+			if (ioflag & O_DIRECT) {
+				zfs_dbgmsg("woff = %llu, "
+				    "tx_bytes = %llu, "
+				    "woff + tx_bytes - 1 = %llu, "
+				    "uio = %p",
+				    (u_longlong_t)woff,
+				    (u_longlong_t)tx_bytes,
+				    (u_longlong_t)(woff + tx_bytes - 1),
+				    uio);
+				ASSERT0(ioflag & O_DIRECT);
+			}
 			update_pages(zp, woff, tx_bytes, zfsvfs->z_os);
 		}
 
