@@ -4283,16 +4283,11 @@ zfs_freebsd_read_direct(znode_t *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
 
 	ASSERT3U(rw, ==, UIO_READ);
 
-	/* On error, return to fallback to the buffred path */
-	ret = zfs_setup_direct(zp, uio, rw, &flags);
-	if (ret)
-		return (ret);
-
-	ASSERT(uio->uio_extflg & UIO_DIRECT);
-
+	/* On EAGAIN error, return to fallback to the buffred path */
 	ret = zfs_read(zp, uio, flags, cr);
 
-	zfs_uio_free_dio_pages(uio, rw);
+	if (uio->uio_extflg & UIO_DIRECT)
+		zfs_uio_free_dio_pages(uio, rw);
 
 	return (ret);
 }
@@ -4361,7 +4356,7 @@ zfs_freebsd_read(struct vop_read_args *ap)
 			ioflag &= ~O_DIRECT;
 	}
 
-
+	ioflag &= ~O_DIRECT;
 	error = zfs_read(zp, &uio, ioflag, ap->a_cred);
 
 	return (error);
@@ -4376,16 +4371,11 @@ zfs_freebsd_write_direct(znode_t *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
 
 	ASSERT3U(rw, ==, UIO_WRITE);
 
-	/* On error, return to fallback to the buffred path */
-	ret = zfs_setup_direct(zp, uio, rw, &flags);
-	if (ret)
-		return (ret);
-
-	ASSERT(uio->uio_extflg & UIO_DIRECT);
-
+	/* On EAGAIN error, return to fallback to the buffred path */
 	ret = zfs_write(zp, uio, flags, cr);
 
-	zfs_uio_free_dio_pages(uio, rw);
+	if (uio->uio_extflg & UIO_DIRECT)
+		zfs_uio_free_dio_pages(uio, rw);
 
 	return (ret);
 }
@@ -4430,6 +4420,7 @@ zfs_freebsd_write(struct vop_write_args *ap)
 
 	}
 
+	ioflag &= ~O_DIRECT;
 	error = zfs_write(zp, &uio, ioflag, ap->a_cred);
 
 	return (error);
