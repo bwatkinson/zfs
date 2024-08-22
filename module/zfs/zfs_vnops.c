@@ -264,17 +264,6 @@ zfs_setup_direct(struct znode *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
 	}
 
 	if (ioflag & O_DIRECT) {
-		zfs_dbgmsg("zfs_uio_offset(uio) = %llu, "
-		    "zfs_uio_resid(uio) = %llu, "
-		    "zfs_uio_offset(uio) + zfs_uio_resid(uio) - 1 = %llu, "
-		    "zn_has_cached_data(zp, zfs_uio_offset(uio), zfs_uio_offset(uio) + zfs_uio_resid(uio) - 1) = %d, "
-		    "uio = %p",
-		    (u_longlong_t)zfs_uio_offset(uio),
-		    (u_longlong_t)zfs_uio_resid(uio),
-		    (u_longlong_t)(zfs_uio_offset(uio) + zfs_uio_resid(uio) - 1),
-		    zn_has_cached_data(zp, zfs_uio_offset(uio), zfs_uio_offset(uio) + zfs_uio_resid(uio) - 1),
-		    uio);
-
 		if (!zfs_uio_page_aligned(uio) ||
 		    !zfs_uio_aligned(uio, PAGE_SIZE)) {
 			error = SET_ERROR(EINVAL);
@@ -437,17 +426,6 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 #endif
 		if (zn_has_cached_data(zp, zfs_uio_offset(uio),
 		    zfs_uio_offset(uio) + nbytes - 1)) {
-			if (ioflag & O_DIRECT) {
-				zfs_dbgmsg("zfs_uio_offset(uio) = %llu, "
-				    "nbytes = %llu, "
-				    "zfs_uio_offset(uio) + nbytes - 1 = %llu, "
-				    "uio = %p",
-				    (u_longlong_t)zfs_uio_offset(uio),
-				    (u_longlong_t)nbytes,
-				    (u_longlong_t)(zfs_uio_offset(uio) + nbytes - 1),
-				    uio);
-				ASSERT0(ioflag & O_DIRECT);
-			}
 			error = mappedread(zp, nbytes, uio);
 		} else {
 			error = dmu_read_uio_dbuf(sa_get_db(zp->z_sa_hdl),
@@ -919,17 +897,6 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		}
 		if (tx_bytes &&
 		    zn_has_cached_data(zp, woff, woff + tx_bytes - 1)) {
-			if (ioflag & O_DIRECT) {
-				zfs_dbgmsg("woff = %llu, "
-				    "tx_bytes = %llu, "
-				    "woff + tx_bytes - 1 = %llu, "
-				    "uio = %p",
-				    (u_longlong_t)woff,
-				    (u_longlong_t)tx_bytes,
-				    (u_longlong_t)(woff + tx_bytes - 1),
-				    uio);
-				ASSERT0(ioflag & O_DIRECT);
-			}
 			update_pages(zp, woff, tx_bytes, zfsvfs->z_os);
 		}
 
