@@ -41,6 +41,7 @@
 
 static char *outputfile = NULL;
 static int blocksize = 131072; /* 128K */
+static int wr_err_expected = 0;
 static int numblocks = 100;
 static char *execname = NULL;
 static int print_usage = 0;
@@ -56,28 +57,33 @@ static void
 usage(void)
 {
 	(void) fprintf(stderr,
-	    "usage %s -o outputfile [-b blocksize] [-n numblocks]\n"
-	    "         [-p randpattern] [-h help]\n"
+	    "usage %s -o outputfile [-b blocksize] [-e wr_error_expected]\n"
+	    "         [-n numblocks] [-p randpattern] [-h help]\n"
 	    "\n"
 	    "Testing whether checksum verify works correctly for O_DIRECT.\n"
 	    "when manipulating the contents of a userspace buffer.\n"
 	    "\n"
-	    "    outputfile:    File to write to.\n"
-	    "    blocksize:     Size of each block to write (must be at \n"
-	    "                   least >= 512).\n"
-	    "    numblocks:     Total number of blocksized blocks to write.\n"
-	    "    randpattern:   Fill data buffer with random data. Default \n"
-	    "                   behavior is to fill the buffer with the \n"
-	    "                   known data pattern (0xdeadbeef).\n"
-	    "    help:          Print usage information and exit.\n"
+	    "    outputfile:      File to write to.\n"
+	    "    blocksize:       Size of each block to write (must be at \n"
+	    "                     least >= 512).\n"
+	    "    wr_err_expected: Whether pwrite() is expected to return EIO\n"
+	    "                     while manipulating the contents of the\n"
+	    "                     buffer.\n"
+	    "    numblocks:       Total number of blocksized blocks to\n"
+	    "                     write.\n"
+	    "    randpattern:     Fill data buffer with random data. Default\n"
+	    "                     behavior is to fill the buffer with the \n"
+	    "                     known data pattern (0xdeadbeef).\n"
+	    "    help:           Print usage information and exit.\n"
 	    "\n"
 	    "    Required parameters:\n"
 	    "    outputfile\n"
 	    "\n"
 	    "    Default Values:\n"
-	    "    blocksize     -> 131072\n"
-	    "    numblocks     -> 100\n"
-	    "    randpattern   -> false\n",
+	    "    blocksize       -> 131072\n"
+	    "    wr_err_expexted -> false\n"
+	    "    numblocks       -> 100\n"
+	    "    randpattern     -> false\n",
 	    execname);
 	(void) exit(1);
 }
@@ -91,10 +97,14 @@ parse_options(int argc, char *argv[])
 	extern int optind, optopt;
 	execname = argv[0];
 
-	while ((c = getopt(argc, argv, "b:hn:o:p")) != -1) {
+	while ((c = getopt(argc, argv, "b:ehn:o:p")) != -1) {
 		switch (c) {
 			case 'b':
 				blocksize = atoi(optarg);
+				break;
+
+			case 'e':
+				wr_err_expected = 1;
 				break;
 
 			case 'h':
@@ -153,8 +163,10 @@ write_thread(void *arg)
 	while (!args->entire_file_written) {
 		wrote = pwrite(ofd, buf, blocksize, offset);
 		if (wrote != blocksize) {
-			perror("write");
-			exit(2);
+			if (wr_err_expected)
+				assert(errno == EIO);
+			else
+				exit(2);
 		}
 
 		offset = ((offset + blocksize) % total_data);

@@ -1191,7 +1191,7 @@ dmu_read_impl(dnode_t *dn, uint64_t offset, uint64_t size,
 
 	/* Allow Direct I/O when requested and properly aligned */
 	if ((flags & DMU_DIRECTIO) && zfs_dio_page_aligned(buf) &&
-	    zfs_dio_aligned(offset, size, SPA_MINBLOCKSIZE)) {
+	    zfs_dio_aligned(offset, size, PAGESIZE)) {
 		abd_t *data = abd_get_from_buf(buf, size);
 		err = dmu_read_abd(dn, offset, size, data, flags);
 		abd_free(data);
