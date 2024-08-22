@@ -49,7 +49,6 @@ function cleanup
 {
 	log_must rm -f "$filename"
 	log_must set recordsize=$rs $TESTPOOL/$TESTFS
-	check_dio_write_chksum_verify_failures $TESTPOOL "raidz" 0
 }
 
 log_assert "Verify Direct I/O reads can read an entire file that is not \

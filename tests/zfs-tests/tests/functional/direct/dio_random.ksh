@@ -45,7 +45,6 @@ verify_runnable "global"
 function cleanup
 {
 	log_must rm -f "$tmp_file"
-	check_dio_write_chksum_verify_failures $TESTPOOL "raidz" 0
 }
 
 log_assert "Verify randomly sized mixed Direct I/O and buffered I/O"
