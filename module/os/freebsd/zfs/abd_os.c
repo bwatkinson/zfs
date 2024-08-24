@@ -32,11 +32,7 @@
 #include <sys/zio.h>
 #include <sys/zfs_context.h>
 #include <sys/zfs_znode.h>
-
-#ifdef _KERNEL
 #include <sys/vm.h>
-#include <vm/vm_page.h>
-#endif
 
 typedef struct abd_stats {
 	kstat_named_t abdstat_struct_size;
@@ -361,20 +357,8 @@ abd_fini(void)
 void
 abd_free_linear_page(abd_t *abd)
 {
-#if defined(_KERNEL)
 	ASSERT3P(abd->abd_u.abd_linear.sf, !=, NULL);
 	zfs_unmap_page(abd->abd_u.abd_linear.sf);
-
-	abd_update_scatter_stats(abd, ABDSTAT_DECR);
-#else
-	/*
-	 * The ABD flag ABD_FLAG_LINEAR_PAGE should only be set in
-	 * abd_alloc_from_pages(), which is strictly in kernel space.
-	 * So if we have gotten here outside of kernel space we have
-	 * an issue.
-	 */
-	VERIFY(0);
-#endif
 }
 
 /*
@@ -460,7 +444,6 @@ abd_get_offset_scatter(abd_t *abd, abd_t *sabd, size_t off,
 	return (abd);
 }
 
-#ifdef _KERNEL
 /*
  * Allocate a scatter ABD structure from user pages.
  */
@@ -501,8 +484,6 @@ abd_alloc_from_pages(vm_page_t *pages, unsigned long offset, uint64_t size)
 
 	return (abd);
 }
-
-#endif /* _KERNEL */
 
 /*
  * Initialize the abd_iter.
@@ -565,7 +546,6 @@ abd_iter_map(struct abd_iter *aiter)
 	if (abd_is_linear(abd)) {
 		aiter->iter_mapsize = abd->abd_size - offset;
 		paddr = ABD_LINEAR_BUF(abd);
-#if defined(_KERNEL)
 	} else if (abd_is_from_pages(abd)) {
 		aiter->sf = NULL;
 		offset += ABD_SCATTER(abd).abd_offset;
@@ -576,7 +556,6 @@ abd_iter_map(struct abd_iter *aiter)
 		paddr = zfs_map_page(
 		    ABD_SCATTER(aiter->iter_abd).abd_chunks[index],
 		    &aiter->sf);
-#endif
 	} else {
 		offset += ABD_SCATTER(abd).abd_offset;
 		paddr = ABD_SCATTER(abd).abd_chunks[offset >> PAGE_SHIFT];
@@ -599,13 +578,11 @@ abd_iter_unmap(struct abd_iter *aiter)
 		ASSERT3U(aiter->iter_mapsize, >, 0);
 	}
 
-#if defined(_KERNEL)
 	if (abd_is_from_pages(aiter->iter_abd) &&
 	    !abd_is_linear_page(aiter->iter_abd)) {
 		ASSERT3P(aiter->sf, !=, NULL);
 		zfs_unmap_page(aiter->sf);
 	}
-#endif
 
 	aiter->iter_mapaddr = NULL;
 	aiter->iter_mapsize = 0;
@@ -628,7 +605,7 @@ abd_borrow_buf(abd_t *abd, size_t n)
 {
 	void *buf;
 	abd_verify(abd);
-	ASSERT(abd->abd_size, >=, 0);
+	ASSERT3U(abd->abd_size, >=, 0);
 	if (abd_is_linear(abd)) {
 		buf = abd_to_buf(abd);
 	} else {
