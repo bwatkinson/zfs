@@ -26,11 +26,14 @@
 #ifndef _ABD_OS_H
 #define	_ABD_OS_H
 
+#include <sys/vm.h>
+#include <vm/vm_page.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-struct sf_buf;
+struct abd;
 
 struct abd_scatter {
 	uint_t		abd_offset;
@@ -41,6 +44,9 @@ struct abd_linear {
 	void		*abd_buf;
 	struct sf_buf 	*sf; /* for LINEAR_PAGE FreeBSD */
 };
+
+__attribute__((malloc))
+struct abd *abd_alloc_from_pages(vm_page_t *, unsigned long, uint64_t);
 
 #ifdef __cplusplus
 }
