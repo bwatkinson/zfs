@@ -712,7 +712,6 @@ abd_free_linear_page(abd_t *abd)
 	abd_update_scatter_stats(abd, ABDSTAT_DECR);
 }
 
-#ifdef _KERNEL
 /*
  * Allocate a scatter ABD structure from user pages. The pages must be
  * pinned with get_user_pages, or similiar, but need not be mapped via
@@ -775,8 +774,6 @@ abd_alloc_from_pages(struct page **pages, unsigned long offset, uint64_t size)
 
 	return (abd);
 }
-
-#endif /* _KERNEL */
 
 /*
  * If we're going to use this ABD for doing I/O using the block layer, the
@@ -968,7 +965,7 @@ abd_borrow_buf(abd_t *abd, size_t n)
 {
 	void *buf;
 	abd_verify(abd);
-	ASSERT(abd->abd_size, >=, 0);
+	ASSERT3U(abd->abd_size, >=, 0);
 	/*
 	 * In the event the ABD is composed of a single user page from Direct
 	 * I/O we can not direclty return the raw buffer. This is a consequence
@@ -1066,7 +1063,6 @@ abd_return_buf_copy(abd_t *abd, void *buf, size_t n)
 	abd_return_buf(abd, buf, n);
 }
 
-#if defined(_KERNEL)
 /*
  * This is abd_iter_page(), the function underneath abd_iterate_page_func().
  * It yields the next page struct and data offset and size within it, without
