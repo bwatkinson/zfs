@@ -3450,6 +3450,8 @@
     <typedef-decl name='zpool_prefetch_type_t' type-id='0299ab50' id='e55ff6bc'/>
     <qualified-type-def type-id='8e8d4be3' const='yes' id='693c3853'/>
     <pointer-type-def type-id='693c3853' size-in-bits='64' id='22cce67b'/>
+    <qualified-type-def type-id='9c313c2d' const='yes' id='c3b7ba7d'/>
+    <pointer-type-def type-id='c3b7ba7d' size-in-bits='64' id='713a56f5'/>
     <pointer-type-def type-id='a093cbb8' size-in-bits='64' id='b13f38c3'/>
     <pointer-type-def type-id='35acf840' size-in-bits='64' id='17f3480d'/>
     <function-decl name='zpool_props_refresh' mangled-name='zpool_props_refresh' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='zpool_props_refresh'>

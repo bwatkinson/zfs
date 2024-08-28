@@ -75,6 +75,14 @@ int zfs_bclone_enabled = 1;
 static int zfs_bclone_wait_dirty = 0;
 
 /*
+ * Enable Direct I/O. If this setting is 0, then all I/O requests will be
+ * directed through the ARC acting as though the dataset property direct was
+ * set to disabled.
+ */
+static int zfs_dio_enabled = 1;
+
+
+/*
  * Maximum bytes to read per chunk in zfs_read().
  */
 static uint64_t zfs_vnops_read_chunk_size = 1024 * 1024;
@@ -209,6 +217,10 @@ zfs_check_direct_enabled(znode_t *zp, int ioflags, boolean_t *is_direct)
 	*is_direct = B_FALSE;
 	int error;
 
+	if (!zfs_dio_enabled) {
+		return (0);
+	}
+
 	if ((error = zfs_enter(zfsvfs, FTAG)) != 0)
 		return (error);
 
@@ -248,6 +260,11 @@ zfs_setup_direct(struct znode *zp, zfs_uio_t *uio, zfs_uio_rw_t rw,
 	objset_t *os = zfsvfs->z_os;
 	int ioflag = *ioflagp;
 	int error = 0;
+
+	if (!zfs_dio_enabled) {
+		*ioflagp &= ~O_DIRECT;
+		return (0);
+	}
 
 	if (os->os_direct == ZFS_DIRECT_DISABLED && (ioflag & O_DIRECT)) {
 		error = EAGAIN;
@@ -1803,3 +1820,6 @@ ZFS_MODULE_PARAM(zfs, zfs_, bclone_enabled, INT, ZMOD_RW,
 
 ZFS_MODULE_PARAM(zfs, zfs_, bclone_wait_dirty, INT, ZMOD_RW,
 	"Wait for dirty blocks when cloning");
+
+ZFS_MODULE_PARAM(zfs, zfs_, dio_enabled, INT, ZMOD_RW,
+	"Enable Direct I/O");
