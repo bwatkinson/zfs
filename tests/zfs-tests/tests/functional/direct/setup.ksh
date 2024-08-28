@@ -27,6 +27,11 @@
 . $STF_SUITE/include/libtest.shlib
 verify_runnable "global"
 
+if tunable_exists DIO_ENABLED ; then
+	log_must save_tunable DIO_ENABLED
+	log_must set_tunable32 DIO_ENABLED 1
+fi
+
 default_raidz_setup_noexit "$DISKS"
 log_must zfs set compression=off $TESTPOOL/$TESTFS
 log_pass
