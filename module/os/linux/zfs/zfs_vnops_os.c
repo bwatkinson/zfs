@@ -4084,6 +4084,13 @@ zfs_getpage(struct inode *ip, struct page *pp)
 	 * dmu_read_impl() for db->db_data during the mempcy operation when
 	 * zfs_fillpage() calls dmu_read().
 	 */
+	zfs_dbgmsg("Using zfs_rangelock_tryenter() on znode: %llu, "
+	    "io_off = %llu, "
+	    "io_len = %llu, "
+	    "as a RL_READER",
+	    (u_longlong_t)zp->z_id,
+	    (u_longlong_t)io_off,
+	    (u_longlong_t)io_len);
 	zfs_locked_range_t *lr = zfs_rangelock_tryenter(&zp->z_rangelock,
 	    io_off, io_len, RL_READER);
 	if (lr == NULL) {
@@ -4095,11 +4102,26 @@ zfs_getpage(struct inode *ip, struct page *pp)
 		 */
 		get_page(pp);
 		unlock_page(pp);
+		zfs_dbgmsg("Trying to acquire rangelock failed. Dropped page "
+		    "lock and now using zfs_rangelock_enter() on znode: %llu, "
+		    "io_off = %llu, "
+		    "io_len = %llu, "
+		    "as a RL_READER",
+		    (u_longlong_t)zp->z_id,
+		    (u_longlong_t)io_off,
+		    (u_longlong_t)io_len);
 		lr = zfs_rangelock_enter(&zp->z_rangelock, io_off,
 		    io_len, RL_READER);
 		lock_page(pp);
 		put_page(pp);
 	}
+	zfs_dbgmsg("Acquired rangelock on znode: %llu, "
+	    "io_off = %llu, "
+	    "io_len = %llu, "
+	    "as a RL_READER",
+	    (u_longlong_t)zp->z_id,
+	    (u_longlong_t)io_off,
+	    (u_longlong_t)io_len);
 	error = zfs_fillpage(ip, pp);
 	zfs_rangelock_exit(lr);
 

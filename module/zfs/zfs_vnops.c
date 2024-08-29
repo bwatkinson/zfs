@@ -650,17 +650,6 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 	}
 
 	/*
-	 * Pre-fault the pages to ensure slow (eg NFS) pages
-	 * don't hold up txg.
-	 */
-	ssize_t pfbytes = MIN(n, DMU_MAX_ACCESS >> 1);
-	if (zfs_uio_prefaultpages(pfbytes, uio)) {
-		zfs_exit(zfsvfs, FTAG);
-		return (SET_ERROR(EFAULT));
-	}
-
-
-	/*
 	 * If in append mode, set the io offset pointer to eof.
 	 */
 	zfs_locked_range_t *lr;
@@ -695,6 +684,40 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		lr = zfs_rangelock_enter(&zp->z_rangelock, woff, n, RL_WRITER);
 	}
 
+	/*
+	 * Pre-fault the pages to ensure slow (eg NFS) pages
+	 * don't hold up txg.
+	 */
+	ssize_t pfbytes = MIN(n, DMU_MAX_ACCESS >> 1);
+	zfs_dbgmsg("Going to prefault pages for znode: %llu while holding "
+	    "rangelock as RL_WRITER over woff = %llu, "
+	    "n = %llu, "
+	    "pfbytes = %llu",
+	    (u_longlong_t)zp->z_id,
+	    (u_longlong_t)woff,
+	    (u_longlong_t)n,
+	    (u_longlong_t)pfbytes);
+	if (zfs_uio_prefaultpages(pfbytes, uio)) {
+		zfs_exit(zfsvfs, FTAG);
+		zfs_dbgmsg("Got error while perfaultin pages znode: %llu "
+		    "while holding rangelock as RL_WRITER over woff = %llu, "
+		    "n = %llu, "
+		    "pfbytes = %llu",
+		    (u_longlong_t)zp->z_id,
+		    (u_longlong_t)woff,
+		    (u_longlong_t)n,
+		    (u_longlong_t)pfbytes);
+		zfs_rangelock_exit(lr);
+		return (SET_ERROR(EFAULT));
+	}
+	zfs_dbgmsg("Done prefaulting pages for znode: %llu while holding "
+	    "rangelock as RL_WRITER over woff = %llu, "
+	    "n = %llu, "
+	    "pfbytes = %llu",
+	    (u_longlong_t)zp->z_id,
+	    (u_longlong_t)woff,
+	    (u_longlong_t)n,
+	    (u_longlong_t)pfbytes);
 
 	if (zn_rlimit_fsize_uio(zp, uio)) {
 		zfs_rangelock_exit(lr);
