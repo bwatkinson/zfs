@@ -4085,7 +4085,7 @@ zfs_getpage(struct inode *ip, struct page *pp)
 	 * zfs_fillpage() calls dmu_read().
 	 */
 	zfs_locked_range_t *lr = zfs_rangelock_tryenter(&zp->z_rangelock,
-	    io_off, io_len, RL_READER);
+	    io_off, io_len, RL_WRITER);
 	if (lr == NULL) {
 		/*
 		 * It is important to drop the page lock before grabbing the
@@ -4096,7 +4096,7 @@ zfs_getpage(struct inode *ip, struct page *pp)
 		get_page(pp);
 		unlock_page(pp);
 		lr = zfs_rangelock_enter(&zp->z_rangelock, io_off,
-		    io_len, RL_READER);
+		    io_len, RL_WRITER);
 		lock_page(pp);
 		put_page(pp);
 	}

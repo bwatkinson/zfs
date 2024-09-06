@@ -417,6 +417,7 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 #endif
 		if (zn_has_cached_data(zp, zfs_uio_offset(uio),
 		    zfs_uio_offset(uio) + nbytes - 1)) {
+			ASSERT0(uio->uio_extflg & UIO_DIRECT);
 			error = mappedread(zp, nbytes, uio);
 		} else {
 			error = dmu_read_uio_dbuf(sa_get_db(zp->z_sa_hdl),
@@ -456,6 +457,7 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 
 		if (zn_has_cached_data(zp, zfs_uio_offset(uio),
 		    zfs_uio_offset(uio) + dio_remaining_resid - 1)) {
+			ASSERT0(ioflag & O_DIRECT);
 			error = mappedread(zp, dio_remaining_resid, uio);
 		} else {
 			error = dmu_read_uio_dbuf(sa_get_db(zp->z_sa_hdl), uio,
