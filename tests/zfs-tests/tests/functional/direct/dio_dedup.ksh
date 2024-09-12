@@ -31,7 +31,8 @@
 
 #
 # DESCRIPTION:
-# 	Verify deduplication works using Direct I/O.
+# 	Verify deduplication works. Deduplication is disabled when issuing
+# 	Direct I/O writes.
 #
 # STRATEGY:
 #	1. Enable dedup

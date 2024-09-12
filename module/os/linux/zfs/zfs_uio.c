@@ -599,9 +599,9 @@ zfs_uio_iov_step(struct iovec v, zfs_uio_rw_t rw, zfs_uio_t *uio,
 	    P2ALIGN_TYPED(addr, PAGE_SIZE, unsigned long), n, rw == UIO_READ,
 	    &uio->uio_dio.pages[uio->uio_dio.npages]);
 	if (res < 0) {
-		return (-res);
+		return (SET_ERROR(-res));
 	} else if (len != (res * PAGE_SIZE)) {
-		return (EFAULT);
+		return (SET_ERROR(EFAULT));
 	}
 
 	ASSERT3S(len, ==, res * PAGE_SIZE);
@@ -632,7 +632,7 @@ zfs_uio_get_dio_pages_iov(zfs_uio_t *uio, zfs_uio_rw_t rw)
 		int error = zfs_uio_iov_step(iov, rw, uio, &numpages);
 
 		if (error)
-			return (SET_ERROR(error));
+			return (error);
 
 		uio->uio_dio.npages += numpages;
 		len -= iov.iov_len;

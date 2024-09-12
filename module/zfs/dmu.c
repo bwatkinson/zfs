@@ -1512,10 +1512,11 @@ top:
 		} else if (write_size > dn->dn_datablksz &&
 		    zfs_dio_offset_aligned(zfs_uio_offset(uio),
 		    dn->dn_datablksz)) {
-			err = dmu_write_uio_direct(dn, uio, dn->dn_datablksz,
-			    tx);
+			write_size =
+			    dn->dn_datablksz * (write_size / dn->dn_datablksz);
+			err = dmu_write_uio_direct(dn, uio, write_size, tx);
 			if (err == 0) {
-				size -= dn->dn_datablksz;
+				size -= write_size;
 				goto top;
 			} else {
 				return (err);
