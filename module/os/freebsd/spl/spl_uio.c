@@ -217,7 +217,7 @@ zfs_uio_get_user_pages(unsigned long start, int nr_pages,
 	if (count != nr_pages) {
 		if (count > 0)
 			vm_page_unhold_pages(pages, count);
-		return (count);
+		return (0);
 	}
 
 	ASSERT3S(count, ==, nr_pages);
@@ -295,6 +295,8 @@ zfs_uio_get_dio_pages_alloc(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	error = zfs_uio_get_dio_pages_impl(uio);
 
 	if (error) {
+		vm_page_unhold_pages(&uio->uio_dio.pages[0],
+		    uio->uio_dio.npages);
 		kmem_free(uio->uio_dio.pages, size);
 		return (error);
 	}

@@ -2794,14 +2794,11 @@ dmu_buf_untransform_direct(dmu_buf_impl_t *db, spa_t *spa)
 void
 dmu_buf_will_clone_or_dio(dmu_buf_t *db_fake, dmu_tx_t *tx)
 {
-	dmu_buf_impl_t *db = (dmu_buf_impl_t *)db_fake;
-	ASSERT0(db->db_level);
-	ASSERT(db->db_blkid != DMU_BONUS_BLKID);
-	ASSERT(db->db.db_object != DMU_META_DNODE_OBJECT);
-
 	/*
 	 * Block clones and Direct I/O writes always happen in open-context.
 	 */
+	dmu_buf_impl_t *db = (dmu_buf_impl_t *)db_fake;
+	ASSERT0(db->db_level);
 	ASSERT(!dmu_tx_is_syncing(tx));
 	ASSERT0(db->db_level);
 	ASSERT(db->db_blkid != DMU_BONUS_BLKID);
@@ -2820,7 +2817,7 @@ dmu_buf_will_clone_or_dio(dmu_buf_t *db_fake, dmu_tx_t *tx)
 	 * to go ahead free up the space accounting through dbuf_undirty() ->
 	 * dbuf_unoverride() -> zio_free(). Space accountiung for determining
 	 * if a write can occur in zfs_write() happens through dmu_tx_assign().
-	 * This can cuase an issue with Direct I/O writes in the case of
+	 * This can cause an issue with Direct I/O writes in the case of
 	 * overwriting the same block, because all DVA allocations are being
 	 * done in open-context. Constantly allowing Direct I/O overwrites to
 	 * the same block can exhaust the pools available space leading to

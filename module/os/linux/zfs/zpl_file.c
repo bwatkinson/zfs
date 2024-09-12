@@ -454,7 +454,7 @@ zpl_aio_write(struct kiocb *kiocb, const struct iovec *iov,
 	if (ret)
 		return (ret);
 
-	ret = geeric_write_checks(filep, &pos, &count, S_ISBLK(ip->i_mode));
+	ret = generic_write_checks(filp, &pos, &count, S_ISBLK(ip->i_mode));
 	if (ret)
 		return (ret);
 
@@ -488,7 +488,7 @@ static ssize_t
 zpl_direct_IO_impl(void)
 {
 	/*
-	 * All O_DIRCT requests should be handled by
+	 * All O_DIRECT requests should be handled by
 	 * zpl_{iter/aio}_{write/read}(). There is no way kernel generic code
 	 * should call the direct_IO address_space_operations function. We set
 	 * this code path to be fatal if it is executed.

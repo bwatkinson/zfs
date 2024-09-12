@@ -3591,6 +3591,13 @@ zio_ddt_write(zio_t *zio)
 	ASSERT(BP_GET_CHECKSUM(bp) == zp->zp_checksum);
 	ASSERT(BP_IS_HOLE(bp) || zio->io_bp_override);
 	ASSERT(!(zio->io_bp_override && (zio->io_flags & ZIO_FLAG_RAW)));
+	/*
+	 * Deduplication will not take place for Direct I/O writes. The
+	 * ddt_tree will be emptied in syncing context. Direct I/O writes take
+	 * place in the open-context. Direct I/O write can not attempt to
+	 * modify the ddt_tree while issuing out a write.
+	 */
+	ASSERT3B(zio->io_prop.zp_direct_write, ==, B_FALSE);
 
 	ddt_enter(ddt);
 	dde = ddt_lookup(ddt, bp);

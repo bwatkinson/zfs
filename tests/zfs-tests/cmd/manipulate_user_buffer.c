@@ -243,7 +243,7 @@ main(int argc, char *argv[])
 	}
 
 	/*
-	 * Writing using O_DIRECT while manipulating the buffer conntents until
+	 * Writing using O_DIRECT while manipulating the buffer contents until
 	 * the entire file is written.
 	 */
 	if ((rc = pthread_create(&manipul_thr, NULL, manipulate_buf_thread,

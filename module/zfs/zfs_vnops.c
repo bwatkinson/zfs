@@ -35,7 +35,6 @@
 #include <sys/time.h>
 #include <sys/sysmacros.h>
 #include <sys/vfs.h>
-#include <sys/uio_impl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/kmem.h>
@@ -445,7 +444,6 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		n -= nbytes;
 	}
 
-	int64_t nread = start_resid;
 	if (error == 0 && (uio->uio_extflg & UIO_DIRECT) &&
 	    dio_remaining_resid != 0) {
 		/*
@@ -464,9 +462,11 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		uio->uio_extflg |= UIO_DIRECT;
 
 		if (error != 0)
-			n -= dio_remaining_resid;
+			n += dio_remaining_resid;
+	} else if (error && (uio->uio_extflg & UIO_DIRECT)) {
+		n += dio_remaining_resid;
 	}
-	nread -= n;
+	int64_t nread = start_resid - n;
 
 	dataset_kstats_update_read_kstats(&zfsvfs->z_kstat, nread);
 out:
@@ -634,7 +634,6 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		return (SET_ERROR(EFAULT));
 	}
 
-
 	/*
 	 * If in append mode, set the io offset pointer to eof.
 	 */
@@ -669,7 +668,6 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		 */
 		lr = zfs_rangelock_enter(&zp->z_rangelock, woff, n, RL_WRITER);
 	}
-
 
 	if (zn_rlimit_fsize_uio(zp, uio)) {
 		zfs_rangelock_exit(lr);
@@ -1139,11 +1137,10 @@ zfs_get_data(void *arg, uint64_t gen, lr_write_t *lr, char *buf,
 		for (;;) {
 			uint64_t blkoff;
 			size = zp->z_blksz;
-			blkoff = ISP2(size) ? P2PHASE(offset, size) :
-			    offset;
+			blkoff = ISP2(size) ? P2PHASE(offset, size) : offset;
 			offset -= blkoff;
-			zgd->zgd_lr = zfs_rangelock_enter(
-			    &zp->z_rangelock, offset, size, RL_READER);
+			zgd->zgd_lr = zfs_rangelock_enter(&zp->z_rangelock,
+			    offset, size, RL_READER);
 			if (zp->z_blksz == size)
 				break;
 			offset += blkoff;
