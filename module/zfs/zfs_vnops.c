@@ -463,6 +463,8 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 
 		if (error != 0)
 			n += dio_remaining_resid;
+	} else if (error && (uio->uio_extflg & UIO_DIRECT)) {
+		n += dio_remaining_resid;
 	}
 	int64_t nread = start_resid - n;
 

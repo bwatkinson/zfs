@@ -1076,6 +1076,10 @@ Furthermore, if an application uses
 .Xr mmap 2
 based file access then in order to maintain coherency all direct requests
 are converted to buffered requests while the file is mapped.
+Currently Direct I/O is not supported with zvols.
+If dedup is enabled on a dataset, Direct I/O writes will not check for
+deduplication.
+Deduplication and Direct I/O writes are currently incompatible.
 .It Xo
 .Sy dnodesize Ns = Ns Sy legacy Ns | Ns Sy auto Ns | Ns Sy 1k Ns | Ns
 .Sy 2k Ns | Ns Sy 4k Ns | Ns Sy 8k Ns | Ns Sy 16k
