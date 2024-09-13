@@ -2613,12 +2613,14 @@ vdev_raidz_checksum_error(zio_t *zio, raidz_col_t *rc, abd_t *bad_data)
 		zbc.zbc_has_cksum = 0;
 		zbc.zbc_injected = rm->rm_ecksuminjected;
 
-		mutex_enter(&vd->vdev_stat_lock);
-		vd->vdev_stat.vs_checksum_errors++;
-		mutex_exit(&vd->vdev_stat_lock);
-		(void) zfs_ereport_post_checksum(zio->io_spa, vd,
-		    &zio->io_bookmark, zio, rc->rc_offset, rc->rc_size,
-		    rc->rc_abd, bad_data, &zbc);
+		if (!(zio->io_flags & ZIO_FLAG_DIO_READ)) {
+			mutex_enter(&vd->vdev_stat_lock);
+			vd->vdev_stat.vs_checksum_errors++;
+			mutex_exit(&vd->vdev_stat_lock);
+			(void) zfs_ereport_post_checksum(zio->io_spa, vd,
+			    &zio->io_bookmark, zio, rc->rc_offset, rc->rc_size,
+			    rc->rc_abd, bad_data, &zbc);
+		}
 	}
 }
 
@@ -3379,13 +3381,14 @@ vdev_raidz_io_done_unrecoverable(zio_t *zio)
 			zio_bad_cksum_t zbc;
 			zbc.zbc_has_cksum = 0;
 			zbc.zbc_injected = rm->rm_ecksuminjected;
-
-			mutex_enter(&cvd->vdev_stat_lock);
-			cvd->vdev_stat.vs_checksum_errors++;
-			mutex_exit(&cvd->vdev_stat_lock);
-			(void) zfs_ereport_start_checksum(zio->io_spa,
-			    cvd, &zio->io_bookmark, zio, rc->rc_offset,
-			    rc->rc_size, &zbc);
+			if (!(zio->io_flags & ZIO_FLAG_DIO_READ)) {
+				mutex_enter(&cvd->vdev_stat_lock);
+				cvd->vdev_stat.vs_checksum_errors++;
+				mutex_exit(&cvd->vdev_stat_lock);
+				(void) zfs_ereport_start_checksum(zio->io_spa,
+				    cvd, &zio->io_bookmark, zio, rc->rc_offset,
+				    rc->rc_size, &zbc);
+			}
 		}
 	}
 }

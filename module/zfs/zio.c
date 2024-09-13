@@ -4540,6 +4540,10 @@ zio_vdev_io_assess(zio_t *zio)
 		ASSERT3U(zio->io_error, ==, EIO);
 		zio->io_pipeline = ZIO_INTERLOCK_PIPELINE;
 		return (zio);
+	} else if (zio->io_flags & ZIO_FLAG_DIO_READ &&
+	    zio->io_error == ECKSUM) {
+		zio->io_pipeline = ZIO_INTERLOCK_PIPELINE;
+		return (zio);
 	}
 
 
@@ -4843,7 +4847,8 @@ zio_checksum_verify(zio_t *zio)
 	if ((error = zio_checksum_error(zio, &info)) != 0) {
 		zio->io_error = error;
 		if (error == ECKSUM &&
-		    !(zio->io_flags & ZIO_FLAG_SPECULATIVE)) {
+		    !(zio->io_flags & ZIO_FLAG_SPECULATIVE &&
+		    !(zio->io_flags & ZIO_FLAG_DIO_READ))) {
 			mutex_enter(&zio->io_vd->vdev_stat_lock);
 			zio->io_vd->vdev_stat.vs_checksum_errors++;
 			mutex_exit(&zio->io_vd->vdev_stat_lock);
@@ -5230,7 +5235,8 @@ zio_done(zio_t *zio)
 		 */
 		if (zio->io_error != ECKSUM && zio->io_vd != NULL &&
 		    !vdev_is_dead(zio->io_vd) &&
-		    !(zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR)) {
+		    !(zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR) &&
+		    !(zio->io_flags & ZIO_FLAG_DIO_READ)) {
 			int ret = zfs_ereport_post(FM_EREPORT_ZFS_IO,
 			    zio->io_spa, zio->io_vd, &zio->io_bookmark, zio, 0);
 			if (ret != EALREADY) {
@@ -5246,6 +5252,7 @@ zio_done(zio_t *zio)
 		if ((zio->io_error == EIO || !(zio->io_flags &
 		    (ZIO_FLAG_SPECULATIVE | ZIO_FLAG_DONT_PROPAGATE))) &&
 		    !(zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR) &&
+		    !(zio->io_flags & ZIO_FLAG_DIO_READ) &&
 		    zio == zio->io_logical) {
 			/*
 			 * For logical I/O requests, tell the SPA to log the
@@ -5268,7 +5275,8 @@ zio_done(zio_t *zio)
 
 		if (IO_IS_ALLOCATING(zio) &&
 		    !(zio->io_flags & ZIO_FLAG_CANFAIL) &&
-		    !(zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR)) {
+		    !(zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR) &&
+		    !(zio->io_flags & ZIO_FLAG_DIO_READ)) {
 			if (zio->io_error != ENOSPC)
 				zio->io_reexecute |= ZIO_REEXECUTE_NOW;
 			else
@@ -5325,6 +5333,7 @@ zio_done(zio_t *zio)
 		 * through the ARC.
 		 */
 		ASSERT(!(zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR));
+		ASSERT(!(zio->io_flags & ZIO_FLAG_DIO_READ));
 
 		/*
 		 * This is a logical I/O that wants to reexecute.
