@@ -303,6 +303,7 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 	(void) cr;
 	int error = 0;
 	boolean_t frsync = B_FALSE;
+	boolean_t dio_checksum_failure = B_FALSE;
 
 	zfsvfs_t *zfsvfs = ZTOZSB(zp);
 	if ((error = zfs_enter_verify_zp(zfsvfs, zp, FTAG)) != 0)
@@ -407,6 +408,7 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 	}
 
 	while (n > 0) {
+top:
 		ssize_t nbytes = MIN(n, chunk_size -
 		    P2PHASE(zfs_uio_offset(uio), chunk_size));
 #ifdef UIO_NOCOPY
@@ -424,8 +426,17 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 
 		if (error) {
 			/* convert checksum errors into IO errors */
-			if (error == ECKSUM)
-				error = SET_ERROR(EIO);
+			if (error == ECKSUM) {
+				if (uio->uio_extflg & UIO_DIRECT) {
+					dio_checksum_failure = B_TRUE;
+					uio->uio_extflg &= ~UIO_DIRECT;
+					n += dio_remaining_resid;
+					dio_remaining_resid = 0;
+					goto top;
+				} else {
+					error = SET_ERROR(EIO);
+				}
+			}
 
 #if defined(__linux__)
 			/*
@@ -471,6 +482,10 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 	dataset_kstats_update_read_kstats(&zfsvfs->z_kstat, nread);
 out:
 	zfs_rangelock_exit(lr);
+
+	if (dio_checksum_failure == B_TRUE) {
+		uio->uio_extflg |= UIO_DIRECT;
+	}
 
 	/*
 	 * Cleanup for Direct I/O if requested.
