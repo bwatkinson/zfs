@@ -2633,6 +2633,20 @@ raidz_checksum_verify(zio_t *zio)
 	raidz_map_t *rm = zio->io_vsd;
 
 	int ret = zio_checksum_error(zio, &zbc);
+	/*
+	 * Any Direct I/O read that has a checksum error must be treated as
+	 * suspicious as the contents of the buffer could be getting
+	 * manipulated while the I/O is taking place. The checksum verify error
+	 * will be reported to the top-level RAIDZ VDEV.
+	 */
+	if (zio->io_flags & ZIO_FLAG_DIO_READ && ret == ECKSUM) {
+		zio->io_error = ret;
+		zio->io_flags |= ZIO_FLAG_DIO_CHKSUM_ERR;
+		zio_dio_chksum_verify_error_report(zio);
+		zio_checksum_verified(zio);
+		return (0);
+	}
+
 	if (ret != 0 && zbc.zbc_injected != 0)
 		rm->rm_ecksuminjected = 1;
 
@@ -2979,6 +2993,8 @@ raidz_reconstruct(zio_t *zio, int *ltgts, int ntgts, int nparity)
 
 	/* Check for success */
 	if (raidz_checksum_verify(zio) == 0) {
+		if (zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR)
+			return (0);
 
 		/* Reconstruction succeeded - report errors */
 		for (int i = 0; i < rm->rm_nrows; i++) {
@@ -3379,7 +3395,6 @@ vdev_raidz_io_done_unrecoverable(zio_t *zio)
 			zio_bad_cksum_t zbc;
 			zbc.zbc_has_cksum = 0;
 			zbc.zbc_injected = rm->rm_ecksuminjected;
-
 			mutex_enter(&cvd->vdev_stat_lock);
 			cvd->vdev_stat.vs_checksum_errors++;
 			mutex_exit(&cvd->vdev_stat_lock);
@@ -3444,6 +3459,9 @@ vdev_raidz_io_done(zio_t *zio)
 		}
 
 		if (raidz_checksum_verify(zio) == 0) {
+			if (zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR)
+				goto done;
+
 			for (int i = 0; i < rm->rm_nrows; i++) {
 				raidz_row_t *rr = rm->rm_row[i];
 				vdev_raidz_io_done_verified(zio, rr);
@@ -3538,6 +3556,7 @@ vdev_raidz_io_done(zio_t *zio)
 			}
 		}
 	}
+done:
 	if (rm->rm_lr != NULL) {
 		zfs_rangelock_exit(rm->rm_lr);
 		rm->rm_lr = NULL;
