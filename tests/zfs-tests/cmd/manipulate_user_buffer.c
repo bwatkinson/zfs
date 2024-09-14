@@ -20,7 +20,7 @@
  */
 
 /*
- * Copyright (c) 2022 by Triad National Security, LLC.
+ * Copyright (c) 2024 by Triad National Security, LLC.
  */
 
 #include <sys/types.h>
@@ -39,46 +39,55 @@
 #define	MIN(a, b)	((a) < (b)) ? (a) : (b)
 #endif
 
-static char *outputfile = NULL;
+static char *filename = NULL;
 static int blocksize = 131072; /* 128K */
-static int rd_err_expected = 0;
+static int err_expected = 0;
+static int read_op = 0;
+static int write_op = 0;
 static int numblocks = 100;
 static char *execname = NULL;
 static int print_usage = 0;
-static int ofd;
+static int randompattern = 0;
+static int fd;
 char *buf = NULL;
 
 typedef struct {
-	int entire_file_read;
+	int entire_file_completed;
 } pthread_args_t;
 
 static void
 usage(void)
 {
 	(void) fprintf(stderr,
-	    "usage %s -o outputfile [-b blocksize] [-e wr_error_expected]\n"
-	    "         [-n numblocks] [-h help]\n"
+	    "usage %s -f filename [-b blocksize] [-e wr_error_expected]\n"
+	    "         [-n numblocks] [-p randompattern] -r read_op \n"
+	    "         -w write_op [-h help]\n"
 	    "\n"
 	    "Testing whether checksum verify works correctly for O_DIRECT.\n"
 	    "when manipulating the contents of a userspace buffer.\n"
 	    "\n"
-	    "    outputfile:      File to write to.\n"
-	    "    blocksize:       Size of each block to write (must be at \n"
-	    "                     least >= 512).\n"
-	    "    rd_err_expected: Whether pread() is expected to return EIO\n"
-	    "                     while manipulating the contents of the\n"
-	    "                     buffer.\n"
-	    "    numblocks:       Total number of blocksized blocks to\n"
-	    "                     write.\n"
+	    "    filename:       File to read or write to.\n"
+	    "    blocksize:      Size of each block to write (must be at \n"
+	    "                    least >= 512).\n"
+	    "    err_expected:   Whether write() is expected to return EIO\n"
+	    "                    while manipulating the contents of the\n"
+	    "                    buffer.\n"
+	    "    numblocks:      Total number of blocksized blocks to\n"
+	    "                    write.\n"
+	    "    randompattern:  Fill data buffer with random data for \n"
+	    "                    writes. Default behavior is to fill the \n"
+	    "                    buffer with known data pattern (0xdeadbeef)\n"
 	    "    help:           Print usage information and exit.\n"
 	    "\n"
 	    "    Required parameters:\n"
-	    "    outputfile\n"
+	    "    filename\n"
+	    "    read_op or write_op\n"
 	    "\n"
 	    "    Default Values:\n"
 	    "    blocksize       -> 131072\n"
 	    "    wr_err_expexted -> false\n"
-	    "    numblocks       -> 100\n",
+	    "    numblocks       -> 100\n"
+	    "    randompattern   -> false\n",
 	    execname);
 	(void) exit(1);
 }
@@ -92,15 +101,20 @@ parse_options(int argc, char *argv[])
 	extern int optind, optopt;
 	execname = argv[0];
 
-	while ((c = getopt(argc, argv, "b:ehn:o:")) != -1) {
+	while ((c = getopt(argc, argv, "b:ef:hn:rw")) != -1) {
 		switch (c) {
 			case 'b':
 				blocksize = atoi(optarg);
 				break;
 
 			case 'e':
-				rd_err_expected = 1;
+				err_expected = 1;
 				break;
+
+			case 'f':
+				filename = optarg;
+				break;
+
 
 			case 'h':
 				print_usage = 1;
@@ -110,8 +124,12 @@ parse_options(int argc, char *argv[])
 				numblocks = atoi(optarg);
 				break;
 
-			case 'o':
-				outputfile = optarg;
+			case 'r':
+				read_op = 1;
+				break;
+
+			case 'w':
+				write_op = 1;
 				break;
 
 			case ':':
@@ -132,11 +150,43 @@ parse_options(int argc, char *argv[])
 	if (errflag || print_usage == 1)
 		(void) usage();
 
-	if (blocksize < 512 || outputfile == NULL || numblocks <= 0) {
+	if (blocksize < 512 || filename == NULL || numblocks <= 0 ||
+	    (read_op == 0 && write_op == 0)) {
 		(void) fprintf(stderr,
 		    "Required paramater(s) missing or invalid.\n");
 		(void) usage();
 	}
+}
+
+/*
+ * Write blocksize * numblocks to the file using O_DIRECT.
+ */
+static void *
+write_thread(void *arg)
+{
+	size_t offset = 0;
+	int total_data = blocksize * numblocks;
+	int left = total_data;
+	ssize_t wrote = 0;
+	pthread_args_t *args = (pthread_args_t *)arg;
+
+	while (!args->entire_file_completed) {
+		wrote = pwrite(fd, buf, blocksize, offset);
+		if (wrote != blocksize) {
+			if (err_expected)
+				assert(errno == EIO);
+			else
+				exit(2);
+		}
+
+		offset = ((offset + blocksize) % total_data);
+		left -= blocksize;
+
+		if (left == 0)
+			args->entire_file_completed = 1;
+	}
+
+	pthread_exit(NULL);
 }
 
 /*
@@ -151,20 +201,17 @@ read_thread(void *arg)
 	ssize_t read = 0;
 	pthread_args_t *args = (pthread_args_t *)arg;
 
-	while (!args->entire_file_read) {
-		read = pread(ofd, buf, blocksize, offset);
+	while (!args->entire_file_completed) {
+		read = pread(fd, buf, blocksize, offset);
 		if (read != blocksize) {
-			if (rd_err_expected)
-				assert(errno == EIO);
-			else
-				exit(2);
+			exit(2);
 		}
 
 		offset = ((offset + blocksize) % total_data);
 		left -= blocksize;
 
 		if (left == 0)
-			args->entire_file_read = 1;
+			args->entire_file_completed = 1;
 	}
 
 	pthread_exit(NULL);
@@ -180,7 +227,7 @@ manipulate_buf_thread(void *arg)
 	char rand_char;
 	pthread_args_t *args = (pthread_args_t *)arg;
 
-	while (!args->entire_file_read) {
+	while (!args->entire_file_completed) {
 		rand_offset = (rand() % blocksize);
 		rand_char = (rand() % (126 - 33) + 33);
 		buf[rand_offset] = rand_char;
@@ -192,18 +239,27 @@ manipulate_buf_thread(void *arg)
 int
 main(int argc, char *argv[])
 {
-	int ofd_flags = O_RDONLY | O_DIRECT;
+	const char *datapattern = "0xdeadbeef";
+	int fd_flags = O_DIRECT;
 	mode_t mode = S_IRUSR | S_IWUSR;
-	pthread_t read_thr;
+	pthread_t io_thr;
 	pthread_t manipul_thr;
+	int left = blocksize;
+	int offset = 0;
 	int rc;
 	pthread_args_t args = { 0 };
 
 	parse_options(argc, argv);
 
-	ofd = open(outputfile, ofd_flags, mode);
-	if (ofd == -1) {
-		(void) fprintf(stderr, "%s, %s\n", execname, outputfile);
+	if (write_op) {
+		fd_flags |= (O_WRONLY | O_CREAT);
+	} else {
+		fd_flags |= O_RDONLY;
+	}
+
+	fd = open(filename, fd_flags, mode);
+	if (fd == -1) {
+		(void) fprintf(stderr, "%s, %s\n", execname, filename);
 		perror("open");
 		exit(2);
 	}
@@ -216,10 +272,22 @@ main(int argc, char *argv[])
 		exit(2);
 	}
 
-	/*
-	 * Writing using O_DIRECT while manipulating the buffer contents until
-	 * the entire file is written.
-	 */
+	if (write_op) {
+		if (!randompattern) {
+			/* Putting known data pattern in buffer */
+			while (left) {
+				size_t amt = MIN(strlen(datapattern), left);
+				memcpy(&buf[offset], datapattern, amt);
+				offset += amt;
+				left -= amt;
+			}
+		} else {
+			/* Putting random data in buffer */
+			for (int i = 0; i < blocksize; i++)
+				buf[i] = rand();
+		}
+	}
+
 	if ((rc = pthread_create(&manipul_thr, NULL, manipulate_buf_thread,
 	    &args))) {
 		fprintf(stderr, "error: pthreads_create, manipul_thr, "
@@ -227,18 +295,34 @@ main(int argc, char *argv[])
 		exit(2);
 	}
 
-	if ((rc = pthread_create(&read_thr, NULL, read_thread, &args))) {
-		fprintf(stderr, "error: pthreads_create, read_thr, "
-		    "rc: %d\n", rc);
-		exit(2);
+	if (write_op) {
+		/*
+		 * Writing using O_DIRECT while manipulating the buffer contents
+		 * until the entire file is written.
+		 */
+		if ((rc = pthread_create(&io_thr, NULL, write_thread, &args))) {
+			fprintf(stderr, "error: pthreads_create, io_thr, "
+			    "rc: %d\n", rc);
+			exit(2);
+		}
+	} else {
+		/*
+		 * Reading using O_DIRECT while manipulating the buffer contents
+		 * until the entire file is read.
+		 */
+		if ((rc = pthread_create(&io_thr, NULL, read_thread, &args))) {
+			fprintf(stderr, "error: pthreads_create, io_thr, "
+			    "rc: %d\n", rc);
+			exit(2);
+		}
 	}
 
-	pthread_join(read_thr, NULL);
+	pthread_join(io_thr, NULL);
 	pthread_join(manipul_thr, NULL);
 
-	assert(args.entire_file_read == 1);
+	assert(args.entire_file_completed == 1);
 
-	(void) close(ofd);
+	(void) close(fd);
 
 	free(buf);
 
