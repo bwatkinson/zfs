@@ -447,12 +447,15 @@ vdev_raidz_row_alloc(int cols, zio_t *zio)
 		rc->rc_shadow_offset = UINT64_MAX;
 		/*
 		 * We can not allow self healing to take place for Direct I/O
-		 * reads. There is nothing that stops the buffer contents from
-		 * being manipulated while the I/O is in flight. It is possible
-		 * that the checksum could be verified on the buffer and then
-		 * the contents of that buffer are manipulated afterwards. This
-		 * could lead to bad data being written out during self
-		 * healing.
+		 * reads on Linux. There is nothing that stops the buffer
+		 * contents from being manipulated while the I/O is in flight.
+		 * It is possible that the checksum could be verified on the
+		 * buffer and then the contents of that buffer are manipulated
+		 * afterwards. This could lead to bad data being written out
+		 * during self healing.
+		 *
+		 * This is not an issue for FreeBSD, because FreeBSD can make
+		 * the pages stable and prevent them from being manipulated.
 		 */
 		if (!(zio->io_flags & ZIO_FLAG_DIO_READ))
 			rc->rc_allow_repair = 1;
@@ -2644,10 +2647,13 @@ raidz_checksum_verify(zio_t *zio)
 
 	int ret = zio_checksum_error(zio, &zbc);
 	/*
-	 * Any Direct I/O read that has a checksum error must be treated as
-	 * suspicious as the contents of the buffer could be getting
+	 * On Linux Any Direct I/O read that has a checksum error must be
+	 * treated as suspicious as the contents of the buffer could be getting
 	 * manipulated while the I/O is taking place. The checksum verify error
 	 * will be reported to the top-level RAIDZ VDEV.
+	 *
+	 * This is not an issue for FreeBSD, because FreeBSD can make
+	 * the pages stable and prevent them from being manipulated.
 	 */
 	if (zio->io_flags & ZIO_FLAG_DIO_READ && ret == ECKSUM) {
 		zio->io_error = ret;
@@ -2801,8 +2807,8 @@ vdev_raidz_io_done_verified(zio_t *zio, raidz_row_t *rr)
 				continue;
 			}
 			/*
-			 * We do not allow self healing for Direct I/O reads.
-			 * See comment in vdev_raid_row_alloc().
+			 * We do not allow self healing for Direct I/O reads on
+			 * Linux. See comment in vdev_raid_row_alloc().
 			 */
 			ASSERT0(zio->io_flags & ZIO_FLAG_DIO_READ);
 

@@ -1574,11 +1574,11 @@ zio_vdev_child_io(zio_t *pio, blkptr_t *bp, vdev_t *vd, uint64_t offset,
 		pipeline |= ZIO_STAGE_CHECKSUM_VERIFY;
 		pio->io_pipeline &= ~ZIO_STAGE_CHECKSUM_VERIFY;
 		/*
-		 * We never allow the mirror VDEV to attempt reading from any
-		 * additional data copies after the first Direct I/O checksum
-		 * verify failure. This is to avoid bad data being written out
-		 * through the mirror during self healing. See comment in
-		 * vdev_mirror_io_done() for more details.
+		 * On Linux We never allow the mirror VDEV to attempt reading
+		 * from any additional data copies after the first Direct I/O
+		 * checksum verify failure. This is to avoid bad data being
+		 * written out through the mirror during self healing. See
+		 * comment in vdev_mirror_io_done() for more details.
 		 */
 		ASSERT0(pio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR);
 	} else if (type == ZIO_TYPE_WRITE &&
@@ -4884,16 +4884,21 @@ zio_checksum_verify(zio_t *zio)
 				zio->io_flags |= ZIO_FLAG_DIO_CHKSUM_ERR;
 				zio_t *pio = zio_unique_parent(zio);
 				/*
-				 * Any Direct I/O read that has a checksum
-				 * error must be treated as suspicous as the
-				 * contents of the buffer could be getting
-				 * manipulated while the I/O is taking place.
+				 * Any Direct I/O read on Linux that has a
+				 * checksum error must be treated as suspicous
+				 * as the contents of the buffer could be
+				 * getting manipulated while the I/O is taking
+				 * place.
 				 *
 				 * The checksum verify error will only be
 				 * reported here for disk and file VDEV's and
 				 * will be reported on those that the failure
 				 * occurred on. Other types of VDEV's report the
 				 * verify failure in their own code paths.
+				 *
+				 * This is not an issue for FreeBSD, because
+				 * FreeBSD can make the pages stable and
+				 * prevent them from being manipulated.
 				 */
 				if (pio->io_child_type == ZIO_CHILD_LOGICAL) {
 					zio_dio_chksum_verify_error_report(zio);
@@ -5297,6 +5302,10 @@ zio_done(zio_t *zio)
 	}
 
 	if (zio->io_error) {
+#if defined(__FreeBSD__)
+		IMPLY(zio->io_type == ZIO_TYPE_READ,
+		    !(zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR));
+#endif
 		/*
 		 * If this I/O is attached to a particular vdev,
 		 * generate an error message describing the I/O failure

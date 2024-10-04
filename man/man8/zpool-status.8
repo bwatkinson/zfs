@@ -90,10 +90,15 @@ in
 .Xr zfs 4
 for details about the conditions that can cause Direct I/O write checksum
 verify failures to occur.
-Direct I/O reads checksum verify errors can also occur if the contents of the
-buffer are being manipulated after the I/O has been issued and is in flight.
+On Linux Direct I/O reads checksum verify errors can also occur if the contents
+of the buffer are being manipulated after the I/O has been issued and is in
+flight.
 In the case of Direct I/O read checksum verify errors, the I/O will be reissued
 through the ARC.
+This is not an issue on
+.Fx
+because user pages can be protected from manipulation while the I/O is in
+flight.
 .It Fl D
 Display a histogram of deduplication statistics, showing the allocated
 .Pq physically present on disk

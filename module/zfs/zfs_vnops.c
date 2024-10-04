@@ -376,11 +376,17 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 
 	/*
 	 * Setting up Direct I/O if requested.
+	 *
+	 * FreeBSD can return EAGAIN from zfs_setup_direct() if the pages could
+	 * not be made stable to prevent them from being manipulated. In this
+	 * case the I/O will just be issued through the ARC.
 	 */
 	error = zfs_setup_direct(zp, uio, UIO_READ, &ioflag);
-	if (error) {
+	if (error && (error != EAGAIN)) {
 		goto out;
 	}
+	IMPLY(error == EAGAIN, (uio->uio_extflg & UIO_DIRECT) == 0);
+
 
 #if defined(__linux__)
 	ssize_t start_offset = zfs_uio_offset(uio);
@@ -505,7 +511,7 @@ out:
 	 * Cleanup for Direct I/O if requested.
 	 */
 	if (uio->uio_extflg & UIO_DIRECT)
-		zfs_uio_free_dio_pages(uio, UIO_READ);
+		zfs_uio_free_dio_pages(uio);
 
 	ZFS_ACCESSTIME_STAMP(zfsvfs, zp);
 	zfs_exit(zfsvfs, FTAG);
@@ -646,12 +652,17 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 
 	/*
 	 * Setting up Direct I/O if requested.
+	 *
+	 * FreeBSD can return EAGAIN from zfs_setup_direct() if the pages could
+	 * not be made stable to prevent them from being manipulated. In this
+	 * case the I/O will just be issued through the ARC.
 	 */
 	error = zfs_setup_direct(zp, uio, UIO_WRITE, &ioflag);
-	if (error) {
+	if (error && (error != EAGAIN)) {
 		zfs_exit(zfsvfs, FTAG);
 		return (SET_ERROR(error));
 	}
+	IMPLY(error == EAGAIN, (uio->uio_extflg & UIO_DIRECT) == 0);
 
 	/*
 	 * Pre-fault the pages to ensure slow (eg NFS) pages
@@ -1025,7 +1036,7 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 	 * Cleanup for Direct I/O if requested.
 	 */
 	if (uio->uio_extflg & UIO_DIRECT)
-		zfs_uio_free_dio_pages(uio, UIO_WRITE);
+		zfs_uio_free_dio_pages(uio);
 
 	/*
 	 * If we're in replay mode, or we made no progress, or the

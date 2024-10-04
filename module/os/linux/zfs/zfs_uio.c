@@ -555,7 +555,7 @@ zfs_uio_dio_check_for_zero_page(zfs_uio_t *uio)
 }
 
 void
-zfs_uio_free_dio_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
+zfs_uio_free_dio_pages(zfs_uio_t *uio)
 {
 
 	ASSERT(uio->uio_extflg & UIO_DIRECT);

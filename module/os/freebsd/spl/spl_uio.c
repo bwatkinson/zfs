@@ -139,20 +139,40 @@ zfs_uio_page_aligned(zfs_uio_t *uio)
 	return (B_TRUE);
 }
 
-static void
+static int
 zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 {
+	int i;
+
 	ASSERT3P(uio->uio_dio.pages, !=, NULL);
 	ASSERT3S(uio->uio_dio.npages, >, 0);
 
-	for (int i = 0; i < uio->uio_dio.npages; i++) {
+	for (i = 0; i < uio->uio_dio.npages; i++) {
 		vm_page_t page = uio->uio_dio.pages[i];
 		ASSERT3P(page, !=, NULL);
 
 		MPASS(page == PHYS_TO_VM_PAGE(VM_PAGE_TO_PHYS(page)));
+		/*
+		 * pmp_remove_all() can not be called for unmanaged pages
+		 * because the FreeBSD kernel does not maintain a list for these
+		 * mappings. In this case, the Direct I/O request will just be
+		 * issued through the ARC as the pages can not be placed under
+		 * protection from being manipulated.
+		 */
+		if (page->oflags & VPO_UNMANAGED)
+			goto cleanup;
+
 		vm_page_busy_acquire(page, VM_ALLOC_SBUSY);
 		pmap_remove_write(page);
 	}
+	return (0);
+
+cleanup:
+	for (int j = 0; j < i; j++) {
+		vm_page_t page = uio->uio_dio.pages[j];
+		vm_page_sunbusy(page);
+	}
+	return (EAGAIN);
 }
 
 static void
@@ -190,14 +210,12 @@ zfs_uio_hold_pages(unsigned long start, size_t len, int nr_pages,
 }
 
 void
-zfs_uio_free_dio_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
+zfs_uio_free_dio_pages(zfs_uio_t *uio)
 {
 	ASSERT(uio->uio_extflg & UIO_DIRECT);
 	ASSERT3P(uio->uio_dio.pages, !=, NULL);
-	ASSERT(zfs_uio_rw(uio) == rw);
 
-	if (rw == UIO_WRITE)
-		zfs_uio_release_stable_pages(uio);
+	zfs_uio_release_stable_pages(uio);
 
 	vm_page_unhold_pages(&uio->uio_dio.pages[0],
 	    uio->uio_dio.npages);
@@ -293,13 +311,8 @@ zfs_uio_get_dio_pages_alloc(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	uio->uio_dio.pages = kmem_alloc(size, KM_SLEEP);
 
 	error = zfs_uio_get_dio_pages_impl(uio);
-
-	if (error) {
-		vm_page_unhold_pages(&uio->uio_dio.pages[0],
-		    uio->uio_dio.npages);
-		kmem_free(uio->uio_dio.pages, size);
-		return (error);
-	}
+	if (error)
+		goto error;
 
 	ASSERT3S(uio->uio_dio.npages, >, 0);
 
@@ -309,10 +322,16 @@ zfs_uio_get_dio_pages_alloc(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	 * while we are doing: compression, checksumming, encryption, parity
 	 * calculations or deduplication.
 	 */
-	if (zfs_uio_rw(uio) == UIO_WRITE)
-		zfs_uio_set_pages_to_stable(uio);
+	error = zfs_uio_set_pages_to_stable(uio);
+	if (error)
+		goto error;
 
 	uio->uio_extflg |= UIO_DIRECT;
 
 	return (0);
+error:
+	vm_page_unhold_pages(&uio->uio_dio.pages[0], uio->uio_dio.npages);
+	kmem_free(uio->uio_dio.pages, size);
+
+	return (error);
 }
