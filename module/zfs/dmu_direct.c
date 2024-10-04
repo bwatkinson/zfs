@@ -251,6 +251,11 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 	spa_t *spa = os->os_spa;
 	dmu_buf_t **dbp;
 	int numbufs, err;
+	zio_flag_t zio_flags =  ZIO_FLAG_CANFAIL;
+
+#if defined(__linux__)
+	zio_flags |= ZIO_FLAG_DIO_READ;
+#endif
 
 	ASSERT(flags & DMU_DIRECTIO);
 
@@ -329,8 +334,8 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 		 * being set for the zio BP.
 		 */
 		zio_t *cio = zio_read(rio, spa, bp, mbuf, db->db.db_size,
-		    dmu_read_abd_done, NULL, ZIO_PRIORITY_SYNC_READ,
-		    ZIO_FLAG_CANFAIL | ZIO_FLAG_DIO_READ, &zb);
+		    dmu_read_abd_done, NULL, ZIO_PRIORITY_SYNC_READ, zio_flags,
+		    &zb);
 		mutex_exit(&db->db_mtx);
 
 		zfs_racct_read(spa, db->db.db_size, 1, flags);

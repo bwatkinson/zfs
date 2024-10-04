@@ -371,9 +371,11 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 	 * Setting up Direct I/O if requested.
 	 */
 	error = zfs_setup_direct(zp, uio, UIO_READ, &ioflag);
-	if (error) {
+	if (error && (error != EAGAIN)) {
 		goto out;
 	}
+	IMPLY(error == EAGAIN, (uio->uio_extflg & UIO_DIRECT) == 0);
+
 
 #if defined(__linux__)
 	ssize_t start_offset = zfs_uio_offset(uio);
@@ -641,10 +643,11 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 	 * Setting up Direct I/O if requested.
 	 */
 	error = zfs_setup_direct(zp, uio, UIO_WRITE, &ioflag);
-	if (error) {
+	if (error && (error != EAGAIN)) {
 		zfs_exit(zfsvfs, FTAG);
 		return (SET_ERROR(error));
 	}
+	IMPLY(error == EAGAIN, (uio->uio_extflg & UIO_DIRECT) == 0);
 
 	/*
 	 * Pre-fault the pages to ensure slow (eg NFS) pages
