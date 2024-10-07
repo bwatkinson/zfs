@@ -433,7 +433,7 @@ const zio_vsd_ops_t vdev_raidz_vsd_ops = {
 };
 
 raidz_row_t *
-vdev_raidz_row_alloc(int cols)
+vdev_raidz_row_alloc(int cols, zio_t *zio)
 {
 	raidz_row_t *rr =
 	    kmem_zalloc(offsetof(raidz_row_t, rr_col[cols]), KM_SLEEP);
@@ -445,7 +445,17 @@ vdev_raidz_row_alloc(int cols)
 		raidz_col_t *rc = &rr->rr_col[c];
 		rc->rc_shadow_devidx = INT_MAX;
 		rc->rc_shadow_offset = UINT64_MAX;
-		rc->rc_allow_repair = 1;
+		/*
+		 * We can not allow self healing to take place for Direct I/O
+		 * reads. There is nothing that stops the buffer contents from
+		 * being manipulated while the I/O is in flight. It is possible
+		 * that the checksum could be verified on the buffer and then
+		 * the contents of that buffer are manipulated afterwards. This
+		 * could lead to bad data being written out during self
+		 * healing.
+		 */
+		if (!(zio->io_flags & ZIO_FLAG_DIO_READ))
+			rc->rc_allow_repair = 1;
 	}
 	return (rr);
 }
@@ -619,7 +629,7 @@ vdev_raidz_map_alloc(zio_t *zio, uint64_t ashift, uint64_t dcols,
 	}
 
 	ASSERT3U(acols, <=, scols);
-	rr = vdev_raidz_row_alloc(scols);
+	rr = vdev_raidz_row_alloc(scols, zio);
 	rm->rm_row[0] = rr;
 	rr->rr_cols = acols;
 	rr->rr_bigcols = bc;
@@ -765,7 +775,7 @@ vdev_raidz_map_alloc_expanded(zio_t *zio,
 
 	for (uint64_t row = 0; row < rows; row++) {
 		boolean_t row_use_scratch = B_FALSE;
-		raidz_row_t *rr = vdev_raidz_row_alloc(cols);
+		raidz_row_t *rr = vdev_raidz_row_alloc(cols, zio);
 		rm->rm_row[row] = rr;
 
 		/* The starting RAIDZ (parent) vdev sector of the row. */
@@ -2790,6 +2800,11 @@ vdev_raidz_io_done_verified(zio_t *zio, raidz_row_t *rr)
 			    (rc->rc_error == 0 || rc->rc_size == 0)) {
 				continue;
 			}
+			/*
+			 * We do not allow self healing for Direct I/O reads.
+			 * See comment in vdev_raid_row_alloc().
+			 */
+			ASSERT0(zio->io_flags & ZIO_FLAG_DIO_READ);
 
 			zfs_dbgmsg("zio=%px repairing c=%u devidx=%u "
 			    "offset=%llx",
