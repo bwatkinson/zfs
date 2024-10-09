@@ -147,12 +147,12 @@ zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 	ASSERT3P(uio->uio_dio.pages, !=, NULL);
 	ASSERT3S(uio->uio_dio.npages, >, 0);
 
-	for (int i = 0; i < uio->uio_dio.npages; i++) {
+	for (i = 0; i < uio->uio_dio.npages; i++) {
 		vm_page_t page = uio->uio_dio.pages[i];
 		ASSERT3P(page, !=, NULL);
 
 		MPASS(page == PHYS_TO_VM_PAGE(VM_PAGE_TO_PHYS(page)));
-		if (page->oflags & VPO_UNMANGED)
+		if (page->oflags & VPO_UNMANAGED)
 			goto cleanup;
 
 		vm_page_busy_acquire(page, VM_ALLOC_SBUSY);
