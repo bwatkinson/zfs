@@ -32,5 +32,5 @@ tests = ['pam_basic', 'pam_change_unmounted', 'pam_nounmount', 'pam_recursive',
 tags = ['functional', 'pam']
 
 [tests/functional/direct:FreeBSD]
-tests = ['dio_write_stable_pages']
+tests = ['dio_read_stable_pages', 'dio_write_stable_pages']
 tags = ['functional', 'direct']

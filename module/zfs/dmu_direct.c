@@ -253,6 +253,12 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 	int numbufs, err;
 	zio_flag_t zio_flags =  ZIO_FLAG_CANFAIL;
 
+	/*
+	 * On Linux the ZIO's will be flagged as Direct I/O reads. This flag is
+	 * used during checksum verifies, because the buffer contents can be
+	 * manipulated while the I/O is in flight. Any checksum verify errors
+	 * for Direct I/O reads must be treated as suspicious.
+	 */
 #if defined(__linux__)
 	zio_flags |= ZIO_FLAG_DIO_READ;
 #endif

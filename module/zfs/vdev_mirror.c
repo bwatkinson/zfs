@@ -765,8 +765,8 @@ vdev_mirror_io_done(zio_t *zio)
 	ASSERT(zio->io_type == ZIO_TYPE_READ);
 
 	/*
-	 * Any Direct I/O read that has a checksum error must be treated as
-	 * suspicious as the contents of the buffer could be getting
+	 * Any Direct I/O read on Linux that has a checksum error must be
+	 * treated as suspicious as the contents of the buffer could be getting
 	 * manipulated while the I/O is taking place. The checksum verify error
 	 * will be reported to the top-level Mirror VDEV.
 	 *
@@ -776,6 +776,9 @@ vdev_mirror_io_done(zio_t *zio)
 	 * verified as valid. However, the buffer contents could again get
 	 * manipulated after verifying the checksum. This would lead to bad data
 	 * being written out during self healing.
+	 *
+	 * This is not an issue for FreeBSD, because FreeBSD can make the pages
+	 * stable and prevent them from being manipulated.
 	 */
 	if ((zio->io_flags & ZIO_FLAG_DIO_READ) &&
 	    (zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR)) {

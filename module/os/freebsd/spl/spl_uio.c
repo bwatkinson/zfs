@@ -152,6 +152,13 @@ zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 		ASSERT3P(page, !=, NULL);
 
 		MPASS(page == PHYS_TO_VM_PAGE(VM_PAGE_TO_PHYS(page)));
+		/*
+		 * pmp_remove_all() can not be called for unmanaged pages
+		 * because the FreeBSD kernel does not maintain a list for these
+		 * mappings. In this case, the Direct I/O request will just be
+		 * issued through the ARC as the pages can not be placed under
+		 * protection from being manipulated.
+		 */
 		if (page->oflags & VPO_UNMANAGED)
 			goto cleanup;
 

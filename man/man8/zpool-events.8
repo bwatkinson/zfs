@@ -101,6 +101,10 @@ module parameter.
 .It Sy dio_verify_rd
 Issued when there was a checksum verify error after a Direct I/O read has been
 issued.
+This event will never take place for
+.Fx
+because user pages can be protected from manipulation while the I/O is in
+flight.
 .It Sy dio_verify_wr
 Issued when there was a checksum verify error after a Direct I/O write has been
 issued.
