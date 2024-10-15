@@ -159,9 +159,12 @@ zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 		 * issued through the ARC as the pages can not be placed under
 		 * protection from being manipulated.
 		 */
-		if (page->oflags & VPO_UNMANAGED)
+		if (page->oflags & VPO_UNMANAGED) {
+			printf("%s(%d): Page has VPO_UNMANAGED flag set for "
+			    "uio = %p, on page = %d\n",
+			    __FUNCTION__, __LINE__, uio, i);
 			goto cleanup;
-
+		}
 		vm_page_busy_acquire(page, VM_ALLOC_SBUSY);
 		pmap_remove_write(page);
 	}
@@ -169,6 +172,9 @@ zfs_uio_set_pages_to_stable(zfs_uio_t *uio)
 
 cleanup:
 	for (int j = 0; j < i; j++) {
+		printf("%s(%d): Ubusying page %d for uio = %p, "
+		    "j = %d, i = %d\n",
+		    __FUNCTION__, __LINE__, j, uio, j, i);
 		vm_page_t page = uio->uio_dio.pages[j];
 		vm_page_sunbusy(page);
 	}
@@ -311,8 +317,13 @@ zfs_uio_get_dio_pages_alloc(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	uio->uio_dio.pages = kmem_alloc(size, KM_SLEEP);
 
 	error = zfs_uio_get_dio_pages_impl(uio);
-	if (error)
+	if (error) {
+		printf("%s(%d): We got an error from "
+		    "zfs_uio_get_dio_pages_impl(), error = %d "
+		    "uio = %p\n",
+		    __FUNCTION__, __LINE__, error, uio);
 		goto error;
+	}
 
 	ASSERT3S(uio->uio_dio.npages, >, 0);
 
@@ -322,9 +333,15 @@ zfs_uio_get_dio_pages_alloc(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	 * while we are doing: compression, checksumming, encryption, parity
 	 * calculations or deduplication.
 	 */
+
 	error = zfs_uio_set_pages_to_stable(uio);
-	if (error)
+	if (error) {
+		printf("%s(%d): We got an error from "
+		    "zfs_uio_set_pages_to_stable(), error = %d "
+		    "uio = %p\n",
+		    __FUNCTION__, __LINE__, error, uio);
 		goto error;
+	}
 
 	uio->uio_extflg |= UIO_DIRECT;
 
