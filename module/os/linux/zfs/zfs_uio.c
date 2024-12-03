@@ -446,6 +446,15 @@ zfs_uio_dio_check_for_zero_page(zfs_uio_t *uio)
 {
 	ASSERT3P(uio->uio_dio.pages, !=, NULL);
 
+#if defined(HAVE_IOV_ITER_EXTRACT_PAGES)
+	/*
+	 * If user pages were pinned through iov_iter_extract_pages(),
+	 * then unpin_user_pages() will take care of correctly handling the
+	 * zero page references.
+	 */
+	return;
+#endif
+
 	for (long i = 0; i < uio->uio_dio.npages; i++) {
 		struct page *p = uio->uio_dio.pages[i];
 		lock_page(p);
@@ -453,9 +462,12 @@ zfs_uio_dio_check_for_zero_page(zfs_uio_t *uio)
 		if (IS_ZERO_PAGE(p)) {
 			/*
 			 * If the user page points the kernels ZERO_PAGE() a
-			 * new zero filled page will just be allocated so the
-			 * contents of the page can not be changed by the user
-			 * while a Direct I/O write is taking place.
+			 * new zero filled page will just be allocated. This is
+			 * required as calling put_page() on the zero page is
+			 * not allowed. This also has the side affect of
+			 * protecting the contents of the page from changing
+			 * during I/O if the user is manipulating the page
+			 * contents.
 			 */
 			gfp_t gfp_zero_page  = __GFP_NOWARN | GFP_NOIO |
 			    __GFP_ZERO | GFP_KERNEL;
@@ -480,6 +492,9 @@ zfs_uio_free_dio_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	ASSERT(uio->uio_extflg & UIO_DIRECT);
 	ASSERT3P(uio->uio_dio.pages, !=, NULL);
 
+#if defined(HAVE_IOV_ITER_EXTRACT_PAGES)
+	unpin_user_pages(uio->uio_dio.pages, uio->uio_dio.npages);
+#else
 	for (long i = 0; i < uio->uio_dio.npages; i++) {
 		struct page *p = uio->uio_dio.pages[i];
 
@@ -491,13 +506,13 @@ zfs_uio_free_dio_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
 
 		put_page(p);
 	}
-
+#endif
 	vmem_free(uio->uio_dio.pages,
 	    uio->uio_dio.npages * sizeof (struct page *));
 }
 
 static int
-zfs_uio_get_dio_pages_iov_iter(zfs_uio_t *uio, zfs_uio_rw_t rw)
+zfs_uio_get_pages(zfs_uio_t *uio)
 {
 	size_t skip = uio->uio_skip;
 	size_t wanted = uio->uio_resid - uio->uio_skip;
@@ -506,7 +521,22 @@ zfs_uio_get_dio_pages_iov_iter(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	unsigned maxpages = DIV_ROUND_UP(wanted, PAGE_SIZE);
 
 	while (wanted) {
-#if defined(HAVE_IOV_ITER_GET_PAGES2)
+#if defined(HAVE_IOV_ITER_EXTRACT_PAGES)
+		size_t offset;
+		struct page **pages = &uio->uio_dio.pages[uio->uio_dio.npages];
+		/*
+		 * Currently just passing 0 for the iov_iter_extraction_t flag.
+		 * This could at some point be leveraged though for P2PDMA by
+		 * passing ITER_ALLOW_P2PDMA instead.
+		 */
+		cnt = iov_iter_extract_pages(uio->uio_iter, &pages, wanted,
+		    maxpages, 0, &offset);
+		/*
+		 * All Direct I/O request are page aligned, so the offset into
+		 * the first page must be zero.
+		 */
+		ASSERT0(offset);
+#elif defined(HAVE_IOV_ITER_GET_PAGES2)
 		cnt = iov_iter_get_pages2(uio->uio_iter,
 		    &uio->uio_dio.pages[uio->uio_dio.npages],
 		    wanted, maxpages, &skip);
@@ -522,10 +552,12 @@ zfs_uio_get_dio_pages_iov_iter(zfs_uio_t *uio, zfs_uio_rw_t rw)
 		uio->uio_dio.npages += DIV_ROUND_UP(cnt, PAGE_SIZE);
 		rollback += cnt;
 		wanted -= cnt;
+		maxpages -= uio->uio_dio.npages;
 		skip = 0;
-#if !defined(HAVE_IOV_ITER_GET_PAGES2)
+#if !defined(HAVE_IOV_ITER_GET_PAGES2) && !defined(HAVE_IOV_ITER_EXTRACT_PAGES)
 		/*
-		 * iov_iter_get_pages2() advances the iov_iter on success.
+		 * iov_iter_get_pages2() and iov_iter_extract_pages() advances
+		 * the iov_iter on success.
 		 */
 		iov_iter_advance(uio->uio_iter, cnt);
 #endif
@@ -552,7 +584,7 @@ zfs_uio_get_dio_pages_alloc(zfs_uio_t *uio, zfs_uio_rw_t rw)
 
 	if (uio->uio_segflg == UIO_ITER) {
 		uio->uio_dio.pages = vmem_alloc(size, KM_SLEEP);
-		error = zfs_uio_get_dio_pages_iov_iter(uio, rw);
+		error = zfs_uio_get_pages(uio);
 	} else {
 		return (SET_ERROR(EOPNOTSUPP));
 	}
@@ -560,8 +592,12 @@ zfs_uio_get_dio_pages_alloc(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	ASSERT3S(uio->uio_dio.npages, >=, 0);
 
 	if (error) {
+#if defined(HAVE_IOV_ITER_EXTRACT_PAGES)
+		unpin_user_pages(uio->uio_dio.pages, uio->uio_dio.npages);
+#else
 		for (long i = 0; i < uio->uio_dio.npages; i++)
 			put_page(uio->uio_dio.pages[i]);
+#endif
 		vmem_free(uio->uio_dio.pages, size);
 		return (error);
 	} else {

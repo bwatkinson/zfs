@@ -13,6 +13,21 @@ AC_DEFUN([ZFS_AC_KERNEL_SRC_VFS_IOV_ITER], [
 		error = fault_in_iov_iter_readable(&iter, size);
 	])
 
+	ZFS_LINUX_TEST_SRC([iov_iter_extract_pages], [
+		#include <linux/uio.h>
+	], [
+		struct iov_iter iter = { 0 };
+		struct page **pages = NULL;
+		size_t maxsize = 4096;
+		unsigned maxpages = 1;
+		iov_iter_extraction_t extraction_flags = 0;
+		size_t offset;
+		size_t ret __attribute__ ((unused));
+
+		ret = iov_iter_extract_pages(&iter, &pages, maxsize,
+		    maxpages, extraction_flags, &offset);
+	])
+
 	ZFS_LINUX_TEST_SRC([iov_iter_get_pages2], [
 		#include <linux/uio.h>
 	], [
@@ -70,16 +85,32 @@ AC_DEFUN([ZFS_AC_KERNEL_VFS_IOV_ITER], [
 	])
 
 	dnl #
-	dnl # Kernel 6.0 changed iov_iter_get_pages() to iov_iter_page_pages2().
+	dnl # Kernel 6.3 provides iov_iter_extract_pages(), which calls
+	dnl # pin_user_pages_fast(). pin_user_pages should be used for Direct
+	dnl # I/O requests.
 	dnl #
-	AC_MSG_CHECKING([whether iov_iter_get_pages2() is available])
-	ZFS_LINUX_TEST_RESULT([iov_iter_get_pages2], [
+	AC_MSG_CHECKING([whether iov_iter_extract_pages() is available])
+	ZFS_LINUX_TEST_RESULT([iov_iter_extract_pages], [
 		AC_MSG_RESULT(yes)
-		AC_DEFINE(HAVE_IOV_ITER_GET_PAGES2, 1,
-		    [iov_iter_get_pages2() is available])
+		AC_DEFINE(HAVE_IOV_ITER_EXTRACT_PAGES, 1,
+		    [iov_iter_extract_pages() is available])
 	],[
 		AC_MSG_RESULT(no)
+
+		dnl #
+		dnl # Kernel 6.0 changed iov_iter_get_pages() to
+		dnl # iov_iter_page_pages2().
+		dnl #
+		AC_MSG_CHECKING([whether iov_iter_get_pages2() is available])
+		ZFS_LINUX_TEST_RESULT([iov_iter_get_pages2], [
+			AC_MSG_RESULT(yes)
+			AC_DEFINE(HAVE_IOV_ITER_GET_PAGES2, 1,
+			    [iov_iter_get_pages2() is available])
+		],[
+			AC_MSG_RESULT(no)
+		])
 	])
+
 
 	dnl #
 	dnl # This checks for iov_iter_type() in linux/uio.h. It is not
