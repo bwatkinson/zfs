@@ -520,10 +520,12 @@ zfs_uio_pin_user_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	if (rw == UIO_READ)
 		gup_flags = FOLL_WRITE;
 
+	ASSERT3U(len, >=, 0);
+	if (len == 0)
+		return (0);
 
 #if defined(HAVE_ITER_IS_UBUF)
 	if (iter_is_ubuf(uio->uio_iter)) {
-		ASSERT3U(uio->uio_iovcnt, ==, 1);
 		nr_pages = DIV_ROUND_UP(len, PAGE_SIZE);
 		addr = (unsigned long)uio->uio_iter->ubuf + skip;
 		res = pin_user_pages_unlocked(addr, nr_pages,
@@ -569,7 +571,7 @@ zfs_uio_pin_user_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
 static int
 zfs_uio_get_dio_pages_iov_iter(zfs_uio_t *uio, zfs_uio_rw_t rw)
 {
-	size_t skip = uio->uio_skip;
+	size_t start;
 	size_t wanted = uio->uio_resid - uio->uio_skip;
 	ssize_t rollback = 0;
 	ssize_t cnt;
@@ -578,15 +580,14 @@ zfs_uio_get_dio_pages_iov_iter(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	while (wanted) {
 		cnt = iov_iter_get_pages(uio->uio_iter,
 		    &uio->uio_dio.pages[uio->uio_dio.npages],
-		    wanted, maxpages, &skip);
+		    wanted, maxpages, &start);
 		if (cnt < 0) {
 			iov_iter_revert(uio->uio_iter, rollback);
 			return (SET_ERROR(-cnt));
 		}
-		uio->uio_dio.npages += DIV_ROUND_UP(cnt, PAGE_SIZE);
+		uio->uio_dio.npages += DIV_ROUND_UP(cnt + start, PAGE_SIZE);
 		rollback += cnt;
 		wanted -= cnt;
-		skip = 0;
 		iov_iter_advance(uio->uio_iter, cnt);
 
 	}
