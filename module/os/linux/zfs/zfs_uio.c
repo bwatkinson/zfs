@@ -529,10 +529,12 @@ zfs_uio_pin_user_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
 		addr = (unsigned long)uio->uio_iter->ubuf + skip;
 		res = pin_user_pages_unlocked(addr, nr_pages,
 		    &uio->uio_dio.pages[uio->uio_dio.npages], gup_flags);
-		if (res < 0)
+		if (res < 0) {
 			return (SET_ERROR(-res));
-		else if (len != (res * PAGE_SIZE))
+		} else if (len != (res * PAGE_SIZE)) {
+			uio->uio_dio.npages += res;
 			return (SET_ERROR(EFAULT));
+		}
 		uio->uio_dio.npages += res;
 		return (0);
 	}
@@ -550,10 +552,12 @@ zfs_uio_pin_user_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
 		nr_pages = DIV_ROUND_UP(amt, PAGE_SIZE);
 		res = pin_user_pages_unlocked(addr, nr_pages,
 		    &uio->uio_dio.pages[uio->uio_dio.npages], gup_flags);
-		if (res < 0)
+		if (res < 0) {
 			return (SET_ERROR(-res));
-		else if (amt != (res * PAGE_SIZE))
+		} else if (amt != (res * PAGE_SIZE)) {
+			uio->uio_dio.npages += res;
 			return (SET_ERROR(EFAULT));
+		}
 
 		len -= amt;
 		uio->uio_dio.npages += res;
@@ -584,7 +588,11 @@ zfs_uio_get_dio_pages_iov_iter(zfs_uio_t *uio, zfs_uio_rw_t rw)
 			iov_iter_revert(uio->uio_iter, rollback);
 			return (SET_ERROR(-cnt));
 		}
-		uio->uio_dio.npages += DIV_ROUND_UP(cnt + start, PAGE_SIZE);
+		/*
+		 * All Direct I/O operations must be page aligned.
+		 */
+		ASSERT(IS_P2ALIGNED(start, PAGE_SIZE));
+		uio->uio_dio.npages += DIV_ROUND_UP(cnt, PAGE_SIZE);
 		rollback += cnt;
 		wanted -= cnt;
 		iov_iter_advance(uio->uio_iter, cnt);

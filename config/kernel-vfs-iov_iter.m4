@@ -66,8 +66,7 @@ AC_DEFUN([ZFS_AC_KERNEL_VFS_IOV_ITER], [
 
 	dnl #
 	dnl # Kernel 6.0 introduced the ITER_UBUF iov_iter type. iter_is_ubuf()
-	dnl # was also added to determine if the if the iov_iter is an
-	dnl # ITER_UBUF.
+	dnl # was also added to determine if the iov_iter is an ITER_UBUF.
 	dnl #
 	AC_MSG_CHECKING([whether iter_is_ubuf() is available])
 	ZFS_LINUX_TEST_RESULT([iter_is_ubuf], [
