@@ -51,7 +51,7 @@ function cleanup
 
 log_assert "Verify loopback devices with Direct I/O."
 
-if is_freebsd; then
+if ! is_linux; then
 	log_unsupported "This is just a check for Linux Direct I/O"
 fi
 
