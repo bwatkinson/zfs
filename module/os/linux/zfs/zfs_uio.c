@@ -480,21 +480,24 @@ zfs_uio_free_dio_pages(zfs_uio_t *uio, zfs_uio_rw_t rw)
 	ASSERT3P(uio->uio_dio.pages, !=, NULL);
 
 #if defined(HAVE_PIN_USER_PAGES_UNLOCKED)
-	if (uio->uio_dio.pinned)
+	if (uio->uio_dio.pinned) {
 		unpin_user_pages(uio->uio_dio.pages, uio->uio_dio.npages);
-	else
+	} else {
 #endif
-	for (long i = 0; i < uio->uio_dio.npages; i++) {
-		struct page *p = uio->uio_dio.pages[i];
+		for (long i = 0; i < uio->uio_dio.npages; i++) {
+			struct page *p = uio->uio_dio.pages[i];
 
-		if (IS_ZFS_MARKED_PAGE(p)) {
-			zfs_unmark_page(p);
-			__free_page(p);
-			continue;
+			if (IS_ZFS_MARKED_PAGE(p)) {
+				zfs_unmark_page(p);
+				__free_page(p);
+				continue;
+			}
+
+			put_page(p);
 		}
-
-		put_page(p);
+#if defined(HAVE_PIN_USER_PAGES_UNLOCKED)
 	}
+#endif
 
 	vmem_free(uio->uio_dio.pages,
 	    uio->uio_dio.npages * sizeof (struct page *));
